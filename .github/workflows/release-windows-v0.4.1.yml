@@ -77,9 +77,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           $ErrorActionPreference = 'Stop'
-          npm run dist
+          npm run dist -- --publish never
           if ($LASTEXITCODE -ne 0) { throw 'Portable build failed.' }
-          npm run dist:installer
+          npm run dist:installer -- --publish never
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
 
       - name: Assemble release assets
@@ -152,4 +152,3 @@ jobs:
           )
           gh release upload $tag @uploadAssets --repo $repo --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Unable to upload one or more release assets.' }
-
