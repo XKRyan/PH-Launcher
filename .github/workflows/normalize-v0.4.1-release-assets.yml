@@ -23,6 +23,11 @@ jobs:
     env:
       GH_TOKEN: "${{ github.token }}"
     steps:
+      - name: Checkout public release notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Normalize names and checksum manifest
         shell: bash
         run: |
@@ -64,6 +69,12 @@ jobs:
           rename_asset 'PH-Launcher-.md' 'PH-Launcher-User-Guide-zh-CN.md' 'PH Launcher 使用指南'
           rename_asset 'PH-Launcher-0.4.1-.md' 'PH-Launcher-0.4.1-Release-and-Security-Notes-zh-CN.md' 'v0.4.1 发布与安全说明'
           rename_asset 'PH-Launcher-.png' 'PH-Launcher-UI-Preview.png' 'PH Launcher 界面预览'
+
+          notes_source='docs/PH-Launcher-0.4.1-发布与安全说明.md'
+          notes_asset='PH-Launcher-0.4.1-Release-and-Security-Notes-zh-CN.md'
+          cp "$notes_source" "$notes_asset"
+          gh release edit "$tag" --repo "$repo" --notes-file "$notes_source"
+          gh release upload "$tag" "$notes_asset" --repo "$repo" --clobber
 
           release_json="$(gh api "repos/$repo/releases/tags/$tag")"
           manifest='PH-Launcher-0.4.1-SHA256.txt'

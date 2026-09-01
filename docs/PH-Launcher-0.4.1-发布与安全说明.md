@@ -21,6 +21,6 @@ EduPage 只读取已经打开的“常规课表”中的课程名、星期、时
 
 - Windows x64 安装版与免安装版已完成启动、自检、离线词典随包、安装及卸载验证。
 - Windows 文件目前没有商业代码签名证书，系统可能显示“未知发布者”；请通过可信渠道获取，并核对 SHA-256。
-- `macOS-BuildKit` 是可在 Mac 上构建 Universal DMG／ZIP 的源码包，不是可双击安装的 Mac 成品。正式分发仍须在 macOS 上完成 Apple Developer ID 签名、公证与实机验证。
+- macOS 版本仍在开发，本次 Release 不包含 macOS 安装包或 BuildKit。正式分发前仍须在 macOS 上完成 Apple Developer ID 签名、公证与实机验证。
 
 PH Launcher 不是上海市民办平和学校、ManageBac、EduPage 或网易的官方产品，也不使用校徽。
