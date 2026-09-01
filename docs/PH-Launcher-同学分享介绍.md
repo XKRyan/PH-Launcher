@@ -27,7 +27,7 @@ PH Launcher 是独立制作的学生工具，不是上海市民办平和学校�
 
 ## 当前可用版本
 
-Windows 版已经开源，提供安装版和免安装版，可从 [GitHub Release](https://github.com/XKRyan/PH-Launcher/releases/tag/v0.4.1) 下载；源码与更新说明位于 [PH Launcher GitHub 仓库](https://github.com/XKRyan/PH-Launcher)。macOS 版使用同一套功能设计，0.5.0 源码和自动构建流程正在同步；只建议使用已经完成 Apple 签名、公证并通过 Mac 实机验证的正式包，不要把未签名测试包直接分享给同学。
+Windows 版已经开源，提供安装版和免安装版，可从 [GitHub Release](https://github.com/XKRyan/PH-Launcher/releases/tag/v0.4.1) 下载；源码与更新说明位于 [PH Launcher GitHub 仓库](https://github.com/XKRyan/PH-Launcher)。macOS 版使用同一套功能设计，0.5.0 源码已经同步并通过 GitHub 的真实 Mac 构建；目前生成的是未签名测试包，正式版仍需 Apple 签名、公证和 Mac 实机验证，请不要把测试包直接分享给同学。
 
 ## 可直接转发的短介绍
 
