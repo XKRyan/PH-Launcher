@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PH Launcher</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <svg class="svg-sprite" aria-hidden="true">
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H4.5A1.5 1.5 0 0 1 3 19.5v-8.7Z"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><path d="m3 7 9 6 9-6"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v4h4M8 11h8M8 15h8M8 19h5"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H11a2 2 0 0 1 2 2v17a2 2 0 0 0-2-2H7.5A3.5 3.5 0 0 0 4 22.5v-17Z"/><path d="M20 5.5A3.5 3.5 0 0 0 16.5 2H15a2 2 0 0 0-2 2v17a2 2 0 0 1 2-2h1.5a3.5 3.5 0 0 1 3.5 3.5v-17Z"/></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.2 9A2 2 0 0 0 6.6 21h10.8a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7.5 16h9"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 1.7 5.3L19 9l-5.3 1.7L12 16l-1.7-5.3L5 9l5.3-1.7L12 2Z"/><path d="m19 15 .9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15ZM5 15l.7 2.1 2.1.7-2.1.7L5 20.6l-.7-2.1-2.1-.7 2.1-.7L5 15Z"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+      <symbol id="i-forward" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8a7 7 0 0 1 11.5-1L20 12M4 12l2.4 5a7 7 0 0 0 11.5-1"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="m9 3 6 6M7 9l8 8M13 5l4-2 4 4-2 4-5 5-6-6 5-5ZM8 16l-5 5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 21h16"/></symbol>
+    </svg>
+
+    <div class="app-shell" id="appShell">
+      <aside class="sidebar">
+        <div class="brand" data-route="today" tabindex="0" role="button" aria-label="返回今天">
+          <div class="brand-mark" aria-hidden="true"><span>PH</span><i></i></div>
+          <div class="brand-copy"><strong>PH Launcher</strong><span>IB Student Desk</span></div>
+        </div>
+
+        <nav class="primary-nav" aria-label="主要导航">
+          <button class="nav-item active" data-route="today"><svg><use href="#i-home"/></svg><span>今天</span></button>
+          <div class="nav-label">学校应用</div>
+          <button class="nav-item site-nav" data-site="mail"><svg><use href="#i-mail"/></svg><span>学校邮箱</span><i class="status-dot"></i></button>
+          <button class="nav-item site-nav" data-site="managebac"><svg><use href="#i-grid"/></svg><span>ManageBac</span><i class="status-dot"></i></button>
+          <button class="nav-item site-nav" data-site="edupage"><svg><use href="#i-calendar"/></svg><span>EduPage</span><i class="status-dot"></i></button>
+          <div class="nav-label">学习</div>
+          <button class="nav-item" data-route="plan"><svg><use href="#i-check"/></svg><span>计划</span><b id="navTaskCount">0</b></button>
+          <button class="nav-item" data-route="notes"><svg><use href="#i-note"/></svg><span>笔记</span></button>
+          <button class="nav-item" data-route="dictionary"><svg><use href="#i-book"/></svg><span>离线词典</span></button>
+          <button class="nav-item" data-route="ib"><svg><use href="#i-flask"/></svg><span>IB 工具</span></button>
+          <button class="nav-item ai-nav" data-route="ai"><svg><use href="#i-spark"/></svg><span>AI 学习助手</span><em id="aiNavBadge">可选</em></button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <section class="mini-focus" aria-label="专注计时器">
+            <div class="mini-focus-top"><span><svg><use href="#i-clock"/></svg><b id="miniFocusPhase">专注</b></span><button id="miniFocusPlay" aria-label="开始专注"><svg><use href="#i-play"/></svg></button></div>
+            <strong id="miniFocusTime">25:00</strong>
+            <div class="mini-progress"><i id="miniFocusProgress"></i></div>
+          </section>
+          <button class="nav-item settings-nav" data-route="settings"><svg><use href="#i-settings"/></svg><span>设置</span><kbd>Ctrl ,</kbd></button>
+        </div>
+      </aside>
+
+      <header class="topbar">
+        <div class="topbar-copy">
+          <span class="eyebrow" id="topEyebrow">PH LAUNCHER</span>
+          <h1 id="topTitle">今天</h1>
+        </div>
+        <div class="site-toolbar hidden" id="siteToolbar">
+          <div class="browser-buttons">
+            <button data-site-action="back" aria-label="后退"><svg><use href="#i-back"/></svg></button>
+            <button data-site-action="forward" aria-label="前进"><svg><use href="#i-forward"/></svg></button>
+            <button data-site-action="reload" aria-label="刷新"><svg><use href="#i-refresh"/></svg></button>
+          </div>
+          <div class="site-location"><i></i><span id="siteLocation">正在连接…</span></div>
+          <label class="clean-toggle" title="只改变本机显示，可随时恢复原网页"><input id="siteCleanToggle" type="checkbox"/><span></span><b>简洁显示</b></label>
+          <button class="top-icon-button" data-site-action="external" aria-label="在系统浏览器打开"><svg><use href="#i-external"/></svg></button>
+          <button class="top-icon-button" id="siteMenuButton" aria-label="网站选项"><svg><use href="#i-more"/></svg></button>
+        </div>
+        <div class="topbar-actions" id="internalTopActions">
+          <button class="command-button" id="commandButton"><svg><use href="#i-search"/></svg><span>搜索与快捷操作</span><kbd>Ctrl K</kbd></button>
+          <div class="today-chip"><span id="headerWeekday">周一</span><b id="headerDate">08.31</b></div>
+        </div>
+      </header>
+
+      <main class="content" id="content">
+        <section class="page active" data-page="today">
+          <div class="hero-row">
+            <div>
+              <span class="section-kicker" id="greetingKicker">A CALM START</span>
+              <h2 id="greeting">晚上好，今天先做哪件事？</h2>
+              <p>把学校入口、课程节奏和学习计划放在同一张桌面上。</p>
+            </div>
+            <button class="primary-button" data-action="quick-task"><svg><use href="#i-plus"/></svg>添加任务</button>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card next-class-card">
+              <div class="metric-icon green"><svg><use href="#i-calendar"/></svg></div>
+              <div><span>下一节课</span><strong id="nextClassName">尚未添加课程</strong><small id="nextClassMeta">在“计划”中建立课程表</small></div>
+              <button data-route="plan" aria-label="查看课程"><svg><use href="#i-arrow"/></svg></button>
+            </article>
+            <article class="metric-card">
+              <div class="metric-icon wine"><svg><use href="#i-check"/></svg></div>
+              <div><span>今天到期</span><strong id="todayTaskMetric">0 项任务</strong><small id="overdueMetric">没有逾期任务</small></div>
+              <button data-route="plan" aria-label="查看任务"><svg><use href="#i-arrow"/></svg></button>
+            </article>
+            <article class="metric-card">
+              <div class="metric-icon gold"><svg><use href="#i-clock"/></svg></div>
+              <div><span>本周专注</span><strong id="weekFocusMetric">0 分钟</strong><small id="weekSessionMetric">从一次 25 分钟开始</small></div>
+              <button data-action="open-focus" aria-label="开始专注"><svg><use href="#i-arrow"/></svg></button>
+            </article>
+          </div>
+
+          <div class="section-heading"><div><span class="section-kicker">SCHOOL APPS</span><h3>学校应用</h3></div><span>登录状态由每个网站独立保存</span></div>
+          <div class="site-card-grid">
+            <article class="site-card mail-card" data-site="mail">
+              <div class="site-card-icon"><svg><use href="#i-mail"/></svg></div><div><span>学校邮箱</span><h4>收件箱与校园通知</h4><p>安全打开学校企业邮箱，不保存账号密码。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
+            </article>
+            <article class="site-card managebac-card" data-site="managebac">
+              <div class="site-card-icon"><svg><use href="#i-grid"/></svg></div><div><span>ManageBac</span><h4>课程、作业与 IB 进度</h4><p>独立登录空间，文件下载与原网站功能保留。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
+            </article>
+            <article class="site-card edupage-card" data-site="edupage">
+              <div class="site-card-icon"><svg><use href="#i-calendar"/></svg></div><div><span>EduPage</span><h4>课表与校园安排</h4><p>原网页与轻量简洁显示可以随时切换。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
+            </article>
+          </div>
+
+          <div class="dashboard-lower">
+            <section class="panel">
+              <div class="panel-heading"><div><span class="section-kicker">TODAY</span><h3>今天的任务</h3></div><button class="text-button" data-route="plan">全部任务 <svg><use href="#i-arrow"/></svg></button></div>
+              <div class="compact-list" id="todayTaskList"></div>
+            </section>
+            <section class="panel quick-capture-panel">
+              <div class="panel-heading"><div><span class="section-kicker">QUICK CAPTURE</span><h3>快速记录</h3></div></div>
+              <textarea id="quickNoteInput" rows="4" placeholder="记下一个想法、问题或老师的提醒…"></textarea>
+              <div class="quick-capture-actions"><span>仅保存在本机</span><button class="secondary-button" id="saveQuickNote">存为笔记</button></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" data-page="plan">
+          <div class="page-intro"><div><span class="section-kicker">PLAN & FOCUS</span><h2>计划</h2><p>任务、课程和专注时间，按真实节奏排在一起。</p></div><button class="primary-button" data-action="quick-task"><svg><use href="#i-plus"/></svg>新建任务</button></div>
+          <div class="segmented-tabs" data-tab-group="plan"><button class="active" data-tab="tasks">任务</button><button data-tab="schedule">课程表</button><button data-tab="focus">专注</button></div>
+          <div class="tab-panel active" data-tab-panel="tasks">
+            <div class="task-toolbar">
+              <div class="search-field"><svg><use href="#i-search"/></svg><input id="taskSearch" placeholder="搜索任务"/></div>
+              <div class="filter-pills" id="taskFilters"><button class="active" data-filter="open">进行中</button><button data-filter="today">今天</button><button data-filter="upcoming">即将到期</button><button data-filter="done">已完成</button></div>
+            </div>
+            <div class="task-board" id="taskBoard"></div>
+          </div>
+          <div class="tab-panel" data-tab-panel="schedule">
+            <div class="schedule-toolbar"><div><h3>每周课程表</h3><p>课程提醒只在 PH Launcher 运行时生效。</p></div><button class="secondary-button" data-action="add-lesson"><svg><use href="#i-plus"/></svg>添加课程</button></div>
+            <div class="week-grid" id="weekGrid"></div>
+          </div>
+          <div class="tab-panel" data-tab-panel="focus">
+            <div class="focus-layout">
+              <section class="focus-main-card">
+                <span class="section-kicker" id="focusPhaseLabel">FOCUS SESSION</span>
+                <div class="focus-ring" id="focusRing"><div><strong id="focusTime">25:00</strong><span id="focusModeLabel">专注时间</span></div></div>
+                <div class="focus-controls"><button class="circle-button muted" id="focusReset" aria-label="重置"><svg><use href="#i-refresh"/></svg></button><button class="circle-button primary" id="focusPlay" aria-label="开始"><svg><use href="#i-play"/></svg></button><button class="circle-button muted" id="focusSkip" aria-label="跳过阶段"><svg><use href="#i-forward"/></svg></button></div>
+                <div class="preset-row" id="focusPresets"><button class="active" data-focus="25" data-break="5">25 / 5</button><button data-focus="45" data-break="10">45 / 10</button><button data-focus="50" data-break="10">50 / 10</button><button data-focus="0" data-break="0">正计时</button></div>
+              </section>
+              <section class="focus-stats-card"><span class="section-kicker">THIS WEEK</span><h3>本周节奏</h3><div class="focus-stat"><strong id="focusStatMinutes">0</strong><span>专注分钟</span></div><div class="focus-stat-row"><div><b id="focusStatSessions">0</b><span>完成次数</span></div><div><b id="focusStatDays">0</b><span>有专注记录的天数</span></div></div><div class="focus-history" id="focusHistory"></div></section>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" data-page="notes">
+          <div class="page-intro"><div><span class="section-kicker">LOCAL NOTES</span><h2>笔记</h2><p>自动保存、全文搜索，只留在这台电脑。</p></div><button class="primary-button" data-action="new-note"><svg><use href="#i-plus"/></svg>新建笔记</button></div>
+          <div class="notes-layout">
+            <aside class="notes-list-pane"><div class="search-field"><svg><use href="#i-search"/></svg><input id="noteSearch" placeholder="搜索标题或正文"/></div><div class="note-filter-row"><button class="active" data-note-filter="all">全部</button><button data-note-filter="pinned">置顶</button></div><div class="note-list" id="noteList"></div></aside>
+            <section class="note-editor" id="noteEditor"><div class="empty-state"><div class="empty-icon"><svg><use href="#i-note"/></svg></div><h3>选择一条笔记</h3><p>或新建笔记，开始记录。</p></div></section>
+          </div>
+        </section>
+
+        <section class="page" data-page="dictionary">
+          <div class="page-intro"><div><span class="section-kicker">OFFLINE DICTIONARY</span><h2>离线英汉词典</h2><p>释义、音标与词形全部保存在电脑中，断网也能查询。</p></div><span class="offline-badge"><i></i>完全离线</span></div>
+          <div class="dictionary-layout">
+            <aside class="dictionary-search-pane">
+              <div class="dictionary-search-box"><svg><use href="#i-search"/></svg><input id="dictionarySearch" autocomplete="off" spellcheck="false" placeholder="输入英文单词或中文释义"/><kbd>Enter</kbd></div>
+              <div class="dictionary-meta"><span id="dictionaryStatus">正在准备离线词库…</span><button id="dictionaryClear" class="text-button">清除</button></div>
+              <div class="dictionary-examples"><span>试试</span><button data-dict-example="analyze">analyze</button><button data-dict-example="evidence">evidence</button><button data-dict-example="photosynthesis">photosynthesis</button></div>
+              <div class="dictionary-suggestions" id="dictionarySuggestions"><div class="empty-row">输入单词开始查询</div></div>
+              <p class="dictionary-source">词库：ECDICT · MIT License</p>
+            </aside>
+            <article class="dictionary-result" id="dictionaryResult">
+              <div class="empty-state"><div class="empty-icon"><svg><use href="#i-book"/></svg></div><h3>随时查一个词</h3><p>支持英汉释义、英文定义、词形变化和系统语音朗读。</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page="ib">
+          <div class="page-intro"><div><span class="section-kicker">IB TOOLKIT</span><h2>IB 工具</h2><p>用于拆解与核对，不替代任课教师和最新学科指南。</p></div></div>
+          <div class="ib-grid">
+            <section class="tool-card command-tool"><div class="tool-card-head"><div class="metric-icon green"><svg><use href="#i-search"/></svg></div><div><span>IB COMMAND TERMS</span><h3>IB 指令词速查</h3></div></div><p class="tool-explainer">用于判断 IB 题目要求的答题动作与深度，不是 AI 指令。</p><div class="search-field"><svg><use href="#i-search"/></svg><input id="commandSearch" placeholder="搜索 Analyze、Evaluate、Discuss…"/></div><div class="command-results" id="commandResults"></div></section>
+            <section class="tool-card word-tool"><div class="tool-card-head"><div class="metric-icon gold"><svg><use href="#i-note"/></svg></div><div><span>WORD COUNTER</span><h3>字数统计</h3></div></div><textarea id="wordCounterInput" placeholder="粘贴文本进行即时统计；关闭页面后不会保留。"></textarea><div class="word-stats"><div><strong id="wordCount">0</strong><span>词</span></div><div><strong id="charCount">0</strong><span>字符</span></div><div><strong id="readTime">0</strong><span>分钟阅读</span></div></div><button class="text-button" id="wordToNote">保存为笔记 <svg><use href="#i-arrow"/></svg></button></section>
+            <section class="tool-card grade-tool"><div class="tool-card-head"><div class="metric-icon wine"><svg><use href="#i-flask"/></svg></div><div><span>WEIGHTED SCORE</span><h3>加权成绩试算</h3></div></div><div class="grade-rows" id="gradeRows"></div><button class="add-row-button" id="addGradeRow"><svg><use href="#i-plus"/></svg>添加分项</button><div class="grade-total"><span>加权结果</span><strong id="gradeTotal">—</strong></div><small>不内置分数线，请以课程教师提供的标准为准。</small></section>
+            <section class="tool-card milestone-tool"><div class="tool-card-head"><div class="metric-icon green"><svg><use href="#i-calendar"/></svg></div><div><span>CORE MILESTONES</span><h3>里程碑模板</h3></div></div><div class="template-list"><button data-template="EE"><b>EE</b><span>选题 → 研究问题 → 资料 → 初稿 → 终稿</span><svg><use href="#i-arrow"/></svg></button><button data-template="TOK"><b>TOK</b><span>问题拆解 → 例证 → 论证 → 修订</span><svg><use href="#i-arrow"/></svg></button><button data-template="IA"><b>IA</b><span>问题 → 方法 → 数据 → 分析 → 反思</span><svg><use href="#i-arrow"/></svg></button></div><p>模板会添加为可编辑任务，不会替你设定截止日期。</p></section>
+          </div>
+        </section>
+
+        <section class="page" data-page="ai">
+          <div class="page-intro"><div><span class="section-kicker">OPTIONAL AI</span><h2>AI 学习助手</h2><p>默认关闭。你也可以单独授权它读取和整理启动器内容。</p></div><div class="ai-page-actions"><span class="privacy-badge"><i></i>权限由你控制</span><button class="secondary-button hidden" id="aiEditConfig">连接设置</button></div></div>
+          <div class="ai-setup" id="aiSetup">
+            <section class="ai-choice-panel"><h3>选择使用方式</h3><p>跳过 AI 不会下载模型、启动服务或发出请求。</p><div class="ai-choice-list"><button class="active" data-ai-provider="off"><span class="choice-radio"></span><div><strong>暂不启用</strong><small>保留全部离线学习工具</small></div></button><button data-ai-provider="local"><span class="choice-radio"></span><div><strong>本地 AI</strong><small>通过 Ollama 在本机运行，内容不离开电脑</small></div></button><button data-ai-provider="api"><span class="choice-radio"></span><div><strong>API AI</strong><small>连接支持 OpenAI-compatible 的服务</small></div></button></div></section>
+            <section class="ai-config-panel" id="aiConfigPanel"></section>
+          </div>
+          <div class="ai-chat hidden" id="aiChat"><div class="ai-control-strip"><div><span class="section-kicker">LAUNCHER CONTROL</span><strong>AI 操作启动器</strong><small id="aiControlStatus">关闭时只进行普通对话</small></div><label class="switch"><input id="aiControlToggle" type="checkbox"/><span></span></label></div><div class="chat-messages" id="chatMessages"></div><div class="prompt-chips"><button data-ai-action="edupage">从 EduPage 读取常规课表</button><button data-prompt="请查看我的待办，帮我安排今天的学习顺序。">安排今日任务</button><button data-prompt="请用苏格拉底式提问帮助我理解这个概念，不要直接给答案。">苏格拉底式提问</button><button data-prompt="请根据我提供的内容生成 5 道自测题，暂时不要给答案。">生成自测题</button><button data-prompt="请解释我提供的内容，并指出最容易误解的地方。">解释概念</button></div><div class="chat-composer"><textarea id="aiInput" rows="3" placeholder="输入问题，或让 AI 整理任务、笔记和课程表…"></textarea><button id="aiSend"><svg><use href="#i-arrow"/></svg></button></div><div class="chat-footnote">AI 可能出错。对任务、笔记和课程表的写入都会先显示清单，确认后才保存。</div></div>
+        </section>
+
+        <section class="page" data-page="settings">
+          <div class="page-intro"><div><span class="section-kicker">PREFERENCES</span><h2>设置</h2><p>调整提醒、网页显示、快捷键与本机数据。</p></div><span class="save-state" id="saveState"><i></i>已保存</span></div>
+          <div class="settings-layout">
+            <aside class="settings-sections-nav"><button class="active" data-settings-section="general">通用</button><button data-settings-section="websites">学校网站</button><button data-settings-section="shortcuts">快捷键</button><button data-settings-section="privacy">数据与隐私</button><button data-settings-section="about">关于</button></aside>
+            <div class="settings-content">
+              <section class="settings-section active" data-settings-panel="general"><h3>通用</h3><div class="setting-row"><div><strong>你的称呼</strong><small>用于首页问候，可留空</small></div><input id="studentNameSetting" class="text-input" maxlength="24" placeholder="例如：Alex"/></div><div class="setting-row"><div><strong>开机启动</strong><small>需要稳定接收课程提醒时开启</small></div><label class="switch"><input id="openAtLoginSetting" type="checkbox"/><span></span></label></div><div class="setting-row"><div><strong>关闭窗口时留在托盘</strong><small>课程提醒与计时器可继续工作</small></div><label class="switch"><input id="minimizeTraySetting" type="checkbox"/><span></span></label></div><div class="setting-row"><div><strong>默认课前提醒</strong><small>每门课程还可单独调整</small></div><select id="reminderSetting"><option value="5">提前 5 分钟</option><option value="10">提前 10 分钟</option><option value="15">提前 15 分钟</option><option value="0">不提醒</option></select></div></section>
+              <section class="settings-section" data-settings-panel="websites"><h3>学校网站</h3><p class="setting-intro">简洁显示仅改变本机字体、圆角与留白；登录、安全提示和表单功能保持原样。</p><div id="websiteSettings"></div></section>
+              <section class="settings-section" data-settings-panel="shortcuts"><h3>全局快捷键</h3><p class="setting-intro">默认只启用显示／隐藏。其余组合键需要你主动开启，避免与输入法或学习软件冲突。</p><div id="shortcutSettings"></div></section>
+              <section class="settings-section" data-settings-panel="privacy"><h3>数据与隐私</h3><div class="privacy-card"><div class="privacy-lock"><svg><use href="#i-check"/></svg></div><div><strong id="encryptionStatus">本地数据已加密</strong><p>笔记、任务、课程表与设置保存在当前系统用户目录。网站密码由网页自身处理，不进入 PH Launcher 数据库。</p></div></div><div class="data-actions"><button class="secondary-button" id="exportData"><svg><use href="#i-download"/></svg>导出备份</button><button class="secondary-button" id="importData"><svg><use href="#i-upload"/></svg>恢复备份</button><button class="text-button" id="showData">查看数据位置 <svg><use href="#i-arrow"/></svg></button></div><p class="path-label">导出的 JSON 备份不含 API Key，且不会额外加密；请像保管个人笔记一样妥善保存。</p><p class="path-label" id="dataPathLabel"></p></section>
+              <section class="settings-section" data-settings-panel="about"><h3>关于 PH Launcher</h3><div class="about-card"><div class="brand-mark large"><span>PH</span><i></i></div><div><strong>PH Launcher</strong><span>Version 0.4.1</span><p>面向平和 IB 学生的本地学习工作台。</p></div></div><div class="disclaimer">PH Launcher 是独立学生工具，并非上海市民办平和学校、ManageBac、EduPage 或网易的官方产品。所有网站名称归各自权利人所有。离线英汉词典使用 MIT 许可的 ECDICT 数据。</div></section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="modal" id="taskDialog"><form id="taskForm"><div class="modal-head"><div><span class="section-kicker">TASK</span><h3 id="taskDialogTitle">新建任务</h3></div><button type="button" data-close-dialog="taskDialog" aria-label="关闭">×</button></div><input type="hidden" id="taskId"/><label><span>任务名称</span><input id="taskTitle" required maxlength="120" autofocus placeholder="要完成什么？"/></label><div class="form-grid"><label><span>学科</span><input id="taskSubject" maxlength="40" placeholder="例如：Physics"/></label><label><span>截止时间</span><input id="taskDue" type="datetime-local"/></label></div><div class="form-grid"><label><span>预计用时</span><select id="taskEstimate"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="45">45 分钟</option><option value="60">1 小时</option><option value="90">1.5 小时</option><option value="120">2 小时</option></select></label><label><span>优先级</span><select id="taskPriority"><option value="normal">普通</option><option value="high">重要</option><option value="low">稍后</option></select></label></div><label><span>备注或链接</span><textarea id="taskNotes" rows="3" maxlength="500" placeholder="可选"></textarea></label><div class="modal-actions split"><button class="danger-text hidden" id="deleteTask" type="button">删除任务</button><div><button class="ghost-button" type="button" data-close-dialog="taskDialog">取消</button><button class="primary-button" id="saveTaskButton" type="submit">保存任务</button></div></div></form></dialog>
+
+    <dialog class="modal" id="lessonDialog"><form id="lessonForm"><div class="modal-head"><div><span class="section-kicker">CLASS</span><h3>添加课程</h3></div><button type="button" data-close-dialog="lessonDialog" aria-label="关闭">×</button></div><input type="hidden" id="lessonId"/><label><span>课程名称</span><input id="lessonCourse" required maxlength="60" placeholder="例如：English A"/></label><div class="form-grid"><label><span>星期</span><select id="lessonDay"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select></label><label><span>开始时间</span><input id="lessonStart" type="time" required value="08:00"/></label></div><div class="form-grid"><label><span>结束时间</span><input id="lessonEnd" type="time" value="08:45"/></label><label><span>教室</span><input id="lessonRoom" maxlength="40" placeholder="可选"/></label></div><label><span>课前提醒</span><select id="lessonReminder"><option value="5">提前 5 分钟</option><option value="10" selected>提前 10 分钟</option><option value="15">提前 15 分钟</option><option value="0">不提醒</option></select></label><div class="modal-actions split"><button class="danger-text hidden" id="deleteLesson" type="button">删除课程</button><div><button class="ghost-button" type="button" data-close-dialog="lessonDialog">取消</button><button class="primary-button" id="saveLessonButton" type="submit">保存课程</button></div></div></form></dialog>
+
+    <dialog class="modal ai-risk-dialog" id="aiControlDialog"><form id="aiControlForm"><div class="modal-head"><div><span class="section-kicker">RISK & PERMISSION</span><h3>允许 AI 操作启动器</h3></div><button type="button" data-close-dialog="aiControlDialog" aria-label="关闭">×</button></div><p class="risk-intro">开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改。</p><div class="risk-list"><div><b>写入前仍由你决定</b><span>所有任务、笔记和课程表更改都会先显示清单；没有确认就不会保存。</span></div><div><b>AI 可能理解错误</b><span>它可能导入错误课程、日期或教室。确认前请逐项核对。</span></div><div><b>账号信息不开放</b><span>不会读取密码、Cookie、验证码或 API Key，也不能代你发送邮件、提交作业或清除数据。</span></div><div class="api-risk hidden" id="aiApiRisk"><b>API 模式会发送授权内容</b><span>AI 请求读取时，相应任务、笔记摘要或课表会发送给你配置的服务商。</span></div></div><label class="risk-check"><input id="aiRiskAccepted" type="checkbox"/><span>我理解这些风险，并会在每次写入前核对更改清单。</span></label><div class="modal-actions"><button class="ghost-button" type="button" data-close-dialog="aiControlDialog">暂不开启</button><button class="primary-button" id="acceptAiControl" type="submit" disabled>理解并开启</button></div></form></dialog>
+
+    <dialog class="command-palette" id="commandDialog"><div class="command-search"><svg><use href="#i-search"/></svg><input id="commandInput" placeholder="输入操作或页面名称…" autocomplete="off"/><kbd>Esc</kbd></div><div class="command-list" id="commandList"></div><div class="command-hint"><span>↑ ↓ 选择</span><span>Enter 打开</span></div></dialog>
+
+    <div class="popover hidden" id="sitePopover"><button id="siteHomeAction"><svg><use href="#i-home"/></svg>返回网站首页</button><button id="siteClearAction" class="danger"><svg><use href="#i-trash"/></svg>清除此网站的登录数据</button></div>
+    <div class="toast-host" id="toastHost" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

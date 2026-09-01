@@ -1,0 +1,89 @@
+{
+  "name": "ph-launcher",
+  "version": "0.4.1",
+  "description": "PH Launcher - a privacy-first desktop workspace for Pinghe IB students",
+  "main": "electron/main.cjs",
+  "author": "PH Launcher",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke-test",
+    "self-test": "electron . --self-test",
+    "capture": "electron . --capture-ui",
+    "capture:mail": "electron . --capture-site=mail",
+    "icon": "node scripts/generate-icon.cjs",
+    "dictionary": "node scripts/build-dictionary.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "dist": "electron-builder --win portable --x64",
+    "dist:installer": "electron-builder --win nsis --x64",
+    "dist:mac": "electron-builder --mac dmg zip --universal"
+  },
+  "devDependencies": {
+    "csv-parse": "^7.0.2",
+    "electron": "44.1.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "cn.phlauncher.desktop",
+    "productName": "PH Launcher",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "assets/icon.*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/dictionary",
+        "to": "dictionary"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "artifactName": "PH-Launcher-${version}-${arch}.${ext}",
+      "target": [
+        "portable"
+      ]
+    },
+    "mac": {
+      "icon": "assets/icon.png",
+      "category": "public.app-category.education",
+      "minimumSystemVersion": "13.0",
+      "artifactName": "PH-Launcher-${version}-macOS-${arch}.${ext}",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "PH Launcher ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "PH-Launcher-${version}-Portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PH Launcher"
+    }
+  }
+}
