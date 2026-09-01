@@ -1122,6 +1122,7 @@ function registerIpc() {
   });
   ipcMain.handle('dictionary:info', () => offlineDictionary.info());
   ipcMain.handle('dictionary:lookup', (_event, query) => offlineDictionary.lookup(query));
+  ipcMain.handle('system:version', () => app.getVersion());
   ipcMain.handle('system:hardware', () => getHardwareProfile());
   ipcMain.handle('system:open-url', (_event, rawUrl) => {
     const parsed = safeHttpUrl(rawUrl, true);

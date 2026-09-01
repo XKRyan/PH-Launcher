@@ -10,7 +10,13 @@ const {
   hasModel,
   isAllowedModel,
   LocalAiDeploymentManager,
-  OLLAMA_MAC_DOWNLOAD_URL,
+  OLLAMA_MAC_BUNDLE_ID,
+  OLLAMA_MAC_SHA256,
+  OLLAMA_MAC_TEAM_ID,
+  OLLAMA_MAC_VERSION,
+  isLoopbackOllamaListener,
+  parseMacLsofListeners,
+  parseMacSignatureDetails,
   requiredSpaceGb,
   translatePullStatus,
 } = require('../electron/ai-deployment.cjs');
@@ -114,7 +120,12 @@ test('Ollama installer download resumes from a saved partial file', async () => 
   try {
     const installerPath = path.join(directory, 'OllamaSetup.exe');
     fs.writeFileSync(`${installerPath}.part`, Buffer.alloc(600_000, 1));
-    fs.writeFileSync(`${installerPath}.json`, JSON.stringify({ etag: '"test-etag"', total: 1_200_000 }));
+    fs.writeFileSync(`${installerPath}.json`, JSON.stringify({
+      sourceUrl: 'https://ollama.com/download/OllamaSetup.exe',
+      expectedSha256: '',
+      etag: '"test-etag"',
+      total: 1_200_000,
+    }));
     let requestHeaders = null;
     const manager = new LocalAiDeploymentManager({
       platform: 'win32',
@@ -146,6 +157,131 @@ test('Ollama installer download resumes from a saved partial file', async () => 
   }
 });
 
+test('complete installer cache is rejected when it exceeds the configured maximum', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-cache-limit-test-'));
+  try {
+    const url = 'https://example.test/Ollama.dmg';
+    const installerPath = path.join(directory, 'Ollama.dmg');
+    fs.writeFileSync(installerPath, Buffer.alloc(11, 1));
+    fs.writeFileSync(`${installerPath}.json`, JSON.stringify({
+      sourceUrl: url,
+      expectedSha256: 'reviewed-hash',
+    }));
+    let fetched = false;
+    const manager = new LocalAiDeploymentManager({
+      platform: 'darwin',
+      downloadDirectory: directory,
+      getHardwareProfile: async () => ({}),
+      configureAi: async () => {},
+      emit: () => {},
+      fetchImpl: async () => {
+        fetched = true;
+        throw new Error('oversized cache must fail before network access');
+      },
+    });
+    await assert.rejects(
+      manager.downloadArtifact({
+        url,
+        fileName: 'Ollama.dmg',
+        minimumBytes: 4,
+        maximumBytes: 10,
+        platformName: 'macOS',
+        expectedSha256: 'reviewed-hash',
+      }),
+      (error) => error.code === 'PH_OLLAMA_SECURITY_ERROR',
+    );
+    assert.equal(fetched, false);
+    assert.equal(fs.existsSync(installerPath), false);
+    assert.equal(fs.existsSync(`${installerPath}.json`), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('installer cache with an old source URL or hash is never resumed or reused', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-cache-identity-test-'));
+  try {
+    const url = 'https://example.test/v2/Ollama.dmg';
+    const installerPath = path.join(directory, 'Ollama.dmg');
+    fs.writeFileSync(`${installerPath}.part`, Buffer.alloc(4, 1));
+    fs.writeFileSync(`${installerPath}.json`, JSON.stringify({
+      sourceUrl: 'https://example.test/v1/Ollama.dmg',
+      expectedSha256: 'hash-v2',
+      etag: '"old-etag"',
+    }));
+    const requests = [];
+    const manager = new LocalAiDeploymentManager({
+      platform: 'darwin',
+      downloadDirectory: directory,
+      getHardwareProfile: async () => ({}),
+      configureAi: async () => {},
+      emit: () => {},
+      fetchImpl: async (_requestUrl, options) => {
+        requests.push(options.headers);
+        return new Response(Buffer.alloc(8, 2), {
+          status: 200,
+          headers: { 'content-length': '8', etag: '"new-etag"' },
+        });
+      },
+    });
+    let completedPath = await manager.downloadArtifact({
+      url,
+      fileName: 'Ollama.dmg',
+      minimumBytes: 8,
+      maximumBytes: 16,
+      platformName: 'macOS',
+      expectedSha256: 'hash-v2',
+    });
+    assert.equal(requests[0].range, undefined);
+    assert.deepEqual(fs.readFileSync(completedPath), Buffer.alloc(8, 2));
+
+    fs.writeFileSync(installerPath, Buffer.alloc(8, 3));
+    fs.writeFileSync(`${installerPath}.json`, JSON.stringify({
+      sourceUrl: url,
+      expectedSha256: 'hash-v1',
+    }));
+    manager.fetch = async (_requestUrl, options) => {
+      requests.push(options.headers);
+      return new Response(Buffer.alloc(9, 4), {
+        status: 200,
+        headers: { 'content-length': '9' },
+      });
+    };
+    completedPath = await manager.downloadArtifact({
+      url,
+      fileName: 'Ollama.dmg',
+      minimumBytes: 8,
+      maximumBytes: 16,
+      platformName: 'macOS',
+      expectedSha256: 'hash-v2',
+    });
+    assert.equal(requests[1].range, undefined);
+    assert.deepEqual(fs.readFileSync(completedPath), Buffer.alloc(9, 4));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Ollama installer checksum must match the official release manifest', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-checksum-test-'));
+  try {
+    const artifactPath = path.join(directory, 'OllamaSetup.exe');
+    fs.writeFileSync(artifactPath, 'hello');
+    const manager = new LocalAiDeploymentManager({
+      platform: 'win32',
+      getHardwareProfile: async () => ({}),
+      configureAi: async () => {},
+      emit: () => {},
+      fetchImpl: async () => new Response('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  ./OllamaSetup.exe\n'),
+    });
+    assert.equal(await manager.verifyOfficialChecksum(artifactPath, 'OllamaSetup.exe'), '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824');
+    manager.fetch = async () => new Response(`${'0'.repeat(64)}  ./OllamaSetup.exe\n`);
+    await assert.rejects(manager.verifyOfficialChecksum(artifactPath, 'OllamaSetup.exe'), (error) => error.code === 'PH_OLLAMA_SECURITY_ERROR');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('local AI deployment keeps a sanitized diagnostic log', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-log-test-'));
   try {
@@ -166,29 +302,122 @@ test('local AI deployment keeps a sanitized diagnostic log', () => {
   }
 });
 
-test('macOS local AI deployment opens the official installer and waits for the user', async () => {
-  let openedUrl = '';
+test('macOS local AI deployment installs Ollama and enables the verified model in one flow', async () => {
+  let configured = null;
+  const calls = [];
   const manager = new LocalAiDeploymentManager({
     platform: 'darwin',
     getHardwareProfile: async () => ({
       diskFreeGb: 20,
       recommendation: { recommended: true, model: 'qwen3.5:2b', label: '推荐 Qwen3.5 2B' },
     }),
-    configureAi: async () => { throw new Error('should not configure before Ollama is installed'); },
-    openExternal: async (url) => { openedUrl = url; },
+    configureAi: async (config) => { configured = config; },
     emit: () => {},
   });
   manager.findOllama = async () => '';
+  manager.downloadMacInstaller = async () => {
+    calls.push('download');
+    return '/tmp/Ollama.dmg';
+  };
+  manager.verifyOfficialChecksum = async () => calls.push('checksum');
+  manager.installOllamaOnMac = async () => {
+    calls.push('install');
+    return '/Users/student/Applications/Ollama.app/Contents/Resources/ollama';
+  };
+  manager.clearMacInstallerCache = () => calls.push('clear-cache');
+  manager.ensureOllamaService = async () => calls.push('start');
+  manager.pullModel = async () => calls.push('pull');
+  manager.fetchTags = async () => ({ models: [{ name: 'qwen3.5:2b' }] });
   const started = manager.start();
   assert.equal(started.running, true);
   await manager.activeTask;
-  assert.equal(manager.snapshot().stage, 'needs-user-install');
+  assert.equal(manager.snapshot().stage, 'complete');
   assert.equal(manager.snapshot().running, false);
-  assert.equal(openedUrl, OLLAMA_MAC_DOWNLOAD_URL);
+  assert.deepEqual(calls, ['download', 'checksum', 'install', 'clear-cache', 'start', 'pull']);
+  assert.equal(configured.provider, 'local');
+  assert.equal(configured.localModel, 'qwen3.5:2b');
+});
+
+test('macOS Ollama identity parser pins the reviewed bundle and Apple team', () => {
+  assert.equal(OLLAMA_MAC_VERSION, '0.33.2');
+  assert.equal(OLLAMA_MAC_SHA256, '01b844bc6058bd34fcab495e0c3e6315147d6488252f24d04ab54ef12048a56e');
+  const details = parseMacSignatureDetails([
+    `Identifier=${OLLAMA_MAC_BUNDLE_ID}`,
+    `Authority=Developer ID Application: Infra Technologies, Inc. (${OLLAMA_MAC_TEAM_ID})`,
+    'Authority=Developer ID Certification Authority',
+    'Authority=Apple Root CA',
+    `TeamIdentifier=${OLLAMA_MAC_TEAM_ID}`,
+  ].join('\n'));
+  assert.equal(details.identifier, 'com.electron.ollama');
+  assert.equal(details.teamIdentifier, '3MU9H2V9Y9');
+  assert.match(details.authorities[0], /Developer ID Application/);
+});
+
+test('macOS lsof listener parser accepts only loopback Ollama bindings', () => {
+  const listeners = parseMacLsofListeners([
+    'p120',
+    'n127.0.0.1:11434',
+    'p121',
+    'n[::1]:11434',
+  ].join('\n'));
+  assert.deepEqual(listeners, [
+    { processId: '120', address: '127.0.0.1:11434' },
+    { processId: '121', address: '[::1]:11434' },
+  ]);
+  assert.equal(isLoopbackOllamaListener('127.0.0.1:11434'), true);
+  assert.equal(isLoopbackOllamaListener('TCP [::1]:11434 (LISTEN)'), true);
+  for (const unsafeAddress of [
+    '0.0.0.0:11434',
+    '*:11434',
+    '[::]:11434',
+    '192.168.1.8:11434',
+    '[fe80::1]:11434',
+  ]) {
+    assert.equal(isLoopbackOllamaListener(unsafeAddress), false, unsafeAddress);
+  }
+});
+
+test('macOS mount cleanup preserves the temporary directory until detach is confirmed', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-ollama-'));
+  const markerPath = path.join(directory, 'mounted-image-marker');
+  fs.writeFileSync(markerPath, 'keep');
+  const manager = new LocalAiDeploymentManager({
+    platform: 'darwin',
+    getHardwareProfile: async () => ({}),
+    configureAi: async () => {},
+    emit: () => {},
+  });
+  manager.temporaryDirectory = directory;
+  manager.mountedMacImage = { device: '/dev/disk99s1', mountPoint: path.join(directory, 'mount') };
+  manager.cleanupTemporaryDirectory();
+  assert.equal(fs.existsSync(markerPath), true);
+  assert.equal(manager.temporaryDirectory, directory);
+
+  manager.mountedMacImage = null;
+  manager.cleanupTemporaryDirectory();
+  assert.equal(fs.existsSync(directory), false);
+  assert.equal(manager.temporaryDirectory, '');
+});
+
+test('runProgram timeout converges without leaving the deployment promise pending', async () => {
+  const manager = new LocalAiDeploymentManager({
+    getHardwareProfile: async () => ({}),
+    configureAi: async () => {},
+    emit: () => {},
+  });
+  const startedAt = Date.now();
+  await assert.rejects(
+    manager.runProgram(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeout: 50 }),
+    /执行超时/,
+  );
+  assert.ok(Date.now() - startedAt < 6_500);
 });
 
 test('clean display styles are limited to approved school-site domains', () => {
-  assert.match(getSiteCss('mail', 'https://mail.shphschool.com/'), /--ph-green/);
+  const schoolMailCss = getSiteCss('mail', 'https://mail.shphschool.com/');
+  assert.match(schoolMailCss, /--ph-green/);
+  assert.match(schoolMailCss, /login-mod-wrapper\.login-mod-form/);
+  assert.match(schoolMailCss, /#donwload_block \{ display: none/);
   assert.match(getSiteCss('managebac', 'https://shph.managebac.cn/login'), /--ph-green/);
   assert.match(getSiteCss('edupage', 'https://pingheschool.edupage.org/'), /--ph-green/);
   assert.match(getSiteCss('mail', 'https://entry.mail.163.com/'), /--ph-clean-mode:\s*1/);
@@ -302,10 +531,22 @@ test('main process keeps school views isolated and web security enabled', () => 
   assert.match(source, /process\.platform === 'darwin'/);
 });
 
-test('package config includes Universal macOS DMG and ZIP targets', () => {
+test('package config includes hardened Universal macOS DMG, ZIP and PKG targets', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(packageJson.version, '0.4.1');
+  assert.equal(packageJson.version, '0.5.0');
   assert.equal(packageJson.build.mac.minimumSystemVersion, '13.0');
-  assert.deepEqual(packageJson.build.mac.target, ['dmg', 'zip']);
+  assert.equal(packageJson.build.mac.hardenedRuntime, true);
+  assert.deepEqual(packageJson.build.mac.target, ['dmg', 'zip', 'pkg']);
   assert.match(packageJson.scripts['dist:mac'], /--universal/);
+  assert.match(packageJson.scripts['dist:mac:release'], /forceCodeSigning=true/);
+  assert.equal(packageJson.build.pkg.installLocation, '/Applications');
+});
+
+test('macOS signing entitlements keep the hardened runtime exceptions minimal', () => {
+  for (const fileName of ['entitlements.mac.plist', 'entitlements.mac.inherit.plist']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'build', fileName), 'utf8');
+    assert.match(source, /com\.apple\.security\.cs\.allow-jit/);
+    assert.doesNotMatch(source, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
+    assert.doesNotMatch(source, /com\.apple\.security\.cs\.disable-library-validation/);
+  }
 });

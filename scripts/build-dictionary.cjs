@@ -35,7 +35,11 @@ async function build() {
       windowsHide: true,
       encoding: 'utf8',
     }).trim();
-  } catch {}
+  } catch {
+    try {
+      sourceCommit = fs.readFileSync(path.join(path.dirname(inputPath), '.source-commit'), 'utf8').trim();
+    } catch {}
+  }
 
   const database = new DatabaseSync(temporaryPath);
   database.exec(`

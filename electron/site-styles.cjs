@@ -45,15 +45,56 @@ const BASE = `
 
 const MAIL = `
   body { min-height: 100vh !important; background: radial-gradient(circle at 18% 12%, #edf3ef 0, transparent 36%), var(--ph-ivory) !important; }
-  .toplinks, .goto, .gotoLink, [class*="download" i]:not(a), [class*="advert" i], [class*="promotion" i] { opacity: .72 !important; }
+  .toplinks, [class*="advert" i], [class*="promotion" i] { opacity: .72 !important; }
   .login-mod, .login-mod-form, .mod, [class*="loginbox" i], [class*="mail-card" i], [class*="panel" i] { border-radius: 18px !important; }
   .login-mod-form, [class*="loginbox" i], [class*="mail-card" i], [class*="panel" i] {
     background-color: rgba(255,253,248,.97) !important;
     box-shadow: var(--ph-shadow) !important;
     border: 1px solid var(--ph-border) !important;
   }
-  .m-ipt, .ipt-t, input[type="text"], input[type="password"], input[type="email"] { border-radius: 10px !important; background: #fff !important; }
-  .form-btn button, .form-btn a, button[type="submit"], input[type="submit"] { border-radius: 10px !important; }
+  .login-mod-wrapper.login-mod-form {
+    height: 375px !important;
+    overflow: hidden !important;
+    background: rgba(255,253,248,.98) !important;
+    border: 1px solid rgba(31,90,70,.18) !important;
+    box-shadow: 0 22px 60px rgba(20,55,44,.18) !important;
+  }
+  .login-mod label.tit { color: var(--ph-ink) !important; font-weight: 600 !important; }
+  .m-ipt, .login-mod .ipt-t, input[type="text"], input[type="password"], input[type="email"] {
+    box-sizing: border-box !important;
+    min-height: 40px !important;
+    padding: 8px 12px !important;
+    border: 1px solid rgba(31,90,70,.2) !important;
+    border-radius: 10px !important;
+    background: #fff !important;
+    transition: border-color .16s ease, box-shadow .16s ease !important;
+  }
+  .login-mod .ipt-t:focus {
+    border-color: var(--ph-green) !important;
+    box-shadow: 0 0 0 3px rgba(31,90,70,.11) !important;
+  }
+  .login-mod-wrapper .app_sirius {
+    border-color: transparent rgba(31,90,70,.9) transparent transparent !important;
+  }
+  .form-btn, .form-btn button, .form-btn a, button[type="submit"], input[type="submit"] {
+    border: 0 !important;
+    border-radius: 10px !important;
+    color: #fff !important;
+    background: linear-gradient(135deg, #276a53, var(--ph-green)) !important;
+    box-shadow: 0 7px 18px rgba(31,90,70,.2) !important;
+    letter-spacing: .08em !important;
+  }
+  .form-btn:hover, button[type="submit"]:hover, input[type="submit"]:hover { filter: brightness(1.05) !important; }
+  .login-mod .goto {
+    margin-inline: 10px !important;
+    padding-top: 17px !important;
+    border-top: 1px solid rgba(31,90,70,.1) !important;
+    background-image: none !important;
+  }
+  .gotoLink, .login-mod a, #donwload_block, .lingxi-download-btn { color: var(--ph-green) !important; }
+  .lingxi-download-btn { border-color: rgba(31,90,70,.35) !important; }
+  #donwload_block { display: none !important; }
+  .ipt-c, input[type="checkbox"] { accent-color: var(--ph-green) !important; }
   [class*="sidebar" i], [class*="leftbar" i], [class*="folder" i] { background-color: #edf2ee !important; }
   [class*="mail-list" i] > *, [class*="message-list" i] > *, [class*="list-item" i] { border-color: rgba(31,90,70,.09) !important; }
   [class*="toolbar" i], [class*="header" i] { box-shadow: none !important; border-color: var(--ph-border) !important; }

@@ -1,0 +1,104 @@
+name: Release signed macOS packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-universal:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare pinned offline dictionary
+        run: npm run dictionary:prepare
+      - name: Run automated checks
+        run: npm test
+      - name: Verify pinned Ollama trust identity
+        run: zsh scripts/verify-ollama-mac-trust.sh
+      - name: Require signing and notarization credentials
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.MAC_CSC_INSTALLER_LINK }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.MAC_CSC_INSTALLER_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: zsh
+        run: |
+          required=(CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID)
+          for name in $required; do
+            if ! value="$(printenv "$name")" || [[ -z "$value" ]]; then
+              echo "Missing required GitHub secret: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Build signed Universal packages
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.MAC_CSC_INSTALLER_LINK }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.MAC_CSC_INSTALLER_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac:release
+      - name: Run signed app self-test
+        shell: zsh
+        run: |
+          app_path="release/mac-universal/PH Launcher.app"
+          executable="$app_path/Contents/MacOS/PH Launcher"
+          [[ -d "$app_path" && ! -L "$app_path" && -x "$executable" ]] || { echo "Signed Universal app is missing" >&2; exit 1; }
+          "$executable" --self-test
+      - name: Notarize the final DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: zsh scripts/notarize-mac-artifacts.sh
+      - name: Verify release packages
+        env:
+          EXPECTED_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: zsh scripts/verify-mac-release.sh
+      - name: Write SHA-256 manifest
+        shell: zsh
+        run: |
+          cd release
+          shasum -a 256 PH-Launcher-*.dmg PH-Launcher-*.zip PH-Launcher-*.pkg > SHA256SUMS.txt
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PH-Launcher-macOS-signed
+          path: |
+            release/PH-Launcher-*.dmg
+            release/PH-Launcher-*.zip
+            release/PH-Launcher-*.pkg
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Publish tagged GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: zsh
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/PH-Launcher-*.dmg \
+            release/PH-Launcher-*.zip \
+            release/PH-Launcher-*.pkg \
+            release/SHA256SUMS.txt \
+            --verify-tag \
+            --generate-notes \
+            --title "PH Launcher $GITHUB_REF_NAME"

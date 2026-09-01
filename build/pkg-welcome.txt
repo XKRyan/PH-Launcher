@@ -1,0 +1,5 @@
+欢迎安装 PH Launcher。
+
+PH Launcher 将平和邮箱、ManageBac、EduPage、计划、笔记、课程提醒、离线词典和可选 AI 整合在一个学习工作台中。
+
+本安装程序会把 PH Launcher 放入“应用程序”文件夹。学校网站账号与密码仍由各网站和 macOS 管理，PH Launcher 不会保存网站密码。

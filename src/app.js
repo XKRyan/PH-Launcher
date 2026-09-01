@@ -1092,15 +1092,14 @@ function localDeploymentMarkup(recommendation) {
   const failed = deployment.stage === 'error';
   const canceled = deployment.stage === 'canceled';
   const complete = deployment.stage === 'complete';
-  const needsInstall = deployment.stage === 'needs-user-install';
-  const statusClass = running ? 'running' : failed ? 'error' : complete ? 'complete' : canceled ? 'canceled' : needsInstall ? 'needs-install' : 'idle';
+  const statusClass = running ? 'running' : failed ? 'error' : complete ? 'complete' : canceled ? 'canceled' : 'idle';
   const progress = Math.max(0, Math.min(100, Number(deployment.progress || 0)));
   const canDeploy = Boolean(model && !state.hardwareLoading && !running);
   const title = running || failed || canceled || complete ? deployment.title : '一键部署推荐模型';
   const detail = running || failed || canceled || complete
     ? deployment.detail
     : model
-      ? `自动安装或连接 Ollama，下载 ${model}（约 ${modelSize || '—'} GB），验证后直接启用。首次安装 Ollama 还需额外下载约 1–2 GB。`
+      ? `自动安装或连接 Ollama，下载 ${model}（约 ${modelSize || '—'} GB），验证后直接启用。首次使用还会下载 Ollama，大小以进度显示为准。`
       : '检测完成且适合本地运行时，才会开放自动部署。';
   return `<section class="local-deployment-card ${statusClass}">
       <div class="deployment-heading">
@@ -1111,12 +1110,12 @@ function localDeploymentMarkup(recommendation) {
       <div class="deployment-actions">
         ${running
           ? `<button class="secondary-button" id="cancelLocalDeployment" ${deployment.canCancel === false ? 'disabled' : ''}>${deployment.canCancel === false ? '正在停止…' : '取消部署'}</button>`
-          : `<button class="primary-button" id="deployLocalAi" ${canDeploy ? '' : 'disabled'}>${needsInstall ? '安装完成，继续部署' : failed || canceled ? '继续部署' : complete ? '重新验证并部署' : model ? `一键部署 ${escapeHtml(model)}` : '等待硬件检测'}</button>`}
+          : `<button class="primary-button" id="deployLocalAi" ${canDeploy ? '' : 'disabled'}>${failed || canceled ? '继续部署' : complete ? '重新验证并部署' : model ? `一键部署 ${escapeHtml(model)}` : '等待硬件检测'}</button>`}
         <button class="secondary-button" id="refreshHardware" ${running ? 'disabled' : ''}>重新检测电脑</button>
         ${!running && deployment.hasDiagnostics ? '<button class="text-button" id="showDeploymentLog">查看部署日志</button>' : ''}
-        ${failed ? '<button class="text-button" id="openOllamaDownload">浏览器下载安装</button>' : ''}
+        ${failed ? '<button class="text-button" id="openOllamaDownload">打开 Ollama 官方下载页</button>' : ''}
       </div>
-      <small class="deployment-note">${state.hardware?.platform === 'darwin' ? 'Mac 未安装 Ollama 时会打开官方安装页；安装需要你本人完成。' : '安装包来自 Ollama 官方网站并验证 Windows 数字签名；网络中断后再次点击会从断点继续。'} 不会读取学校网站、笔记或账号信息。</small>
+      <small class="deployment-note">${state.hardware?.platform === 'darwin' ? '安装包来自 Ollama 官方来源；安装前会核对 Apple Developer ID、应用标识与 Gatekeeper 公证。首次打开若出现 macOS 确认，请核对名称为 Ollama，不要关闭系统安全保护。' : '安装包来自 Ollama 官方网站并验证 Windows 数字签名；网络中断后再次点击会从断点继续。'} 不会读取学校网站、笔记或账号信息。</small>
     </section>`;
 }
 
@@ -1787,10 +1786,14 @@ function bindEvents() {
 async function init() {
   bindEvents();
   try {
-    [state.data, state.aiDeployment] = await Promise.all([
+    const [appVersion, data, deployment] = await Promise.all([
+      window.ph.system.version(),
       window.ph.data.get(),
       window.ph.ai.deploymentState(),
     ]);
+    state.data = data;
+    state.aiDeployment = deployment;
+    $('#appVersion').textContent = `Version ${appVersion}`;
     const platform = state.data.meta?.platform || 'win32';
     document.body.classList.add(`platform-${platform}`);
     if (platform === 'darwin') {

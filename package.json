@@ -1,9 +1,9 @@
 {
   "name": "ph-launcher",
-  "version": "0.4.1",
-  "description": "PH Launcher - a privacy-first desktop workspace for Pinghe IB students",
+  "version": "0.5.0",
+  "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
-  "author": "PH Launcher",
+  "author": "XKRyan and PH Launcher contributors",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -13,11 +13,14 @@
     "capture": "electron . --capture-ui",
     "capture:mail": "electron . --capture-site=mail",
     "icon": "node scripts/generate-icon.cjs",
+    "dictionary:fetch": "node scripts/fetch-dictionary.cjs",
     "dictionary": "node scripts/build-dictionary.cjs",
+    "dictionary:prepare": "npm run dictionary:fetch && npm run dictionary",
     "test": "node --test tests/*.test.cjs",
     "dist": "electron-builder --win portable --x64",
     "dist:installer": "electron-builder --win nsis --x64",
-    "dist:mac": "electron-builder --mac dmg zip --universal"
+    "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
+    "dist:mac:release": "electron-builder --mac dmg zip pkg --universal --config.mac.forceCodeSigning=true --config.mac.notarize=true --publish never"
   },
   "devDependencies": {
     "csv-parse": "^7.0.2",
@@ -54,10 +57,14 @@
       "icon": "assets/icon.png",
       "category": "public.app-category.education",
       "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "artifactName": "PH-Launcher-${version}-macOS-${arch}.${ext}",
       "target": [
         "dmg",
-        "zip"
+        "zip",
+        "pkg"
       ]
     },
     "dmg": {
@@ -77,6 +84,16 @@
     },
     "portable": {
       "artifactName": "PH-Launcher-${version}-Portable.${ext}"
+    },
+    "pkg": {
+      "installLocation": "/Applications",
+      "allowAnywhere": false,
+      "allowCurrentUserHome": false,
+      "allowRootDirectory": true,
+      "isRelocatable": false,
+      "overwriteAction": "upgrade",
+      "welcome": "build/pkg-welcome.txt",
+      "conclusion": "build/pkg-conclusion.txt"
     },
     "nsis": {
       "oneClick": false,

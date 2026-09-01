@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('ph', {
     lookup: (query) => ipcRenderer.invoke('dictionary:lookup', query),
   },
   system: {
+    version: () => ipcRenderer.invoke('system:version'),
     hardware: () => ipcRenderer.invoke('system:hardware'),
     openUrl: (url) => ipcRenderer.invoke('system:open-url', url),
     showData: () => ipcRenderer.invoke('system:show-data'),

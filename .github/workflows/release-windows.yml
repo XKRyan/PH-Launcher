@@ -1,0 +1,140 @@
+name: Release Windows packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-x64:
+    if: github.repository == 'XKRyan/PH-Launcher'
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Validate version and source tree
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-Content -Raw package.json | ConvertFrom-Json
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$($package.version)") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $($package.version)."
+          }
+          if (Test-Path -LiteralPath 'assets\dictionary\ecdict.db') {
+            throw 'ecdict.db must be generated during the workflow, not committed to Git.'
+          }
+
+      - name: Install locked dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Prepare pinned offline dictionary
+        run: npm run dictionary:prepare
+
+      - name: Run automated checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
+          npm run self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Application self-test failed.' }
+
+      - name: Build Windows packages
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run dist -- --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'Portable build failed.' }
+          npm run dist:installer -- --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+
+      - name: Assemble release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $installer = "release\PH-Launcher-$version-x64.exe"
+          $portable = "release\PH-Launcher-$version-Portable.exe"
+          foreach ($file in @($installer, $portable)) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "Missing release file: $file" }
+            if ((Get-Item -LiteralPath $file).Length -lt 100MB) { throw "Release file is unexpectedly small: $file" }
+          }
+
+          $source = "release\PH-Launcher-$version-Source.zip"
+          git archive --format=zip --output=$source HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to create source archive.' }
+          Copy-Item -LiteralPath 'docs\使用指南.md' -Destination 'release\PH-Launcher-使用指南.md'
+          Copy-Item -LiteralPath "docs\PH-Launcher-$version-发布与安全说明.md" -Destination "release\PH-Launcher-$version-发布与安全说明.md"
+          if (Test-Path -LiteralPath 'docs\images\overview.png') {
+            Copy-Item -LiteralPath 'docs\images\overview.png' -Destination 'release\PH-Launcher-界面预览.png'
+          }
+
+          $assets = @(
+            $installer,
+            $portable,
+            $source,
+            'release\PH-Launcher-使用指南.md',
+            "release\PH-Launcher-$version-发布与安全说明.md"
+          )
+          if (Test-Path -LiteralPath 'release\PH-Launcher-界面预览.png') { $assets += 'release\PH-Launcher-界面预览.png' }
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          [IO.File]::WriteAllLines(
+            (Join-Path $PWD "release\PH-Launcher-$version-SHA256.txt"),
+            $lines,
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PH-Launcher-Windows-x64
+          path: |
+            release/PH-Launcher-*.exe
+            release/PH-Launcher-*-Source.zip
+            release/PH-Launcher-*-SHA256.txt
+            release/PH-Launcher-*.md
+            release/PH-Launcher-*.png
+          if-no-files-found: error
+
+      - name: Publish tagged GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+          $notes = "docs\PH-Launcher-$version-发布与安全说明.md"
+          $assets = Get-ChildItem -LiteralPath release -File | Where-Object {
+            $_.Name -like 'PH-Launcher-*.exe' -or
+            $_.Name -like 'PH-Launcher-*-Source.zip' -or
+            $_.Name -like 'PH-Launcher-*-SHA256.txt' -or
+            $_.Name -like 'PH-Launcher-*.md' -or
+            $_.Name -like 'PH-Launcher-*.png'
+          } | ForEach-Object { $_.FullName }
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "PH Launcher $env:GITHUB_REF_NAME — Windows" --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to create GitHub Release.' }

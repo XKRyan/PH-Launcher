@@ -27,8 +27,8 @@ PH Launcher 是独立制作的学生工具，不是上海市民办平和学校�
 
 ## 当前可用版本
 
-Windows 版提供安装版和免安装版。macOS 版使用同一套功能设计；只建议使用已经完成 Apple 签名、公证并通过 Mac 实机验证的正式包，不要把未签名测试包直接分享给同学。
+Windows 版已经开源，提供安装版和免安装版，可从 [GitHub Release](https://github.com/XKRyan/PH-Launcher/releases/tag/v0.4.1) 下载；源码与更新说明位于 [PH Launcher GitHub 仓库](https://github.com/XKRyan/PH-Launcher)。macOS 版使用同一套功能设计，0.5.0 源码和自动构建流程正在同步；只建议使用已经完成 Apple 签名、公证并通过 Mac 实机验证的正式包，不要把未签名测试包直接分享给同学。
 
 ## 可直接转发的短介绍
 
-我最近在用 PH Launcher：它把平和邮箱、ManageBac、EduPage、课程表、待办、笔记、专注计时、离线英汉词典和 IB 小工具放进了一个桌面应用。AI 完全可选，也能按每台电脑配置推荐本地模型；AI 想修改任务或课表时，必须先给出预览并由本人确认。它不是学校官方产品，也不会读取网站密码。Windows 有安装版和免安装版，使用前请先核对文件校验值。
+我最近在用 PH Launcher：它把平和邮箱、ManageBac、EduPage、课程表、待办、笔记、专注计时、离线英汉词典和 IB 小工具放进了一个桌面应用。AI 完全可选，也能按每台电脑配置推荐本地模型；AI 想修改任务或课表时，必须先给出预览并由本人确认。它不是学校官方产品，也不会读取网站密码。Windows 有安装版和免安装版，可以在 https://github.com/XKRyan/PH-Launcher/releases/tag/v0.4.1 下载，使用前请先核对文件校验值。

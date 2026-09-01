@@ -5,6 +5,16 @@
 *.html text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.plist text eol=lf
+*.txt text eol=lf
 *.svg text eol=lf
 *.png binary
 *.ico binary
+*.db binary
+*.zip binary
+*.exe binary
+*.dmg binary
+*.pkg binary
