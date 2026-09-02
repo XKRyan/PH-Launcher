@@ -30,10 +30,27 @@ const {
   toolKind,
 } = require('../electron/ai-tools.cjs');
 const { normalizeExtractorResult } = require('../electron/edupage-timetable.cjs');
+const { definitions: commandTermDefinitions, subjects: commandTermSubjects } = require('../src/command-terms.js');
 
 test('hardware recommendation is conservative on low-memory and low-disk PCs', () => {
   assert.equal(recommendLocalModel({ ramGb: 7.9, vramGb: 8, diskFreeGb: 100 }).recommended, false);
   assert.equal(recommendLocalModel({ ramGb: 32, vramGb: 8, diskFreeGb: 5.9 }).recommended, false);
+});
+
+test('IB command terms are complete, bilingual and grouped by subject', () => {
+  const ids = new Set();
+  for (const subject of commandTermSubjects) {
+    assert.equal(ids.has(subject.id), false, `duplicate subject id: ${subject.id}`);
+    ids.add(subject.id);
+    for (const termId of subject.terms) {
+      const term = commandTermDefinitions[termId];
+      assert.ok(term, `${subject.label} references missing term: ${termId}`);
+      assert.ok(term.term && term.chinese && term.englishDefinition && term.chineseDefinition, `${termId} must be bilingual`);
+    }
+  }
+  assert.deepEqual(commandTermSubjects.find((subject) => subject.id === 'history-2020').terms, ['analyse', 'compareContrast', 'discuss', 'evaluate', 'examine', 'toWhatExtent']);
+  assert.deepEqual(commandTermSubjects.find((subject) => subject.id === 'history-2028').terms, ['analyse', 'discuss', 'examine', 'explain', 'toWhatExtent']);
+  assert.ok(commandTermSubjects.filter((subject) => subject.group === '6').every((subject) => subject.disabled && subject.terms.length === 0));
 });
 
 test('hardware recommendation scales per machine', () => {
