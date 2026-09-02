@@ -80,6 +80,8 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   assert.match(source, /permissions:\n\s+contents: read/);
   assert.match(source, /publish:[\s\S]*?permissions:\n\s+contents: write/);
   assert.match(source, /Unable to prove that \$label is absent/);
+  assert.equal((source.match(/local http_status/g) || []).length, 2);
+  assert.doesNotMatch(source, /\blocal status\b|\bcase "\$status"/);
   assert.match(source, /--prerelease/);
   assert.match(source, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/);
   assert.match(source, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/);
