@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PH Launcher Mac 测试版首次打开帮助</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --green: #173f33;
+      --green-soft: #e4eee9;
+      --gold: #d6ad5c;
+      --red: #a9364e;
+      --ivory: #f5f2e9;
+      --ink: #24332d;
+      --muted: #6f6658;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--ivory);
+      color: var(--ink);
+      font: 16px/1.68 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif;
+    }
+    header {
+      padding: 42px max(28px, calc((100% - 820px) / 2));
+      background: linear-gradient(135deg, var(--green), #245a49);
+      color: white;
+    }
+    header p { margin: 8px 0 0; color: #ead9ad; }
+    main { width: min(820px, calc(100% - 40px)); margin: 30px auto 56px; }
+    h1 { margin: 0; font-size: clamp(28px, 5vw, 40px); line-height: 1.18; }
+    h2 { margin: 0 0 12px; color: var(--green); font-size: 21px; }
+    section {
+      margin: 18px 0;
+      padding: 24px 26px;
+      border: 1px solid #ded5c3;
+      border-radius: 18px;
+      background: #fffdf8;
+      box-shadow: 0 8px 26px rgb(23 63 51 / 8%);
+    }
+    .warning { border-left: 6px solid var(--red); background: #fff8f7; }
+    .steps { counter-reset: step; padding-left: 0; list-style: none; }
+    .steps li { position: relative; padding: 5px 0 15px 44px; }
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 2px;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--green);
+      color: white;
+      text-align: center;
+      font-weight: 700;
+      line-height: 30px;
+    }
+    code { padding: 2px 7px; border-radius: 7px; background: var(--green-soft); font-family: inherit; font-weight: 600; }
+    a { color: #0e6650; font-weight: 650; }
+    .small { color: var(--muted); font-size: 14px; }
+    .ok { border-left: 6px solid var(--gold); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PH Launcher Mac 测试版</h1>
+    <p>首次打开帮助 · Apple 芯片与 Intel Mac 通用</p>
+  </header>
+  <main>
+    <section class="warning">
+      <h2>请先确认你愿意承担测试风险</h2>
+      <p>这是只有 ad-hoc 临时签名、<strong>没有 Developer ID 身份签名且未经 Apple 公证</strong>的测试版本。macOS 无法确认开发者身份，也无法像正式公证版一样确认文件发布后是否被改动。运行未经 Developer ID 签名和公证的软件可能损害电脑或泄露隐私。</p>
+      <p>仅从 <a href="https://github.com/XKRyan/PH-Launcher">PH Launcher 官方 GitHub 仓库</a>下载，并核对同一下载页提供的 SHA-256 清单。SHA-256 只能帮助发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。如果来源或校验结果不确定，请删除测试包。</p>
+    </section>
+
+    <section>
+      <h2>安装</h2>
+      <ol class="steps">
+        <li>打开 DMG，把 <code>PH Launcher</code> 拖到 <code>应用程序</code>。</li>
+        <li>从“应用程序”文件夹中连按 <code>PH Launcher</code>，先让 macOS 显示安全提醒。</li>
+      </ol>
+    </section>
+
+    <section class="ok">
+      <h2>macOS 阻止首次打开时</h2>
+      <ol class="steps">
+        <li>打开苹果菜单中的 <code>系统设置</code>。</li>
+        <li>进入 <code>隐私与安全性</code>，向下滚动到“安全性”。</li>
+        <li>找到 PH Launcher 的提示，点按 <code>仍要打开</code>，然后在再次出现的提示中确认“打开”。系统可能要求输入当前 Mac 的登录密码。</li>
+      </ol>
+      <p class="small">Apple 说明，“仍要打开”按钮通常会在你尝试打开 App 后约一小时内显示。成功确认一次后，PH Launcher 会被保存为这台 Mac 的安全性例外。</p>
+      <p><a href="https://support.apple.com/zh-cn/guide/mac-help/-mh40616/mac">查看 Apple 官方说明：打开来自未知开发者的 Mac App</a></p>
+    </section>
+
+    <section>
+      <h2>不要降低系统安全性</h2>
+      <p>本测试版不需要运行任何终端命令，也不需要关闭 macOS 的安全功能。若你看到来源不明的教程要求这样做，请停止操作并向项目维护者反馈。</p>
+    </section>
+  </main>
+</body>
+</html>

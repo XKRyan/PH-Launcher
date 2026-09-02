@@ -4,21 +4,29 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-function buildIco(png) {
+const WINDOWS_ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+
+function buildIco(images) {
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0);
   header.writeUInt16LE(1, 2);
-  header.writeUInt16LE(1, 4);
-  const entry = Buffer.alloc(16);
-  entry.writeUInt8(0, 0);
-  entry.writeUInt8(0, 1);
-  entry.writeUInt8(0, 2);
-  entry.writeUInt8(0, 3);
-  entry.writeUInt16LE(1, 4);
-  entry.writeUInt16LE(32, 6);
-  entry.writeUInt32LE(png.length, 8);
-  entry.writeUInt32LE(22, 12);
-  return Buffer.concat([header, entry, png]);
+  header.writeUInt16LE(images.length, 4);
+  const directorySize = 6 + (images.length * 16);
+  let imageOffset = directorySize;
+  const entries = images.map(({ size, png }) => {
+    const entry = Buffer.alloc(16);
+    entry.writeUInt8(size === 256 ? 0 : size, 0);
+    entry.writeUInt8(size === 256 ? 0 : size, 1);
+    entry.writeUInt8(0, 2);
+    entry.writeUInt8(0, 3);
+    entry.writeUInt16LE(1, 4);
+    entry.writeUInt16LE(32, 6);
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(imageOffset, 12);
+    imageOffset += png.length;
+    return entry;
+  });
+  return Buffer.concat([header, ...entries, ...images.map(({ png }) => png)]);
 }
 
 const assets = path.join(__dirname, '..', 'assets');
@@ -33,7 +41,20 @@ if (!edge) throw new Error('Microsoft Edge is required to render the development
 
 const temporaryProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-icon-'));
 try {
-  const render = (size, destination, profileSuffix) => execFileSync(edge, [
+  const sourceMarkup = fs.readFileSync(source, 'utf8');
+  const render = (size, destination, profileSuffix) => {
+    // Chromium enforces a minimum headless viewport on Windows. A responsive
+    // SVG would therefore be cropped for the small ICO frames, so render a
+    // size-specific SVG whose intrinsic dimensions match the screenshot.
+    const renderSourcePath = path.join(temporaryProfile, `icon-render-${size}.svg`);
+    fs.writeFileSync(
+      renderSourcePath,
+      sourceMarkup
+        .replace(/width="256"/, `width="${size}"`)
+        .replace(/height="256"/, `height="${size}"`),
+      'utf8',
+    );
+    return execFileSync(edge, [
       '--headless=new',
       '--disable-gpu',
       '--hide-scrollbars',
@@ -41,13 +62,17 @@ try {
       `--window-size=${size},${size}`,
       `--user-data-dir=${path.join(temporaryProfile, profileSuffix)}`,
       `--screenshot=${destination}`,
-      pathToFileURL(source).toString(),
+      pathToFileURL(renderSourcePath).toString(),
     ], { windowsHide: true, stdio: 'ignore' });
-  const windowsPngPath = path.join(temporaryProfile, 'icon-256.png');
+  };
   render(1024, pngPath, 'profile-1024');
-  render(256, windowsPngPath, 'profile-256');
-  fs.writeFileSync(path.join(assets, 'icon.ico'), buildIco(fs.readFileSync(windowsPngPath)));
-  console.log('Generated 1024px assets/icon.png and assets/icon.ico');
+  const windowsImages = WINDOWS_ICON_SIZES.map((size) => {
+    const windowsPngPath = path.join(temporaryProfile, `icon-${size}.png`);
+    render(size, windowsPngPath, `profile-${size}`);
+    return { size, png: fs.readFileSync(windowsPngPath) };
+  });
+  fs.writeFileSync(path.join(assets, 'icon.ico'), buildIco(windowsImages));
+  console.log(`Generated full-canvas assets/icon.png and ${WINDOWS_ICON_SIZES.length}-size assets/icon.ico`);
 } finally {
   const resolvedTemp = path.resolve(temporaryProfile);
   const resolvedRoot = path.resolve(os.tmpdir());

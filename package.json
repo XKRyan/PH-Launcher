@@ -20,7 +20,9 @@
     "dist": "electron-builder --win portable --x64",
     "dist:installer": "electron-builder --win nsis --x64",
     "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
-    "dist:mac:release": "electron-builder --mac dmg zip pkg --universal --config.mac.forceCodeSigning=true --config.mac.notarize=true --publish never"
+    "dist:mac:preview": "electron-builder --config build/mac-preview-builder.cjs --mac dmg zip --universal --publish never",
+    "dist:mac:release": "electron-builder --mac dmg zip pkg --universal --config.mac.forceCodeSigning=true --config.mac.notarize=true --publish never",
+    "mac:preview:background": "electron scripts/render-mac-dmg-background.cjs"
   },
   "devDependencies": {
     "csv-parse": "^7.0.2",
@@ -49,6 +51,12 @@
     "win": {
       "icon": "assets/icon.ico",
       "artifactName": "PH-Launcher-${version}-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "assets/icon.ico",
+          "to": "app-icon.ico"
+        }
+      ],
       "target": [
         "portable"
       ]

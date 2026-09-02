@@ -581,6 +581,23 @@ function createTray() {
   tray.on('click', toggleMainWindow);
 }
 
+function loadApplicationIcon() {
+  const fileName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const candidates = [];
+  if (app.isPackaged && process.platform === 'win32') {
+    // Keep a real file outside app.asar for the Windows shell. Some Windows
+    // builds do not reliably resolve a window icon from inside an ASAR archive.
+    candidates.push(path.join(process.resourcesPath, 'app-icon.ico'));
+  }
+  candidates.push(path.join(__dirname, '..', 'assets', fileName));
+  for (const candidate of candidates) {
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) return image;
+  }
+  console.error(`Application icon could not be loaded from: ${candidates.join(', ')}`);
+  return undefined;
+}
+
 function configureApplicationMenu() {
   if (process.platform !== 'darwin') {
     Menu.setApplicationMenu(null);
@@ -1392,12 +1409,13 @@ async function runSelfTest() {
 }
 
 function createWindow() {
+  const applicationIcon = loadApplicationIcon();
   const windowOptions = {
     width: 1440,
     height: 900,
     minWidth: 1040,
     minHeight: 700,
-    icon: path.join(__dirname, '..', 'assets', process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
+    ...(applicationIcon ? { icon: applicationIcon } : {}),
     show: IS_CAPTURE || CAPTURE_SITE ? true : !IS_HEADLESS,
     backgroundColor: '#f5f2e9',
     title: 'PH Launcher',

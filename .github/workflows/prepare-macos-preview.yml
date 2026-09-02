@@ -1,0 +1,251 @@
+name: Prepare macOS unsigned preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_prerelease:
+        description: Publish the fixed macOS preview tag after building
+        required: true
+        type: boolean
+        default: false
+      confirm_tag:
+        description: When publishing, enter mac-preview-v0.5.0-1 exactly
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/releases/mac-preview-v0.5.0-1.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-preview-v0.5.0-1
+  cancel-in-progress: false
+
+env:
+  PREVIEW_TAG: mac-preview-v0.5.0-1
+  PREVIEW_VERSION: 0.5.0
+  MARKER_PATH: .github/releases/mac-preview-v0.5.0-1.trigger
+
+jobs:
+  prepare:
+    runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      should_publish: ${{ steps.intent.outputs.should_publish }}
+      should_build: ${{ steps.intent.outputs.should_build }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Determine preview intent
+        id: intent
+        shell: zsh
+        env:
+          REQUEST_PUBLISH: ${{ inputs.publish_prerelease || 'false' }}
+          CONFIRM_TAG: ${{ inputs.confirm_tag || '' }}
+        run: |
+          should_build=false
+          should_publish=false
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            should_build=true
+            if [[ "$REQUEST_PUBLISH" == "true" ]]; then
+              [[ "$CONFIRM_TAG" == "$PREVIEW_TAG" ]] || {
+                echo "Publishing requires the exact fixed preview tag confirmation." >&2
+                exit 1
+              }
+              should_publish=true
+            fi
+          elif [[ -f "$MARKER_PATH" ]]; then
+            expected=$'PH_LAUNCHER_MAC_PREVIEW\ntag=mac-preview-v0.5.0-1\nversion=0.5.0\npublish-prerelease=true'
+            actual="$(<"$MARKER_PATH")"
+            [[ "$actual" == "$expected" ]] || {
+              echo "The macOS preview marker does not match the reviewed fixed payload." >&2
+              exit 1
+            }
+            should_build=true
+            should_publish=true
+          fi
+
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+
+      - name: Use Node.js 22
+        if: steps.intent.outputs.should_build == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Verify fixed preview version
+        if: steps.intent.outputs.should_build == 'true'
+        shell: zsh
+        run: |
+          actual_version="$(node -p "require('./package.json').version")"
+          [[ "$actual_version" == "$PREVIEW_VERSION" ]] || {
+            echo "Preview marker expects $PREVIEW_VERSION, package.json contains $actual_version." >&2
+            exit 1
+          }
+
+      - name: Fail if preview tag or release already exists
+        if: steps.intent.outputs.should_publish == 'true'
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          response_file="$RUNNER_TEMP/github-response.json"
+          assert_missing() {
+            local endpoint="$1"
+            local label="$2"
+            local status
+            status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$endpoint")"
+            case "$status" in
+              404) ;;
+              200) echo "$label already exists; refusing to overwrite it." >&2; exit 1 ;;
+              *) echo "Unable to prove that $label is absent (GitHub HTTP $status)." >&2; exit 1 ;;
+            esac
+          }
+          assert_missing "git/ref/tags/$PREVIEW_TAG" "preview tag $PREVIEW_TAG"
+          assert_missing "releases/tags/$PREVIEW_TAG" "preview release $PREVIEW_TAG"
+
+      - name: Install dependencies
+        if: steps.intent.outputs.should_build == 'true'
+        run: npm ci
+
+      - name: Render branded DMG background
+        if: steps.intent.outputs.should_build == 'true'
+        run: npm run mac:preview:background
+
+      - name: Prepare pinned offline dictionary
+        if: steps.intent.outputs.should_build == 'true'
+        run: npm run dictionary:prepare
+
+      - name: Run automated tests
+        if: steps.intent.outputs.should_build == 'true'
+        run: npm test
+
+      - name: Build unsigned Universal DMG and ZIP
+        if: steps.intent.outputs.should_build == 'true'
+        run: npm run dist:mac:preview
+
+      - name: Run the ad-hoc signed app self-test
+        if: steps.intent.outputs.should_build == 'true'
+        shell: zsh
+        run: |
+          app_path="release/mac-universal/PH Launcher.app"
+          executable="$app_path/Contents/MacOS/PH Launcher"
+          [[ -d "$app_path" && ! -L "$app_path" && -x "$executable" ]] || {
+            echo "Preview app executable is missing." >&2
+            exit 1
+          }
+          "$executable" --self-test
+
+      - name: Verify Universal preview packages
+        if: steps.intent.outputs.should_build == 'true'
+        run: zsh scripts/verify-mac-preview.sh
+
+      - name: Prepare checksum and Chinese preview notes
+        if: steps.intent.outputs.should_build == 'true'
+        run: node scripts/prepare-mac-preview-assets.cjs
+
+      - name: Upload reviewable preview bundle
+        if: steps.intent.outputs.should_build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-unsigned-preview
+          path: |
+            release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-universal.dmg
+            release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-universal.zip
+            release/SHA256SUMS.txt
+            release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-UNSIGNED-TEST-说明.md
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: needs.prepare.outputs.should_publish == 'true'
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download reviewed preview bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-unsigned-preview
+          path: release
+
+      - name: Recheck fixed assets, tag and release
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          expected=(
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.dmg"
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.zip"
+            "release/SHA256SUMS.txt"
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-说明.md"
+          )
+          for file in $expected; do
+            [[ -f "$file" && ! -L "$file" ]] || { echo "Missing release asset: $file" >&2; exit 1; }
+          done
+          actual_count="$(find release -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          [[ "$actual_count" == "4" ]] || { echo "Unexpected files in preview bundle." >&2; exit 1; }
+
+          response_file="$RUNNER_TEMP/github-response.json"
+          assert_missing() {
+            local endpoint="$1"
+            local label="$2"
+            local status
+            status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/$endpoint")"
+            case "$status" in
+              404) ;;
+              200) echo "$label already exists; refusing to overwrite it." >&2; exit 1 ;;
+              *) echo "Unable to prove that $label is absent (GitHub HTTP $status)." >&2; exit 1 ;;
+            esac
+          }
+          assert_missing "git/ref/tags/$PREVIEW_TAG" "preview tag $PREVIEW_TAG"
+          assert_missing "releases/tags/$PREVIEW_TAG" "preview release $PREVIEW_TAG"
+
+      - name: Create fixed GitHub pre-release
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-说明.md"
+          gh release create "$PREVIEW_TAG" \
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.dmg" \
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.zip" \
+            "release/SHA256SUMS.txt" \
+            "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "PH Launcher $PREVIEW_VERSION macOS 未签名测试版" \
+            --notes-file "$notes"
+
+      - name: Verify the created release is a pre-release
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PREVIEW_TAG" --jq '.prerelease')" == "true" ]] || {
+            echo "Created release is not marked as a pre-release." >&2
+            exit 1
+          }

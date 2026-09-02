@@ -550,3 +550,50 @@ test('macOS signing entitlements keep the hardened runtime exceptions minimal', 
     assert.doesNotMatch(source, /com\.apple\.security\.cs\.disable-library-validation/);
   }
 });
+
+test('macOS unsigned preview is isolated from the formal release configuration', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const previewConfig = require('../build/mac-preview-builder.cjs');
+  assert.doesNotMatch(packageJson.build.dmg.title, /测试版/);
+  assert.equal(previewConfig.mac.identity, '-');
+  assert.equal(previewConfig.mac.notarize, false);
+  assert.equal(previewConfig.mac.hardenedRuntime, true);
+  assert.deepEqual(previewConfig.mac.target, ['dmg', 'zip']);
+  assert.match(previewConfig.dmg.title, /测试版/);
+  assert.ok(previewConfig.dmg.contents.some((item) => item.name === '首次打开帮助.html'));
+  assert.match(packageJson.scripts['dist:mac:preview'], /mac-preview-builder\.cjs/);
+
+  for (const fileName of ['entitlements.mac.preview.plist', 'entitlements.mac.preview.inherit.plist']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'build', fileName), 'utf8');
+    assert.match(source, /com\.apple\.security\.cs\.allow-jit/);
+    assert.match(source, /com\.apple\.security\.cs\.disable-library-validation/);
+    assert.doesNotMatch(source, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
+  }
+});
+
+test('macOS preview help never asks students to disable Gatekeeper', () => {
+  const help = fs.readFileSync(path.join(__dirname, '..', 'build', 'mac-first-open-help.html'), 'utf8');
+  assert.match(help, /support\.apple\.com\/zh-cn\/guide\/mac-help\/-mh40616\/mac/);
+  assert.match(help, /没有 Developer ID 身份签名且未经 Apple 公证/);
+  assert.doesNotMatch(help, /\b(?:xattr|spctl|sudo)\b|终端命令[^<]*(?:运行|执行)/i);
+  assert.doesNotMatch(help, /<script\b/i);
+});
+
+test('application icon assets have a full-size Mac PNG and multi-frame Windows ICO', () => {
+  const png = fs.readFileSync(path.join(__dirname, '..', 'assets', 'icon.png'));
+  assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG');
+  assert.equal(png.readUInt32BE(16), 1024);
+  assert.equal(png.readUInt32BE(20), 1024);
+
+  const ico = fs.readFileSync(path.join(__dirname, '..', 'assets', 'icon.ico'));
+  assert.equal(ico.readUInt16LE(0), 0);
+  assert.equal(ico.readUInt16LE(2), 1);
+  assert.ok(ico.readUInt16LE(4) >= 8);
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.ok(packageJson.build.win.extraResources.some((item) => item.to === 'app-icon.ico'));
+  assert.ok(!packageJson.build.extraResources.some((item) => item.to === 'app-icon.ico'));
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  assert.match(mainSource, /process\.resourcesPath, 'app-icon\.ico'/);
+  assert.match(mainSource, /nativeImage\.createFromPath\(candidate\)/);
+});
