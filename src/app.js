@@ -31,24 +31,8 @@ const WEEK_DAYS = [
   { value: 6, label: '周六', short: 'SAT' },
   { value: 0, label: '周日', short: 'SUN' },
 ];
-const COMMAND_TERMS = [
-  ['Analyze', '分析', '拆解要素或结构，说明它们之间的关系，并据此得出结论。'],
-  ['Compare', '比较', '持续指出两个或多个对象之间的相似之处。'],
-  ['Compare and contrast', '比较与对比', '同时说明相似点与不同点，并保持两者之间的对应。'],
-  ['Contrast', '对比', '持续指出两个或多个对象之间的不同之处。'],
-  ['Define', '定义', '给出一个词语或概念准确、简洁的含义。'],
-  ['Describe', '描述', '提供某个情境、事件、模式或过程的详细特征。'],
-  ['Discuss', '讨论', '呈现经过权衡的论述，包含一系列论据、因素或假设。'],
-  ['Evaluate', '评价', '通过权衡优势、局限与证据，对价值或有效性作出判断。'],
-  ['Examine', '审视', '细致考虑某个论点或概念，揭示其假设与相互关系。'],
-  ['Explain', '解释', '详细说明原因、机制或过程，让“为什么”和“如何”清楚。'],
-  ['Identify', '识别', '从若干可能中给出正确答案、名称或简短事实。'],
-  ['Justify', '论证', '提供有效理由或证据，支持一个答案、判断或结论。'],
-  ['Outline', '概述', '给出主要特征或总体结构，不展开所有细节。'],
-  ['State', '陈述', '给出一个具体名称、数值或简短答案，不要求解释。'],
-  ['Suggest', '提出', '给出一种可行方案、假设或答案。'],
-  ['To what extent', '在多大程度上', '权衡证据与反例，判断一个主张成立的范围和条件。'],
-];
+const COMMAND_TERM_DEFINITIONS = window.COMMAND_TERMS_DATA.definitions;
+const COMMAND_TERM_SUBJECTS = window.COMMAND_TERMS_DATA.subjects;
 const MILESTONE_TEMPLATES = {
   EE: ['明确兴趣领域与初步选题', '形成可研究的问题', '建立资料与引用清单', '完成结构与主要论证', '提交初稿并根据反馈修订', '完成终稿与反思'],
   TOK: ['拆解题目中的核心概念', '选择并检验真实情境', '形成主张与反主张', '搭建论证结构', '核对例证与知识问题的联系', '完成修订与引用检查'],
@@ -739,10 +723,27 @@ function countWords(text) {
 
 function renderCommandTerms() {
   const query = $('#commandSearch')?.value.trim().toLowerCase() || '';
-  const terms = COMMAND_TERMS.filter((term) => !query || term.join(' ').toLowerCase().includes(query));
+  const selectedId = $('#commandSubject')?.value || COMMAND_TERM_SUBJECTS.find((subject) => !subject.disabled)?.id;
+  const subject = COMMAND_TERM_SUBJECTS.find((item) => item.id === selectedId && !item.disabled)
+    || COMMAND_TERM_SUBJECTS.find((item) => !item.disabled);
+  const terms = subject.terms
+    .map((id) => ({ ...COMMAND_TERM_DEFINITIONS[id], ...(subject.definitionOverrides?.[id] || {}) }))
+    .filter((term) => !query || [term.term, term.chinese, term.englishDefinition, term.chineseDefinition].join(' ').toLowerCase().includes(query));
+  const syllabusBadge = subject.syllabus ? `<b>${escapeHtml(subject.syllabus)}</b>` : '';
+  $('#commandSubjectMeta').innerHTML = `<span>Group ${escapeHtml(subject.group)} · ${terms.length}${query ? ` / ${subject.terms.length}` : ''} 个指令词</span>${syllabusBadge}`;
   $('#commandResults').innerHTML = terms.length
-    ? terms.map(([english, chinese, description]) => `<div class="command-item"><strong>${escapeHtml(english)}</strong><span>${escapeHtml(chinese)}</span><p>${escapeHtml(description)}</p></div>`).join('')
+    ? terms.map((term) => `<div class="command-item"><div><strong>${escapeHtml(term.term)}</strong><span>${escapeHtml(term.chinese)}</span></div><p lang="en"><small>EN</small>${escapeHtml(term.englishDefinition)}</p><p><small>中文</small>${escapeHtml(term.chineseDefinition)}</p></div>`).join('')
     : '<div class="empty-row">没有匹配的指令词</div>';
+}
+
+function renderCommandSubjectOptions() {
+  const select = $('#commandSubject');
+  if (!select || select.options.length) return;
+  const groups = [...new Set(COMMAND_TERM_SUBJECTS.map((subject) => subject.group))];
+  select.innerHTML = groups.map((group) => `<optgroup label="Group ${escapeHtml(group)}">${COMMAND_TERM_SUBJECTS
+    .filter((subject) => subject.group === group)
+    .map((subject) => `<option value="${escapeHtml(subject.id)}"${subject.disabled ? ' disabled' : ''}>${escapeHtml(subject.label)}</option>`)
+    .join('')}</optgroup>`).join('');
 }
 
 function updateWordStats() {
@@ -808,6 +809,7 @@ function addMilestoneTemplate(type) {
 
 function renderIbTools() {
   if (!state.data) return;
+  renderCommandSubjectOptions();
   renderCommandTerms();
   renderGradeRows();
   updateWordStats();
@@ -1592,6 +1594,10 @@ function bindEvents() {
     $('#dictionarySearch').focus();
   });
   $('#commandSearch').addEventListener('input', renderCommandTerms);
+  $('#commandSubject').addEventListener('change', () => {
+    $('#commandSearch').value = '';
+    renderCommandTerms();
+  });
   $('#wordCounterInput').addEventListener('input', updateWordStats);
   $('#wordToNote').addEventListener('click', () => {
     const body = $('#wordCounterInput').value.trim();
