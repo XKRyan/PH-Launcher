@@ -47,7 +47,7 @@ jobs:
 
       - name: Determine preview intent
         id: intent
-        shell: zsh
+        shell: zsh {0}
         env:
           REQUEST_PUBLISH: ${{ inputs.publish_prerelease || 'false' }}
           CONFIRM_TAG: ${{ inputs.confirm_tag || '' }}
@@ -87,7 +87,7 @@ jobs:
 
       - name: Verify fixed preview version
         if: steps.intent.outputs.should_build == 'true'
-        shell: zsh
+        shell: zsh {0}
         run: |
           actual_version="$(node -p "require('./package.json').version")"
           [[ "$actual_version" == "$PREVIEW_VERSION" ]] || {
@@ -97,7 +97,7 @@ jobs:
 
       - name: Fail if preview tag or release already exists
         if: steps.intent.outputs.should_publish == 'true'
-        shell: zsh
+        shell: zsh {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -142,7 +142,7 @@ jobs:
 
       - name: Run the ad-hoc signed app self-test
         if: steps.intent.outputs.should_build == 'true'
-        shell: zsh
+        shell: zsh {0}
         run: |
           app_path="release/mac-universal/PH Launcher.app"
           executable="$app_path/Contents/MacOS/PH Launcher"
@@ -188,7 +188,7 @@ jobs:
           path: release
 
       - name: Recheck fixed assets, tag and release
-        shell: zsh
+        shell: zsh {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -224,7 +224,7 @@ jobs:
           assert_missing "releases/tags/$PREVIEW_TAG" "preview release $PREVIEW_TAG"
 
       - name: Create fixed GitHub pre-release
-        shell: zsh
+        shell: zsh {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -241,7 +241,7 @@ jobs:
             --notes-file "$notes"
 
       - name: Verify the created release is a pre-release
-        shell: zsh
+        shell: zsh {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
