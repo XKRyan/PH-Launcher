@@ -59,8 +59,8 @@ verify_universal_app() {
   for candidate in "$app_path"/Contents/**/*(.); do
     description="$(/usr/bin/file -b "$candidate")"
     [[ "$description" == *"Mach-O"* ]] || continue
-    architectures="$(/usr/bin/lipo -archs "$candidate")"
-    if [[ " $architectures " != *" arm64 " || " $architectures " != *" x86_64 " ]]; then
+    if ! /usr/bin/lipo -verify_arch x86_64 arm64 "$candidate" >/dev/null 2>&1; then
+      architectures="$(/usr/bin/lipo -archs "$candidate" 2>/dev/null || echo unknown)"
       echo "$label contains a non-Universal Mach-O file: ${candidate#"$app_path"/} ($architectures)" >&2
       return 1
     fi

@@ -7,6 +7,21 @@ const yaml = require('js-yaml');
 const { preparePreviewAssets, sha256 } = require('../scripts/prepare-mac-preview-assets.cjs');
 
 const projectDirectory = path.resolve(__dirname, '..');
+const expectedPreviewMarker = [
+  'PH_LAUNCHER_MAC_PREVIEW',
+  'tag=mac-preview-v0.5.0-1',
+  'version=0.5.0',
+  'publish-prerelease=true',
+  '',
+].join('\n');
+
+function validateOptionalPreviewMarker(markerPath) {
+  if (!fs.existsSync(markerPath)) return { present: false, valid: true };
+  return {
+    present: true,
+    valid: fs.readFileSync(markerPath, 'utf8') === expectedPreviewMarker,
+  };
+}
 
 test('macOS DMG has a branded 720x480 install layout and first-open help', () => {
   const dmg = require('../build/mac-preview-builder.cjs').dmg;
@@ -42,6 +57,27 @@ test('first-open help follows Apple guidance and states unsigned preview risk', 
   assert.match(help, /support\.apple\.com\/zh-cn\/guide\/mac-help\/-mh40616\/mac/);
   assert.match(help, /不需要运行任何终端命令/);
   assert.doesNotMatch(help, /\bxattr\b|\bspctl\b|\bsudo\b/i);
+});
+
+test('macOS preview verifies both Mach-O architectures without parsing lipo text', () => {
+  const verifier = fs.readFileSync(path.join(projectDirectory, 'scripts', 'verify-mac-preview.sh'), 'utf8');
+  assert.match(verifier, /lipo -verify_arch x86_64 arm64 "\$candidate"/);
+  assert.match(verifier, /lipo -archs "\$candidate" 2>\/dev\/null \|\| echo unknown/);
+  assert.doesNotMatch(verifier, /" \$architectures " !=/);
+});
+
+test('one-time preview marker is optional but must match the exact reviewed payload when present', () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-preview-marker-'));
+  const markerPath = path.join(temporaryDirectory, 'preview.trigger');
+  try {
+    assert.deepEqual(validateOptionalPreviewMarker(markerPath), { present: false, valid: true });
+    fs.writeFileSync(markerPath, expectedPreviewMarker);
+    assert.deepEqual(validateOptionalPreviewMarker(markerPath), { present: true, valid: true });
+    fs.writeFileSync(markerPath, `${expectedPreviewMarker}unexpected=true\n`);
+    assert.deepEqual(validateOptionalPreviewMarker(markerPath), { present: true, valid: false });
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test('preview asset preparation emits only DMG, ZIP, checksum and Chinese notes', () => {
@@ -90,12 +126,9 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   assert.doesNotMatch(source, /\.pkg\b/);
   assert.doesNotMatch(source, /refs\/tags\/v\*/);
 
-  const marker = fs.readFileSync(path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.0-1.trigger'), 'utf8');
-  assert.equal(marker, [
-    'PH_LAUNCHER_MAC_PREVIEW',
-    'tag=mac-preview-v0.5.0-1',
-    'version=0.5.0',
-    'publish-prerelease=true',
-    '',
-  ].join('\n'));
+  const shellPayload = expectedPreviewMarker.trimEnd().replaceAll('\n', '\\n');
+  assert.ok(source.includes(`expected=$'${shellPayload}'`));
+
+  const repositoryMarkerPath = path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.0-1.trigger');
+  assert.equal(validateOptionalPreviewMarker(repositoryMarkerPath).valid, true);
 });
