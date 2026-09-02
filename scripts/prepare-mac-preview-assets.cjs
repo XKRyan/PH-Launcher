@@ -41,7 +41,7 @@ function preparePreviewAssets(options = {}) {
   }
 
   const templatePath = path.join(projectDirectory, 'build', 'mac-unsigned-preview-notes.md');
-  const notesName = `PH-Launcher-${version}-macOS-UNSIGNED-TEST-说明.md`;
+  const notesName = `PH-Launcher-${version}-macOS-UNSIGNED-TEST-zh-CN.md`;
   const notesPath = path.join(releaseDirectory, notesName);
   const notes = fs.readFileSync(templatePath, 'utf8').replaceAll('{{VERSION}}', version);
   if (notes.includes('{{VERSION}}')) throw new Error('Preview notes still contain an unresolved version placeholder');

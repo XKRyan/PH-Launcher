@@ -169,7 +169,7 @@ jobs:
             release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-universal.dmg
             release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-universal.zip
             release/SHA256SUMS.txt
-            release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-UNSIGNED-TEST-说明.md
+            release/PH-Launcher-${{ env.PREVIEW_VERSION }}-macOS-UNSIGNED-TEST-zh-CN.md
           if-no-files-found: error
           retention-days: 14
 
@@ -196,7 +196,7 @@ jobs:
             "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.dmg"
             "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.zip"
             "release/SHA256SUMS.txt"
-            "release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-说明.md"
+            "release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-zh-CN.md"
           )
           for file in $expected; do
             [[ -f "$file" && ! -L "$file" ]] || { echo "Missing release asset: $file" >&2; exit 1; }
@@ -228,7 +228,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-说明.md"
+          notes="release/PH-Launcher-$PREVIEW_VERSION-macOS-UNSIGNED-TEST-zh-CN.md"
           gh release create "$PREVIEW_TAG" \
             "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.dmg" \
             "release/PH-Launcher-$PREVIEW_VERSION-macOS-universal.zip" \
