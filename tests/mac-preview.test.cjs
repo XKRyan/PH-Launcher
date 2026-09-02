@@ -61,7 +61,8 @@ test('first-open help follows Apple guidance and states unsigned preview risk', 
 
 test('macOS preview verifies both Mach-O architectures without parsing lipo text', () => {
   const verifier = fs.readFileSync(path.join(projectDirectory, 'scripts', 'verify-mac-preview.sh'), 'utf8');
-  assert.match(verifier, /lipo -verify_arch x86_64 arm64 "\$candidate"/);
+  assert.match(verifier, /lipo "\$candidate" -verify_arch x86_64 arm64/);
+  assert.doesNotMatch(verifier, /lipo -verify_arch[^\n]*"\$candidate"/);
   assert.match(verifier, /lipo -archs "\$candidate" 2>\/dev\/null \|\| echo unknown/);
   assert.doesNotMatch(verifier, /" \$architectures " !=/);
 });
