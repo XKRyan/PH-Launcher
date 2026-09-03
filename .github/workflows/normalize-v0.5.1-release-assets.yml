@@ -1,0 +1,108 @@
+name: Normalize v0.5.1 Windows release asset names
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/releases/v0.5.1.asset-names.trigger"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: normalize-v0.5.1-release-assets
+  cancel-in-progress: false
+
+env:
+  MARKER_PATH: .github/releases/v0.5.1.asset-names.trigger
+
+jobs:
+  normalize:
+    if: github.repository == 'XKRyan/PH-Launcher'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout fixed repair marker
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify fixed repair intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$RUNNER_TEMP/expected-marker"
+          printf '%s\n' \
+            'PH_LAUNCHER_WINDOWS_ASSET_NAME_REPAIR' \
+            'tag=v0.5.1' \
+            'target=8c88df2ce67bfe571272e71abe4efd7e4a9572d3' \
+            'rename=ascii-docs' \
+            'regenerate-sha256=true' > "$expected"
+          cmp --silent "$expected" "$MARKER_PATH" || {
+            echo 'The asset repair marker does not match the reviewed fixed payload.' >&2
+            exit 1
+          }
+
+      - name: Normalize names and regenerate checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo='XKRyan/PH-Launcher'
+          tag='v0.5.1'
+          expected_tag_commit='8c88df2ce67bfe571272e71abe4efd7e4a9572d3'
+
+          assert_tag_commit() {
+            local actual_tag_commit
+            actual_tag_commit="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
+            [[ "$actual_tag_commit" == "$expected_tag_commit" ]] || {
+              echo "Refusing to edit assets for unexpected tag commit: $actual_tag_commit" >&2
+              exit 1
+            }
+          }
+
+          analyze_release() {
+            gh api "repos/$repo/releases/tags/$tag" | node scripts/windows-release-asset-repair.cjs analyze
+          }
+
+          assert_tag_commit
+          plan="$(analyze_release)"
+          while [[ "$(jq '.renames | length' <<<"$plan")" != '0' ]]; do
+            assert_tag_commit
+            asset_id="$(jq -r '.renames[0].assetId' <<<"$plan")"
+            new_name="$(jq -r '.renames[0].newName' <<<"$plan")"
+            label="$(jq -r '.renames[0].label' <<<"$plan")"
+            gh api --method PATCH "repos/$repo/releases/assets/$asset_id" \
+              -f name="$new_name" \
+              -f label="$label" >/dev/null
+            plan="$(analyze_release)"
+          done
+
+          manifest='PH-Launcher-0.5.1-SHA256.txt'
+          assert_tag_commit
+          plan="$(analyze_release)"
+          manifest_action="$(jq -r '.manifestAction' <<<"$plan")"
+          if [[ "$manifest_action" == 'replace' ]]; then
+            assert_tag_commit
+            manifest_id="$(jq -r '.manifestId' <<<"$plan")"
+            gh api --method DELETE "repos/$repo/releases/assets/$manifest_id"
+            plan="$(analyze_release)"
+            [[ "$(jq -r '.manifestAction' <<<"$plan")" == 'upload' ]] || exit 1
+            manifest_action='upload'
+          fi
+
+          if [[ "$manifest_action" == 'upload' ]]; then
+            assert_tag_commit
+            plan="$(analyze_release)"
+            [[ "$(jq -r '.manifestAction' <<<"$plan")" == 'upload' ]] || exit 1
+            node scripts/windows-release-asset-repair.cjs write-manifest "$manifest"
+            gh release upload "$tag" "$manifest" --repo "$repo"
+          elif [[ "$manifest_action" != 'keep' ]]; then
+            echo "Unexpected manifest action: $manifest_action" >&2
+            exit 1
+          fi
+
+          assert_tag_commit
+          gh api "repos/$repo/releases/tags/$tag" | node scripts/windows-release-asset-repair.cjs verify-final

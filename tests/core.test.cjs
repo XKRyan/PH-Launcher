@@ -6,6 +6,16 @@ const path = require('node:path');
 const test = require('node:test');
 const zlib = require('node:zlib');
 const yaml = require('js-yaml');
+const {
+  DOCUMENT_ASSETS: WINDOWS_RELEASE_DOCUMENT_ASSETS,
+  FIXED_ASSETS: WINDOWS_RELEASE_FIXED_ASSETS,
+  FIXED_MANIFEST_CONTENT: WINDOWS_RELEASE_MANIFEST,
+  MANIFEST_NAME: WINDOWS_RELEASE_MANIFEST_NAME,
+  NEW_MANIFEST: WINDOWS_RELEASE_NEW_MANIFEST,
+  OLD_MANIFEST: WINDOWS_RELEASE_OLD_MANIFEST,
+  analyzeRelease: analyzeWindowsRelease,
+  validateFinalRelease: validateFinalWindowsRelease,
+} = require('../scripts/windows-release-asset-repair.cjs');
 
 const { recommendLocalModel } = require('../electron/hardware.cjs');
 const {
@@ -938,6 +948,76 @@ test('fixed Windows 0.5.1 release requires an exact marker and publishes reviewe
 
   const marker = fs.readFileSync(path.join(__dirname, '..', '.github', 'releases', 'v0.5.1-retry-1.trigger'), 'utf8').replaceAll('\r\n', '\n');
   assert.equal(marker, 'PH_LAUNCHER_WINDOWS_RELEASE_RETRY\ntag=v0.5.1\nversion=0.5.1\nattempt=2\npublish-release=true\n');
+});
+
+test('Windows 0.5.1 documentation asset repair is fixed, digest-bound and ASCII-only', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'normalize-v0.5.1-release-assets.yml'), 'utf8');
+  assert.doesNotThrow(() => yaml.load(workflow, { schema: yaml.JSON_SCHEMA }));
+  assert.match(workflow, /\.github\/releases\/v0\.5\.1\.asset-names\.trigger/);
+  assert.match(workflow, /expected_tag_commit='8c88df2ce67bfe571272e71abe4efd7e4a9572d3'/);
+  assert.match(workflow, /windows-release-asset-repair\.cjs analyze/);
+  assert.match(workflow, /windows-release-asset-repair\.cjs verify-final/);
+  assert.match(workflow, /gh api --method DELETE "repos\/\$repo\/releases\/assets\/\$manifest_id"/);
+  assert.match(workflow, /gh release upload "\$tag" "\$manifest" --repo "\$repo"/);
+  assert.doesNotMatch(workflow, /--clobber/);
+
+  const marker = fs.readFileSync(path.join(__dirname, '..', '.github', 'releases', 'v0.5.1.asset-names.trigger'), 'utf8').replaceAll('\r\n', '\n');
+  assert.equal(
+    marker,
+    'PH_LAUNCHER_WINDOWS_ASSET_NAME_REPAIR\ntag=v0.5.1\ntarget=8c88df2ce67bfe571272e71abe4efd7e4a9572d3\nrename=ascii-docs\nregenerate-sha256=true\n',
+  );
+
+  let nextId = 1;
+  const makeAsset = (expected, name = expected.name) => ({
+    id: nextId++,
+    name,
+    size: expected.size,
+    digest: `sha256:${expected.digest}`,
+  });
+  const makeRelease = ({ documentNames = 'old', manifest = 'old', extra = [] } = {}) => {
+    const documents = WINDOWS_RELEASE_DOCUMENT_ASSETS.map((expected, index) => {
+      const useOld = documentNames === 'old' || (documentNames === 'mixed' && index === 0);
+      return makeAsset(expected, useOld ? expected.oldName : expected.name);
+    });
+    const assets = [...WINDOWS_RELEASE_FIXED_ASSETS.map((expected) => makeAsset(expected)), ...documents];
+    if (manifest === 'old') assets.push(makeAsset({ ...WINDOWS_RELEASE_OLD_MANIFEST, name: WINDOWS_RELEASE_MANIFEST_NAME }));
+    if (manifest === 'new') assets.push(makeAsset({ ...WINDOWS_RELEASE_NEW_MANIFEST, name: WINDOWS_RELEASE_MANIFEST_NAME }));
+    return { draft: false, prerelease: false, assets: [...assets, ...extra] };
+  };
+
+  const oldPlan = analyzeWindowsRelease(makeRelease());
+  assert.equal(oldPlan.renames.length, 2);
+  assert.equal(oldPlan.manifestAction, 'replace');
+
+  const mixedPlan = analyzeWindowsRelease(makeRelease({ documentNames: 'mixed' }));
+  assert.equal(mixedPlan.renames.length, 1);
+  assert.equal(mixedPlan.manifestAction, 'replace');
+
+  const recoveryPlan = analyzeWindowsRelease(makeRelease({ documentNames: 'new', manifest: 'missing' }));
+  assert.deepEqual(recoveryPlan.renames, []);
+  assert.equal(recoveryPlan.manifestAction, 'upload');
+
+  const finalRelease = makeRelease({ documentNames: 'new', manifest: 'new' });
+  assert.deepEqual(analyzeWindowsRelease(finalRelease).renames, []);
+  assert.equal(analyzeWindowsRelease(finalRelease).manifestAction, 'keep');
+  assert.equal(validateFinalWindowsRelease(finalRelease), true);
+  assert.equal(validateFinalWindowsRelease(finalRelease), true);
+
+  const wrongSixth = makeRelease({ documentNames: 'new', manifest: 'missing', extra: [{
+    id: nextId++, name: 'unexpected.txt', size: 1, digest: `sha256:${'0'.repeat(64)}`,
+  }] });
+  assert.throws(() => analyzeWindowsRelease(wrongSixth), /Unexpected release asset/);
+
+  const duplicateDocument = makeRelease({ documentNames: 'new', manifest: 'new' });
+  duplicateDocument.assets.push(makeAsset(WINDOWS_RELEASE_DOCUMENT_ASSETS[0], WINDOWS_RELEASE_DOCUMENT_ASSETS[0].oldName));
+  assert.throws(() => analyzeWindowsRelease(duplicateDocument), /Expected exactly one/);
+
+  const tampered = makeRelease({ documentNames: 'new', manifest: 'new' });
+  tampered.assets.find((asset) => asset.name.endsWith('-x64.exe')).digest = `sha256:${'f'.repeat(64)}`;
+  assert.throws(() => analyzeWindowsRelease(tampered), /Unexpected digest/);
+
+  assert.equal(Buffer.byteLength(WINDOWS_RELEASE_MANIFEST), 502);
+  assert.equal(WINDOWS_RELEASE_NEW_MANIFEST.digest, '8a4cab0161613f77d52bc5b573cf13ca9dcdb13a738799df5e0155a24744e0b5');
 });
 
 test('macOS signing entitlements keep the hardened runtime exceptions minimal', () => {

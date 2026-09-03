@@ -1,0 +1,5 @@
+PH_LAUNCHER_WINDOWS_ASSET_NAME_REPAIR
+tag=v0.5.1
+target=8c88df2ce67bfe571272e71abe4efd7e4a9572d3
+rename=ascii-docs
+regenerate-sha256=true
