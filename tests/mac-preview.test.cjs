@@ -8,9 +8,10 @@ const { preparePreviewAssets, sha256 } = require('../scripts/prepare-mac-preview
 
 const projectDirectory = path.resolve(__dirname, '..');
 const expectedPreviewMarker = [
-  'PH_LAUNCHER_MAC_PREVIEW',
+  'PH_LAUNCHER_MAC_PREVIEW_RETRY',
   'tag=mac-preview-v0.5.1-1',
   'version=0.5.1',
+  'attempt=2',
   'publish-prerelease=true',
   '',
 ].join('\n');
@@ -138,7 +139,7 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   assert.doesNotThrow(() => yaml.load(source, { schema: yaml.JSON_SCHEMA }));
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /default: false/);
-  assert.match(source, /\.github\/releases\/mac-preview-v0\.5\.1-1\.trigger/);
+  assert.match(source, /\.github\/releases\/mac-preview-v0\.5\.1-1-retry-1\.trigger/);
   assert.match(source, /PREVIEW_TAG: mac-preview-v0\.5\.1-1/);
   assert.match(source, /permissions:\n\s+contents: read/);
   assert.match(source, /publish:[\s\S]*?permissions:\n\s+contents: write/);
@@ -156,6 +157,6 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   const shellPayload = expectedPreviewMarker.trimEnd().replaceAll('\n', '\\n');
   assert.ok(source.includes(`expected=$'${shellPayload}'`));
 
-  const repositoryMarkerPath = path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.1-1.trigger');
+  const repositoryMarkerPath = path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.1-1-retry-1.trigger');
   assert.equal(validateOptionalPreviewMarker(repositoryMarkerPath).valid, true);
 });

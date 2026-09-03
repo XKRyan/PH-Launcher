@@ -76,7 +76,6 @@ class SiteStoragePersistence {
         ]),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error('网站登录数据写入超时')), this.flushTimeoutMs);
-          timer.unref?.();
         }),
       ]);
     } finally {

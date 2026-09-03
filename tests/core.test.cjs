@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -708,6 +709,37 @@ test('site storage flush timeout cannot block application shutdown indefinitely'
   assert.ok(Date.now() - startedAt < 500);
 });
 
+test('site storage flush timeout remains referenced until its rejection is observed', () => {
+  const modulePath = path.join(__dirname, '..', 'electron', 'site-session.cjs');
+  const script = `
+    const { SiteStoragePersistence } = require(${JSON.stringify(modulePath)});
+    const never = new Promise(() => {});
+    const siteSession = {
+      cookies: { on() {}, flushStore: () => never },
+      flushStorageData: () => never,
+    };
+    const persistence = new SiteStoragePersistence({ flushTimeoutMs: 10 });
+    persistence.watch(siteSession);
+    persistence.flushAll().then(
+      () => { process.stderr.write('unexpected resolution'); process.exitCode = 2; },
+      (error) => {
+        if (!/网站登录数据写入失败/.test(String(error))) {
+          process.stderr.write(String(error));
+          process.exitCode = 3;
+          return;
+        }
+        process.stdout.write('timeout-observed');
+      },
+    );
+  `;
+  const child = spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 2_000,
+  });
+  assert.equal(child.status, 0, child.stderr || child.error?.message);
+  assert.equal(child.stdout, 'timeout-observed');
+});
+
 test('custom website IPC cannot bypass sanitization and clearing closes every view before erasing its session', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
@@ -895,7 +927,7 @@ test('Windows and signed macOS releases use separate tag namespaces', () => {
 test('fixed Windows 0.5.1 release requires an exact marker and publishes reviewed assets only', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'prepare-windows-release.yml'), 'utf8');
   assert.doesNotThrow(() => yaml.load(workflow, { schema: yaml.JSON_SCHEMA }));
-  assert.match(workflow, /\.github\/releases\/v0\.5\.1\.trigger/);
+  assert.match(workflow, /\.github\/releases\/v0\.5\.1-retry-1\.trigger/);
   assert.match(workflow, /RELEASE_TAG: v0\.5\.1/);
   assert.match(workflow, /permissions:\n\s+contents: read/);
   assert.match(workflow, /publish:[\s\S]*?permissions:\n\s+contents: write/);
@@ -904,8 +936,8 @@ test('fixed Windows 0.5.1 release requires an exact marker and publishes reviewe
   assert.match(workflow, /Unable to prove that \$endpoint is absent/);
   assert.match(workflow, /gh release create \$env:RELEASE_TAG @assets/);
 
-  const marker = fs.readFileSync(path.join(__dirname, '..', '.github', 'releases', 'v0.5.1.trigger'), 'utf8').replaceAll('\r\n', '\n');
-  assert.equal(marker, 'PH_LAUNCHER_WINDOWS_RELEASE\ntag=v0.5.1\nversion=0.5.1\npublish-release=true\n');
+  const marker = fs.readFileSync(path.join(__dirname, '..', '.github', 'releases', 'v0.5.1-retry-1.trigger'), 'utf8').replaceAll('\r\n', '\n');
+  assert.equal(marker, 'PH_LAUNCHER_WINDOWS_RELEASE_RETRY\ntag=v0.5.1\nversion=0.5.1\nattempt=2\npublish-release=true\n');
 });
 
 test('macOS signing entitlements keep the hardened runtime exceptions minimal', () => {
