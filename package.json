@@ -1,6 +1,6 @@
 {
   "name": "ph-launcher",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",
@@ -22,7 +22,8 @@
     "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
     "dist:mac:preview": "electron-builder --config build/mac-preview-builder.cjs --mac dmg zip --universal --publish never",
     "dist:mac:release": "electron-builder --mac dmg zip pkg --universal --config.mac.forceCodeSigning=true --config.mac.notarize=true --publish never",
-    "mac:preview:background": "electron scripts/render-mac-dmg-background.cjs"
+    "mac:dmg:background": "electron scripts/render-mac-dmg-background.cjs",
+    "mac:preview:background": "npm run mac:dmg:background"
   },
   "devDependencies": {
     "csv-parse": "^7.0.2",
@@ -76,17 +77,31 @@
       ]
     },
     "dmg": {
-      "title": "PH Launcher ${version}",
+      "title": "PH Launcher 安装盘 ${version}",
+      "background": "build/mac-dmg-background.png",
+      "iconSize": 84,
+      "iconTextSize": 13,
+      "window": {
+        "width": 720,
+        "height": 480
+      },
       "contents": [
         {
-          "x": 130,
-          "y": 220
+          "x": 150,
+          "y": 250
         },
         {
-          "x": 410,
-          "y": 220,
+          "x": 570,
+          "y": 250,
           "type": "link",
           "path": "/Applications"
+        },
+        {
+          "x": 590,
+          "y": 410,
+          "type": "file",
+          "path": "build/mac-first-open-help.html",
+          "name": "首次打开帮助.html"
         }
       ]
     },

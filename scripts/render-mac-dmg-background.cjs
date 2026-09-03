@@ -7,8 +7,25 @@ const HEIGHT = 480;
 const projectDirectory = path.resolve(__dirname, '..');
 const sourcePath = path.join(projectDirectory, 'build', 'mac-dmg-background.svg');
 const outputPath = path.join(projectDirectory, 'build', 'mac-dmg-background.png');
+const requiredGuidance = [
+  '只拖本窗口左侧 App',
+  '按住这里 ↓',
+  '放到这里 ↓',
+  '不要拖桌面上的“PH Launcher 安装盘”',
+];
+
+function verifySourceGuidance() {
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  if (!source.includes(`width="${WIDTH}" height="${HEIGHT}"`)) {
+    throw new Error(`DMG background SVG must be ${WIDTH}x${HEIGHT}`);
+  }
+  for (const phrase of requiredGuidance) {
+    if (!source.includes(phrase)) throw new Error(`DMG background is missing required guidance: ${phrase}`);
+  }
+}
 
 async function render() {
+  verifySourceGuidance();
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('force-device-scale-factor', '1');
   await app.whenReady();

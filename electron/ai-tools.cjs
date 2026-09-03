@@ -1,4 +1,11 @@
 const crypto = require('node:crypto');
+const { SUBJECTS, normalizeSubjectId } = require('./ib-command-terms.cjs');
+const { normalizeCustomSites } = require('./custom-sites.cjs');
+
+const SUBJECT_SELECTION_HELP = SUBJECTS
+  .filter((subject) => !['common', 'all'].includes(subject.id))
+  .map((subject) => `${subject.id}=${subject.label}`)
+  .join('；');
 
 const MAX_TASKS_PER_ACTION = 24;
 const MAX_LESSONS_PER_ACTION = 100;
@@ -70,11 +77,17 @@ const AI_TOOLS = [
     type: 'function',
     function: {
       name: 'ib_command_lookup',
-      description: '查询 IB 指令词的含义与答题动作。',
+      description: '按学科查询 IB 指令词的含义与答题动作。用户提到具体科目时应传入 subject。',
       parameters: {
         type: 'object',
-        properties: { query: { type: 'string', minLength: 1, maxLength: 80 } },
-        required: ['query'],
+        properties: {
+          query: { type: 'string', maxLength: 80, description: '可选；留空时返回该科目的完整词表。' },
+          subject: {
+            type: 'string',
+            enum: SUBJECTS.map((subject) => subject.id),
+            description: SUBJECT_SELECTION_HELP,
+          },
+        },
         additionalProperties: false,
       },
     },
@@ -206,10 +219,25 @@ const AI_TOOLS = [
         properties: {
           page: {
             type: 'string',
-            enum: ['today', 'plan', 'notes', 'dictionary', 'ib', 'ai', 'settings', 'mail', 'managebac', 'edupage'],
+            enum: ['today', 'plan', 'notes', 'dictionary', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'],
           },
         },
         required: ['page'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_custom_site',
+      description: '按用户已经添加的显示名称打开“我的网页”。只能打开现有条目，不接受网址，也不会提交网页表单。',
+      parameters: {
+        type: 'object',
+        properties: {
+          siteName: { type: 'string', minLength: 1, maxLength: 32 },
+        },
+        required: ['siteName'],
         additionalProperties: false,
       },
     },
@@ -230,7 +258,7 @@ const AI_TOOLS = [
 ];
 
 const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'upsert_schedule', 'set_task_status']);
-const COMMAND_TOOLS = new Set(['open_launcher_page', 'control_focus_timer']);
+const COMMAND_TOOLS = new Set(['open_launcher_page', 'open_custom_site', 'control_focus_timer']);
 
 function cleanText(value, maxLength, fallback = '') {
   const text = String(value ?? '').replace(/\u0000/g, '').trim();
@@ -345,15 +373,30 @@ function sanitizeToolArguments(name, input, data = {}) {
     };
   }
   if (name === 'search_notes') return { query: cleanText(args.query, 80), limit: asInteger(args.limit, 6, 1, 10) };
-  if (name === 'dictionary_lookup' || name === 'ib_command_lookup') {
+  if (name === 'dictionary_lookup') {
     const query = cleanText(args.query, 80);
     if (!query) throw new Error('查询内容不能为空');
     return { query };
   }
+  if (name === 'ib_command_lookup') {
+    const query = cleanText(args.query, 80);
+    if (!query && !args.subject) throw new Error('请提供指令词或科目');
+    return { query, subject: normalizeSubjectId(args.subject || 'all') };
+  }
   if (name === 'open_launcher_page') {
-    const allowed = ['today', 'plan', 'notes', 'dictionary', 'ib', 'ai', 'settings', 'mail', 'managebac', 'edupage'];
+    const allowed = ['today', 'plan', 'notes', 'dictionary', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'];
     if (!allowed.includes(args.page)) throw new Error('不支持的页面');
     return { page: args.page };
+  }
+  if (name === 'open_custom_site') {
+    const siteName = cleanText(args.siteName, 32);
+    if (!siteName) throw new Error('请提供已添加的网页名称');
+    const key = siteName.toLocaleLowerCase('zh-CN');
+    const matches = normalizeCustomSites(data.settings?.customSites)
+      .filter((site) => site.name.toLocaleLowerCase('zh-CN') === key);
+    if (!matches.length) throw new Error('找不到这个已添加网页');
+    if (matches.length > 1) throw new Error('有多个同名网页，请先在设置中改成不同名称');
+    return { siteId: matches[0].id, siteName: matches[0].name };
   }
   if (name === 'control_focus_timer') {
     if (!['start', 'pause', 'reset'].includes(args.action)) throw new Error('不支持的计时器操作');

@@ -2,11 +2,11 @@
 
 PH Launcher 的 Windows 与 Mac 版本共用一套源代码。Mac 正式版目标是一个已签名、已公证的 Universal 应用，同时支持 Apple 芯片与 Intel Mac。
 
-> 当前仓库已同步 0.5.0 Mac 源码与未签名自动测试构建，但尚无可分享的 Mac 正式包。GitHub Actions 测试产物只用于开发验证。
+> 当前仓库可自动生成 0.5.1 Universal 未签名测试包，但尚无已完成 Developer ID 签名和 Apple 公证的 Mac 正式包。测试包只能通过完整预发布页分享，并应先阅读风险提示、核对 SHA-256。
 
 ## 给同学安装
 
-未来正式发布后，首选文件将是 `PH-Launcher-0.5.0-macOS-universal.pkg`：双击后按 macOS“安装器”提示即可放入“应用程序”。DMG 是备用方式，打开后把 PH Launcher 拖入“应用程序”。ZIP 主要用于自动更新或排查问题。
+未签名测试版提供 Universal DMG：打开后，只把安装窗口左侧的 PH Launcher App 拖到同一窗口右侧的 Applications，不要拖桌面上的安装盘图标。正式发布后，首选文件将是已签名、公证的 `PH-Launcher-0.5.1-macOS-universal.pkg`；ZIP 主要用于自动更新或排查问题。
 
 只有通过 Developer ID 签名、Apple 公证、Gatekeeper 验证和 Mac 实机测试的文件才可作为正式版分发。系统仍可能要求用户确认安装或输入本机管理员密码；应用不得通过脚本关闭 Gatekeeper 或绕过这些提示。
 

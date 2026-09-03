@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const zlib = require('node:zlib');
+const yaml = require('js-yaml');
 
 const { recommendLocalModel } = require('../electron/hardware.cjs');
 const {
@@ -21,6 +23,11 @@ const {
   translatePullStatus,
 } = require('../electron/ai-deployment.cjs');
 const { getSiteCss } = require('../electron/site-styles.cjs');
+const {
+  SiteStoragePersistence,
+  isAllowedSitePermission,
+  isTrustedSiteUrl,
+} = require('../electron/site-session.cjs');
 const { OfflineDictionary, normalizeSearchKey } = require('../electron/dictionary.cjs');
 const {
   PendingActionStore,
@@ -30,10 +37,116 @@ const {
   toolKind,
 } = require('../electron/ai-tools.cjs');
 const { normalizeExtractorResult } = require('../electron/edupage-timetable.cjs');
+const {
+  commandTermCatalog,
+  listCommandTerms,
+} = require('../electron/ib-command-terms.cjs');
+const {
+  MAX_CUSTOM_SITES,
+  customSiteOrigin,
+  isTrustedCustomSiteUrl,
+  normalizeCustomSites,
+  normalizeCustomSiteUrl,
+  removeCustomSite,
+  reorderCustomSites,
+  runtimeCustomSite,
+  upsertCustomSite,
+} = require('../electron/custom-sites.cjs');
+const {
+  CLEAN_DISPLAY_DEFAULTS,
+  CLEAN_DISPLAY_RESET_VERSION,
+  DATA_VERSION,
+  normalizeCleanDisplaySettings,
+} = require('../electron/site-settings.cjs');
 
 test('hardware recommendation is conservative on low-memory and low-disk PCs', () => {
   assert.equal(recommendLocalModel({ ramGb: 7.9, vramGb: 8, diskFreeGb: 100 }).recommended, false);
   assert.equal(recommendLocalModel({ ramGb: 32, vramGb: 8, diskFreeGb: 5.9 }).recommended, false);
+});
+
+test('IB command terms are filtered by subject from one shared catalog', () => {
+  const catalog = commandTermCatalog();
+  const subjectIds = catalog.subjects.map((subject) => subject.id);
+  assert.equal(new Set(subjectIds).size, subjectIds.length);
+  assert.ok(subjectIds.includes('math-aa'));
+  assert.ok(subjectIds.includes('physics'));
+  assert.ok(subjectIds.includes('economics'));
+  assert.ok(subjectIds.includes('history-through-2027'));
+  assert.ok(subjectIds.includes('history-from-2028'));
+
+  const mathTerms = listCommandTerms({ subjectId: 'math-aa' }).map((item) => item.id);
+  const economicsTerms = listCommandTerms({ subjectId: 'economics' }).map((item) => item.id);
+  assert.ok(mathTerms.includes('prove'));
+  assert.ok(mathTerms.includes('write-down'));
+  assert.ok(mathTerms.includes('hence-or-otherwise'));
+  assert.ok(!economicsTerms.includes('prove'));
+  assert.ok(economicsTerms.includes('recommend'));
+
+  const spellingAlias = listCommandTerms({ subjectId: 'physics', query: 'analyze' });
+  assert.equal(spellingAlias[0].term, 'Analyse');
+  assert.match(catalog.note, /当前学科指南/);
+  assert.equal(catalog.verifiedAt, '2026-09-02');
+});
+
+test('IB subject/version lists stay exact instead of merging broad cross-subject glossaries', () => {
+  const expected = {
+    'language-a': 'analyse comment compare compare-and-contrast contrast describe discuss evaluate examine explain explore interpret investigate justify present to-what-extent',
+    'language-b': 'analyse demonstrate describe discuss evaluate examine explain identify outline present state',
+    'language-ab-initio': 'analyse demonstrate describe discuss evaluate examine explain identify outline present state',
+    'math-aa': 'calculate comment compare compare-and-contrast construct contrast deduce demonstrate describe determine differentiate distinguish draw estimate explain find hence hence-or-otherwise identify integrate interpret investigate justify label list plot predict prove show show-that sketch solve state suggest verify write-down',
+    'math-ai': 'calculate comment compare compare-and-contrast construct contrast deduce demonstrate describe determine differentiate distinguish draw estimate explain find hence hence-or-otherwise identify integrate interpret investigate justify label list plot predict prove show show-that sketch solve state suggest verify write-down',
+    biology: 'define draw label list measure state annotate calculate describe distinguish estimate identify outline analyse comment compare compare-and-contrast construct deduce design determine discuss evaluate explain justify predict sketch suggest',
+    chemistry: 'draw state annotate calculate describe estimate outline comment compare contrast deduce determine discuss evaluate explain predict sketch suggest',
+    physics: 'draw state annotate calculate describe estimate outline analyse determine discuss explain predict show sketch suggest',
+    ess: 'define draw label list measure state annotate apply calculate describe distinguish estimate identify interpret outline analyse comment compare compare-and-contrast construct contrast deduce demonstrate derive design determine discuss evaluate examine explain justify predict sketch suggest to-what-extent',
+    economics: 'define describe list outline state analyse apply comment distinguish explain suggest compare compare-and-contrast contrast discuss evaluate examine justify recommend to-what-extent calculate construct derive determine draw identify label measure plot show show-that sketch solve',
+    business: 'define describe identify list outline state analyse apply comment demonstrate distinguish explain suggest compare compare-and-contrast contrast discuss evaluate examine justify recommend to-what-extent annotate calculate complete construct determine draw label plot prepare',
+    'history-through-2027': 'analyse compare-and-contrast discuss evaluate examine to-what-extent',
+    'history-from-2028': 'analyse discuss examine explain to-what-extent',
+    geography: 'classify define describe determine estimate identify outline state analyse distinguish explain suggest compare compare-and-contrast contrast discuss evaluate examine justify to-what-extent annotate construct draw label',
+    psychology: 'describe state analyse apply comment design explain interpret predict suggest compare-and-contrast discuss evaluate examine to-what-extent',
+    'global-politics': 'define describe identify list outline analyse distinguish explain suggest compare compare-and-contrast contrast discuss evaluate examine justify recommend to-what-extent',
+    'computer-science': 'define label list state calculate describe distinguish estimate identify outline trace compare construct deduce discuss evaluate explain justify sketch suggest to-what-extent',
+    'visual-arts': 'analyse demonstrate describe evaluate examine explain justify outline present',
+  };
+
+  for (const [subjectId, source] of Object.entries(expected)) {
+    const actual = listCommandTerms({ subjectId }).map((item) => item.id).sort();
+    assert.deepEqual(actual, source.split(' ').sort(), subjectId);
+  }
+
+  assert.deepEqual(listCommandTerms({ subjectId: 'biology', query: 'define' })[0].objectives, ['AO1']);
+  assert.deepEqual(listCommandTerms({ subjectId: 'language-a', query: 'compare' }).find((item) => item.id === 'compare').objectives, ['AO1', 'AO2', 'AO3']);
+  assert.deepEqual(listCommandTerms({ subjectId: 'visual-arts', query: 'analyse' })[0].objectives, []);
+});
+
+test('AI command-term lookup accepts an optional subject without changing write permissions', () => {
+  assert.deepEqual(
+    sanitizeToolArguments('ib_command_lookup', { query: 'evaluate', subject: 'economics' }, {}),
+    { query: 'evaluate', subject: 'economics' },
+  );
+  assert.deepEqual(
+    sanitizeToolArguments('ib_command_lookup', { query: 'prove' }, {}),
+    { query: 'prove', subject: 'all' },
+  );
+  assert.deepEqual(
+    sanitizeToolArguments('ib_command_lookup', { subject: 'physics' }, {}),
+    { query: '', subject: 'physics' },
+  );
+  assert.throws(() => sanitizeToolArguments('ib_command_lookup', {}, {}), /指令词或科目/);
+  assert.equal(toolKind('ib_command_lookup'), 'read');
+});
+
+test('IB Docs stays an explicit non-official external link', () => {
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  assert.match(renderer, /system\.openUrl\('https:\/\/ibdocs\.re\/'\)/);
+  assert.match(renderer, /IB Docs 是第三方网站/);
+  assert.match(renderer, /sample-exam-papers/);
+  assert.match(page, /与 IBO 无隶属或背书关系/);
+  assert.doesNotMatch(page, /(?:iframe|webview)[^>]+ibdocs\.re/i);
+  assert.doesNotMatch(main, /ibdocs[^\n]+partition:/i);
 });
 
 test('hardware recommendation scales per machine', () => {
@@ -415,11 +528,14 @@ test('runProgram timeout converges without leaving the deployment promise pendin
 
 test('clean display styles are limited to approved school-site domains', () => {
   const schoolMailCss = getSiteCss('mail', 'https://mail.shphschool.com/');
+  assert.match(schoolMailCss, /--ph-clean-mode:\s*1\s*!important/);
   assert.match(schoolMailCss, /--ph-green/);
   assert.match(schoolMailCss, /login-mod-wrapper\.login-mod-form/);
   assert.match(schoolMailCss, /#donwload_block \{ display: none/);
   assert.match(getSiteCss('managebac', 'https://shph.managebac.cn/login'), /--ph-green/);
   assert.match(getSiteCss('edupage', 'https://pingheschool.edupage.org/'), /--ph-green/);
+  assert.match(getSiteCss('edupage', 'https://pingheschool.edupage.org/'), /kids-front-page[\s\S]*Login_0_loginFrm/);
+  assert.doesNotMatch(getSiteCss('edupage', 'https://pingheschool.edupage.org/timetable/'), /kids-front-page/);
   assert.match(getSiteCss('mail', 'https://entry.mail.163.com/'), /--ph-clean-mode:\s*1/);
   assert.match(getSiteCss('managebac', 'https://shph.managebac.cn/dashboard'), /linear-gradient/);
   assert.match(getSiteCss('edupage', 'https://pingheschool.edupage.org/timetable/'), /erte-section-inner/);
@@ -427,12 +543,224 @@ test('clean display styles are limited to approved school-site domains', () => {
   assert.equal(getSiteCss('edupage', 'javascript:alert(1)'), '');
 });
 
+test('clean display defaults off once and future data upgrades preserve the user choice', () => {
+  assert.equal(DATA_VERSION, 2);
+  assert.equal(CLEAN_DISPLAY_RESET_VERSION, 2);
+  assert.deepEqual(CLEAN_DISPLAY_DEFAULTS, { mail: false, managebac: false, edupage: false });
+  const previouslyEnabled = { mail: true, managebac: true, edupage: true };
+  assert.deepEqual(normalizeCleanDisplaySettings(undefined, previouslyEnabled), CLEAN_DISPLAY_DEFAULTS);
+  assert.deepEqual(normalizeCleanDisplaySettings(1, previouslyEnabled), CLEAN_DISPLAY_DEFAULTS);
+  assert.deepEqual(normalizeCleanDisplaySettings(2, { mail: true, managebac: false, edupage: true }), {
+    mail: true,
+    managebac: false,
+    edupage: true,
+  });
+  assert.deepEqual(normalizeCleanDisplaySettings(99, { mail: true, managebac: 1, edupage: false }), {
+    mail: true,
+    managebac: false,
+    edupage: false,
+  });
+});
+
+test('custom website URLs are HTTPS-only and same-origin trust never widens to subdomains or ports', () => {
+  assert.equal(normalizeCustomSiteUrl('example.com/path'), 'https://example.com/path');
+  assert.equal(customSiteOrigin('https://example.com/path?a=1'), 'https://example.com');
+  assert.throws(() => normalizeCustomSiteUrl('http://example.com/'), /仅支持 HTTPS/);
+  assert.throws(() => normalizeCustomSiteUrl('file:///tmp/example'), /仅支持 HTTPS/);
+  assert.throws(() => normalizeCustomSiteUrl('javascript:alert(1)'), /仅支持 HTTPS/);
+  assert.throws(() => normalizeCustomSiteUrl('https://user:secret@example.com/'), /账号或密码/);
+  assert.throws(() => normalizeCustomSiteUrl('https://example.com/\n'), /无效字符/);
+  assert.throws(() => normalizeCustomSiteUrl(`https://example.com/${'a'.repeat(2048)}`), /网址过长/);
+
+  const record = { url: 'https://foo.github.io/classes/' };
+  assert.equal(isTrustedCustomSiteUrl(record, 'https://foo.github.io/login'), true);
+  assert.equal(isTrustedCustomSiteUrl(record, 'https://bar.foo.github.io/login'), false);
+  assert.equal(isTrustedCustomSiteUrl(record, 'https://foo.github.io:444/login'), false);
+  assert.equal(isTrustedCustomSiteUrl(record, 'http://foo.github.io/login'), false);
+});
+
+test('custom websites have canonical IDs, isolated sessions, safe imports and bounded CRUD', () => {
+  const uuid = '12345678-1234-4123-8123-123456789abc';
+  const created = upsertCustomSite([], {
+    name: ' Kognity ',
+    url: 'kognity.com/',
+    color: 'blue',
+    shortcut: ' CommandOrControl + Alt + 4 ',
+    shortcutEnabled: true,
+    partition: 'persist:attacker-controlled',
+  }, () => uuid);
+  assert.equal(created.created, true);
+  assert.equal(created.site.id, `custom-${uuid}`);
+  assert.equal(created.site.name, 'Kognity');
+  assert.equal(created.site.url, 'https://kognity.com/');
+  assert.equal(created.site.shortcut, 'CommandOrControl+Alt+4');
+  assert.equal(created.site.partition, undefined);
+
+  const runtime = runtimeCustomSite(created.site);
+  assert.equal(runtime.custom, true);
+  assert.equal(runtime.partition, `persist:ph-site-custom-${uuid}`);
+  assert.deepEqual(runtime.trustedHosts, ['kognity.com']);
+
+  const edited = upsertCustomSite(created.sites, { ...created.site, url: 'https://kognity.com/library' });
+  assert.equal(edited.created, false);
+  assert.equal(edited.site.id, created.site.id);
+  assert.equal(customSiteOrigin(edited.site.url), customSiteOrigin(created.site.url));
+
+  const unsafeImport = normalizeCustomSites([
+    created.site,
+    created.site,
+    { ...created.site, id: 'custom-not-a-uuid', url: 'https://example.com/' },
+    { id: 'custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'HTTP', url: 'http://example.com/' },
+  ]);
+  assert.deepEqual(unsafeImport, [created.site]);
+
+  assert.deepEqual(removeCustomSite(created.sites, created.site.id), []);
+  assert.throws(() => removeCustomSite([], created.site.id), /已不存在/);
+
+  const full = Array.from({ length: MAX_CUSTOM_SITES }, (_, index) => ({
+    id: `custom-00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    name: `Site ${index}`,
+    url: `https://site-${index}.example/`,
+    color: 'green',
+    shortcut: '',
+    shortcutEnabled: false,
+  }));
+  assert.equal(normalizeCustomSites(full).length, MAX_CUSTOM_SITES);
+  assert.throws(() => upsertCustomSite(full, { name: 'Extra', url: 'https://extra.example/' }), /最多可添加/);
+
+  const collisionUuid = uuid;
+  assert.throws(
+    () => upsertCustomSite(created.sites, { name: 'Collision', url: 'https://collision.example/' }, () => collisionUuid),
+    /唯一的网页标识/,
+  );
+});
+
+test('custom website order must contain every current ID exactly once', () => {
+  const sites = [0, 1, 2].map((index) => ({
+    id: `custom-11111111-1111-4111-8111-${String(index).padStart(12, '0')}`,
+    name: `Site ${index}`,
+    url: `https://site-${index}.example/`,
+    color: 'green',
+    shortcut: '',
+    shortcutEnabled: false,
+  }));
+  const reversed = reorderCustomSites(sites, sites.map((site) => site.id).reverse());
+  assert.deepEqual(reversed.map((site) => site.id), sites.map((site) => site.id).reverse());
+  assert.throws(() => reorderCustomSites(sites, [sites[0].id, sites[0].id, sites[2].id]), /排序数据无效/);
+  assert.throws(() => reorderCustomSites(sites, [sites[0].id]), /排序数据无效/);
+});
+
+test('site permissions only allow approved capabilities when requester and embedder are trusted HTTPS hosts', () => {
+  const site = { trustedHosts: ['edupage.org'] };
+  const trusted = {
+    topLevelUrl: 'https://pingheschool.edupage.org/timetable/',
+    requestingUrl: 'https://login1.edupage.org/auth',
+    embeddingUrl: 'https://pingheschool.edupage.org/',
+  };
+  assert.equal(isTrustedSiteUrl(site, trusted.topLevelUrl), true);
+  assert.equal(isAllowedSitePermission(site, 'storage-access', trusted), true);
+  assert.equal(isAllowedSitePermission(site, 'top-level-storage-access', trusted), true);
+  assert.equal(isAllowedSitePermission(site, 'notifications', trusted), true);
+  assert.equal(isAllowedSitePermission(site, 'camera', trusted), false);
+  assert.equal(isAllowedSitePermission(site, 'storage-access', { ...trusted, requestingUrl: 'https://evil.example/' }), false);
+  assert.equal(isAllowedSitePermission(site, 'storage-access', { ...trusted, embeddingUrl: 'https://evil.example/' }), false);
+  assert.equal(isAllowedSitePermission(site, 'storage-access', { ...trusted, topLevelUrl: 'http://pingheschool.edupage.org/' }), false);
+});
+
+test('site storage persistence flushes changed cookies and DOM storage without reading or rewriting cookies', async () => {
+  let changed;
+  let cookieFlushes = 0;
+  let storageFlushes = 0;
+  const siteSession = {
+    cookies: {
+      on(event, callback) {
+        assert.equal(event, 'changed');
+        changed = callback;
+      },
+      async flushStore() { cookieFlushes += 1; },
+    },
+    async flushStorageData() { storageFlushes += 1; },
+  };
+  const persistence = new SiteStoragePersistence({ delayMs: 5 });
+  persistence.watch(siteSession);
+  changed();
+  changed();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(cookieFlushes, 1);
+  assert.equal(storageFlushes, 1);
+
+  persistence.schedule(siteSession);
+  await persistence.flushAll();
+  assert.equal(cookieFlushes, 2);
+  assert.equal(storageFlushes, 2);
+});
+
+test('site storage flush timeout cannot block application shutdown indefinitely', async () => {
+  const never = new Promise(() => {});
+  const siteSession = {
+    cookies: { on() {}, flushStore: () => never },
+    flushStorageData: () => never,
+  };
+  const persistence = new SiteStoragePersistence({ flushTimeoutMs: 10 });
+  persistence.watch(siteSession);
+  const startedAt = Date.now();
+  await assert.rejects(persistence.flushAll(), /网站登录数据写入失败/);
+  assert.ok(Date.now() - startedAt < 500);
+});
+
+test('custom website IPC cannot bypass sanitization and clearing closes every view before erasing its session', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+
+  assert.match(main, /ipcMain\.handle\('site:custom-upsert'/);
+  assert.match(main, /assertMainRenderer\(event\)/);
+  assert.match(main, /customSites: secureStore\.data\.settings\.customSites/);
+  assert.match(main, /if \(site\.custom\) return callback\(false\)/);
+  assert.match(main, /if \(site\.custom\) return false/);
+  assert.match(main, /isTrustedPopupUrl\(site, url\)/);
+  assert.match(main, /customSiteOrigin\(oldSite\.url\) !== customSiteOrigin\(result\.site\.url\)/);
+  assert.match(main, /child\.destroy\(\)/);
+  assert.match(main, /siteSession\.clearAuthCache\(\)/);
+  assert.match(main, /siteSession\.closeAllConnections\(\)/);
+  assert.match(main, /siteSession\.on\('will-download'/);
+  assert.match(main, /dialog\.showSaveDialog/);
+  assert.match(main, /disposeSiteView\(siteId\);\s*await clearSiteStorage\(site\)/);
+  assert.match(main, /popupCssKeys/);
+  assert.match(preload, /ipcRenderer\.invoke\('site:custom-upsert'/);
+  assert.match(preload, /ipcRenderer\.invoke\('site:custom-remove'/);
+  assert.match(preload, /ipcRenderer\.invoke\('site:custom-reorder'/);
+  assert.match(renderer, /wasViewingSite[\s\S]*?navigate\('settings'\)[\s\S]*?sites\.hide\(\)/);
+  assert.match(page, /id="customSiteDialog"/);
+  assert.match(page, /自定义网页仅支持 HTTPS|仅支持 HTTPS/);
+  assert.doesNotMatch(page, /<(?:iframe|webview)\b/i);
+});
+
 test('AI tool gateway rejects unknown, destructive and arbitrary navigation requests', () => {
   assert.equal(toolKind('create_tasks'), 'write');
   assert.equal(toolKind('preview_edupage_timetable'), 'read');
+  assert.equal(toolKind('open_custom_site'), 'command');
   assert.equal(toolKind('delete_everything'), 'unknown');
   assert.throws(() => sanitizeToolArguments('delete_task', { taskId: 'x' }, {}), /未授权/);
   assert.throws(() => sanitizeToolArguments('open_launcher_page', { page: 'https://example.com' }, {}), /不支持/);
+  assert.deepEqual(sanitizeToolArguments('open_launcher_page', { page: 'ibdocs' }, {}), { page: 'ibdocs' });
+  const customSite = {
+    id: 'custom-22222222-2222-4222-8222-222222222222',
+    name: 'Kognity',
+    url: 'https://kognity.com/',
+    color: 'green',
+    shortcut: '',
+    shortcutEnabled: false,
+  };
+  assert.deepEqual(
+    sanitizeToolArguments('open_custom_site', { siteName: 'kognity' }, { settings: { customSites: [customSite] } }),
+    { siteId: customSite.id, siteName: 'Kognity' },
+  );
+  assert.throws(
+    () => sanitizeToolArguments('open_custom_site', { siteName: 'https://example.com' }, { settings: { customSites: [customSite] } }),
+    /找不到/,
+  );
 });
 
 test('AI writes stay pending until a matching proposal is confirmed', () => {
@@ -526,20 +854,58 @@ test('main process keeps school views isolated and web security enabled', () => 
   assert.match(source, /contextIsolation: true/);
   assert.match(source, /sandbox: true/);
   assert.match(source, /webSecurity: true/);
+  assert.match(source, /setPermissionCheckHandler/);
+  assert.match(source, /siteStoragePersistence\.flushAll\(\)/);
+  assert.match(source, /--ph-clean-mode/);
   assert.doesNotMatch(source, /pingheschool\.edupage\.org；/);
   assert.match(source, /hiddenInset/);
   assert.match(source, /process\.platform === 'darwin'/);
+  const siteSessionSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'site-session.cjs'), 'utf8');
+  assert.match(siteSessionSource, /cookies\.flushStore\(\)/);
+  assert.match(siteSessionSource, /flushStorageData\(\)/);
+  assert.doesNotMatch(siteSessionSource, /cookies\.get\(/);
+  assert.doesNotMatch(siteSessionSource, /cookies\.set\(/);
 });
 
 test('package config includes hardened Universal macOS DMG, ZIP and PKG targets', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(packageJson.version, '0.5.0');
+  assert.equal(packageJson.version, '0.5.1');
   assert.equal(packageJson.build.mac.minimumSystemVersion, '13.0');
   assert.equal(packageJson.build.mac.hardenedRuntime, true);
   assert.deepEqual(packageJson.build.mac.target, ['dmg', 'zip', 'pkg']);
   assert.match(packageJson.scripts['dist:mac'], /--universal/);
   assert.match(packageJson.scripts['dist:mac:release'], /forceCodeSigning=true/);
+  assert.equal(packageJson.build.dmg.title, 'PH Launcher 安装盘 ${version}');
+  assert.equal(packageJson.build.dmg.background, 'build/mac-dmg-background.png');
+  assert.deepEqual(packageJson.build.dmg.window, { width: 720, height: 480 });
+  assert.ok(packageJson.build.dmg.contents.some((item) => item.type === 'link' && item.path === '/Applications'));
+  assert.ok(packageJson.build.dmg.contents.some((item) => item.name === '首次打开帮助.html'));
   assert.equal(packageJson.build.pkg.installLocation, '/Applications');
+});
+
+test('Windows and signed macOS releases use separate tag namespaces', () => {
+  const windowsWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release-windows.yml'), 'utf8');
+  const macWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release-macos.yml'), 'utf8');
+  assert.match(windowsWorkflow, /tags:\s*\n\s*- "v\*"/);
+  assert.match(macWorkflow, /tags:\s*\n\s*- "mac-v\*"/);
+  assert.doesNotMatch(macWorkflow, /refs\/tags\/v/);
+  assert.match(macWorkflow, /mac-v\$version/);
+});
+
+test('fixed Windows 0.5.1 release requires an exact marker and publishes reviewed assets only', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'prepare-windows-release.yml'), 'utf8');
+  assert.doesNotThrow(() => yaml.load(workflow, { schema: yaml.JSON_SCHEMA }));
+  assert.match(workflow, /\.github\/releases\/v0\.5\.1\.trigger/);
+  assert.match(workflow, /RELEASE_TAG: v0\.5\.1/);
+  assert.match(workflow, /permissions:\n\s+contents: read/);
+  assert.match(workflow, /publish:[\s\S]*?permissions:\n\s+contents: write/);
+  assert.match(workflow, /Unexpected Windows release bundle contents/);
+  assert.match(workflow, /Checksum mismatch for \$fileName/);
+  assert.match(workflow, /Unable to prove that \$endpoint is absent/);
+  assert.match(workflow, /gh release create \$env:RELEASE_TAG @assets/);
+
+  const marker = fs.readFileSync(path.join(__dirname, '..', '.github', 'releases', 'v0.5.1.trigger'), 'utf8').replaceAll('\r\n', '\n');
+  assert.equal(marker, 'PH_LAUNCHER_WINDOWS_RELEASE\ntag=v0.5.1\nversion=0.5.1\npublish-release=true\n');
 });
 
 test('macOS signing entitlements keep the hardened runtime exceptions minimal', () => {
@@ -554,12 +920,13 @@ test('macOS signing entitlements keep the hardened runtime exceptions minimal', 
 test('macOS unsigned preview is isolated from the formal release configuration', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const previewConfig = require('../build/mac-preview-builder.cjs');
-  assert.doesNotMatch(packageJson.build.dmg.title, /测试版/);
+  assert.doesNotMatch(packageJson.build.dmg.title, /测试/);
   assert.equal(previewConfig.mac.identity, '-');
   assert.equal(previewConfig.mac.notarize, false);
   assert.equal(previewConfig.mac.hardenedRuntime, true);
   assert.deepEqual(previewConfig.mac.target, ['dmg', 'zip']);
-  assert.match(previewConfig.dmg.title, /测试版/);
+  assert.equal(previewConfig.dmg.title, 'PH Launcher 测试安装盘 ${version}');
+  assert.deepEqual(previewConfig.dmg.contents, packageJson.build.dmg.contents);
   assert.ok(previewConfig.dmg.contents.some((item) => item.name === '首次打开帮助.html'));
   assert.match(packageJson.scripts['dist:mac:preview'], /mac-preview-builder\.cjs/);
 
@@ -588,12 +955,69 @@ test('application icon assets have a full-size Mac PNG and multi-frame Windows I
   const ico = fs.readFileSync(path.join(__dirname, '..', 'assets', 'icon.ico'));
   assert.equal(ico.readUInt16LE(0), 0);
   assert.equal(ico.readUInt16LE(2), 1);
-  assert.ok(ico.readUInt16LE(4) >= 8);
+  const expectedSizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+  assert.equal(ico.readUInt16LE(4), expectedSizes.length);
+  for (const [index, expectedSize] of expectedSizes.entries()) {
+    const entryOffset = 6 + (index * 16);
+    const advertisedWidth = ico[entryOffset] || 256;
+    const advertisedHeight = ico[entryOffset + 1] || 256;
+    const dataLength = ico.readUInt32LE(entryOffset + 8);
+    const dataOffset = ico.readUInt32LE(entryOffset + 12);
+    const frame = ico.subarray(dataOffset, dataOffset + dataLength);
+    assert.equal(advertisedWidth, expectedSize);
+    assert.equal(advertisedHeight, expectedSize);
+    assert.equal(frame.subarray(1, 4).toString('ascii'), 'PNG');
+    assert.equal(frame.readUInt32BE(16), expectedSize);
+    assert.equal(frame.readUInt32BE(20), expectedSize);
+    assert.equal(frame[24], 8, `${expectedSize}px frame must use 8-bit channels`);
+    assert.equal(frame[25], 6, `${expectedSize}px frame must contain RGBA pixels`);
+
+    const idat = [];
+    for (let offset = 8; offset < frame.length;) {
+      const length = frame.readUInt32BE(offset);
+      const type = frame.subarray(offset + 4, offset + 8).toString('ascii');
+      if (type === 'IDAT') idat.push(frame.subarray(offset + 8, offset + 8 + length));
+      offset += 12 + length;
+      if (type === 'IEND') break;
+    }
+    const filtered = zlib.inflateSync(Buffer.concat(idat));
+    const stride = expectedSize * 4;
+    const pixels = Buffer.alloc(stride * expectedSize);
+    const paeth = (a, b, c) => {
+      const estimate = a + b - c;
+      const distanceA = Math.abs(estimate - a);
+      const distanceB = Math.abs(estimate - b);
+      const distanceC = Math.abs(estimate - c);
+      return distanceA <= distanceB && distanceA <= distanceC ? a : distanceB <= distanceC ? b : c;
+    };
+    for (let y = 0; y < expectedSize; y += 1) {
+      const filter = filtered[y * (stride + 1)];
+      for (let x = 0; x < stride; x += 1) {
+        const raw = filtered[(y * (stride + 1)) + 1 + x];
+        const left = x >= 4 ? pixels[(y * stride) + x - 4] : 0;
+        const above = y > 0 ? pixels[((y - 1) * stride) + x] : 0;
+        const upperLeft = y > 0 && x >= 4 ? pixels[((y - 1) * stride) + x - 4] : 0;
+        const predictor = [0, left, above, Math.floor((left + above) / 2), paeth(left, above, upperLeft)][filter];
+        assert.notEqual(predictor, undefined, `unsupported PNG filter ${filter}`);
+        pixels[(y * stride) + x] = (raw + predictor) & 0xff;
+      }
+    }
+    let visiblePixels = 0;
+    for (let alpha = 3; alpha < pixels.length; alpha += 4) {
+      if (pixels[alpha] > 0) visiblePixels += 1;
+    }
+    assert.ok(
+      visiblePixels > expectedSize * expectedSize * 0.5,
+      `${expectedSize}px Windows icon frame must not be blank or confined to a corner`,
+    );
+  }
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.ok(packageJson.build.win.extraResources.some((item) => item.to === 'app-icon.ico'));
   assert.ok(!packageJson.build.extraResources.some((item) => item.to === 'app-icon.ico'));
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+  assert.equal(mainSource.match(/const APP_ID = '([^']+)'/)?.[1], packageJson.build.appId);
+  assert.match(mainSource, /app\.setAppUserModelId\(APP_ID\);\s*app\.whenReady\(\)/);
   assert.match(mainSource, /process\.resourcesPath, 'app-icon\.ico'/);
   assert.match(mainSource, /nativeImage\.createFromPath\(candidate\)/);
 });

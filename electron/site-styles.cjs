@@ -1,6 +1,6 @@
 const BASE = `
   :root {
-    --ph-clean-mode: 1;
+    --ph-clean-mode: 1 !important;
     --ph-green: #1f5a46;
     --ph-green-soft: #e8f0ec;
     --ph-gold: #c5a05a;
@@ -159,6 +159,43 @@ const EDUPAGE = `
   footer, .footer { opacity: .68 !important; }
 `;
 
+const EDUPAGE_LANDING = `
+  .kids-front-page .kids_top_nav { display: none !important; }
+  .kids-front-page #kids_middle_container { padding: 42px 20px 70px !important; }
+  .kids-front-page #kids_middle_container div[style*="width:72.73%"] { display: none !important; }
+  .kids-front-page #kids_middle_container div[style*="width:27.27%"] {
+    box-sizing: border-box !important;
+    float: none !important;
+    width: min(100%, 480px) !important;
+    max-width: 480px !important;
+    margin-inline: auto !important;
+  }
+  .kids-front-page #kids_middle_container div[style*="width:27.27%"] > div > div > div > div > :not(:has(#comp_HBox_1_VBox_1_Login_0_loginFrm)) {
+    display: none !important;
+  }
+  .kids-front-page .sideMenu,
+  .kids-front-page .contactGadget,
+  .kids-front-page .kids_bottom_container { display: none !important; }
+  .kids-front-page #comp_HBox_1_VBox_1_Login_0_loginFrm {
+    padding: 24px !important;
+    border: 1px solid var(--ph-border) !important;
+    border-radius: 18px !important;
+    background: rgba(255,253,248,.98) !important;
+    box-shadow: 0 18px 54px rgba(20,55,44,.13) !important;
+  }
+  .kids-front-page #comp_HBox_1_VBox_1_Login_0_loginFrm input[type="text"],
+  .kids-front-page #comp_HBox_1_VBox_1_Login_0_loginFrm input[type="password"] {
+    min-height: 42px !important;
+    background: #fff !important;
+  }
+  .kids-front-page #comp_HBox_1_VBox_1_Login_0_loginFrm .skinButton {
+    min-height: 40px !important;
+    color: #fff !important;
+    border-color: var(--ph-green) !important;
+    background: var(--ph-green) !important;
+  }
+`;
+
 function getSiteCss(siteId, rawUrl) {
   let url;
   try {
@@ -178,7 +215,9 @@ function getSiteCss(siteId, rawUrl) {
     return '';
   }
   if (siteId === 'edupage') {
-    if (host === 'edupage.org' || host.endsWith('.edupage.org')) return `${BASE}\n${EDUPAGE}`;
+    if (host === 'edupage.org' || host.endsWith('.edupage.org')) {
+      return `${BASE}\n${EDUPAGE}${url.pathname === '/' ? `\n${EDUPAGE_LANDING}` : ''}`;
+    }
     return '';
   }
   return '';

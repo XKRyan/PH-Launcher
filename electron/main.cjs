@@ -18,6 +18,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { getSiteCss } = require('./site-styles.cjs');
+const {
+  SiteStoragePersistence,
+  isAllowedSitePermission,
+  isTrustedSiteUrl,
+} = require('./site-session.cjs');
 const { recommendLocalModel } = require('./hardware.cjs');
 const { OfflineDictionary } = require('./dictionary.cjs');
 const { LocalAiDeploymentManager } = require('./ai-deployment.cjs');
@@ -32,6 +37,24 @@ const {
   EDUPAGE_TIMETABLE_SCRIPT,
   normalizeExtractorResult,
 } = require('./edupage-timetable.cjs');
+const {
+  commandTermCatalog,
+  listCommandTerms,
+} = require('./ib-command-terms.cjs');
+const {
+  customSiteOrigin,
+  isTrustedCustomSiteUrl,
+  normalizeCustomSites,
+  removeCustomSite,
+  reorderCustomSites,
+  runtimeCustomSite,
+  upsertCustomSite,
+} = require('./custom-sites.cjs');
+const {
+  CLEAN_DISPLAY_DEFAULTS,
+  DATA_VERSION,
+  normalizeCleanDisplaySettings,
+} = require('./site-settings.cjs');
 
 const APP_ID = 'cn.phlauncher.desktop';
 const SIDEBAR_WIDTH = 248;
@@ -92,7 +115,7 @@ const DEFAULT_SHORTCUTS = {
 
 function createDefaultData() {
   return {
-    version: 1,
+    version: DATA_VERSION,
     notes: [],
     tasks: [],
     schedule: [],
@@ -105,7 +128,8 @@ function createDefaultData() {
     settings: {
       studentName: '',
       theme: 'light',
-      siteCleanMode: { mail: true, managebac: false, edupage: true },
+      siteCleanMode: { ...CLEAN_DISPLAY_DEFAULTS },
+      customSites: [],
       shortcuts: structuredClone(DEFAULT_SHORTCUTS),
       openAtLogin: false,
       minimizeToTray: true,
@@ -135,10 +159,12 @@ function mergeDefaults(source) {
   return {
     ...defaults,
     ...incoming,
+    version: DATA_VERSION,
     settings: {
       ...defaults.settings,
       ...settings,
-      siteCleanMode: { ...defaults.settings.siteCleanMode, ...(settings.siteCleanMode || {}) },
+      siteCleanMode: normalizeCleanDisplaySettings(incoming.version, settings.siteCleanMode),
+      customSites: normalizeCustomSites(settings.customSites),
       shortcuts: { ...defaults.settings.shortcuts, ...(settings.shortcuts || {}) },
       ai: { ...defaults.settings.ai, ...ai },
     },
@@ -166,7 +192,10 @@ class SecureStore {
       } else {
         json = raw;
       }
-      this.data = mergeDefaults(JSON.parse(json));
+      const parsed = JSON.parse(json);
+      const requiresMigration = Number(parsed?.version || 0) < DATA_VERSION;
+      this.data = mergeDefaults(parsed);
+      if (requiresMigration) this.save();
     } catch (error) {
       const recoveryPath = `${this.filePath}.unreadable-${Date.now()}`;
       try {
@@ -274,20 +303,9 @@ let activeSiteId = null;
 let isQuitting = false;
 const siteViews = new Map();
 const reminderKeys = new Set();
-
-function hostMatches(hostname, suffixes) {
-  const host = hostname.toLowerCase();
-  return suffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-}
-
-function isTrustedUrl(site, rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.protocol === 'https:' && hostMatches(parsed.hostname, site.trustedHosts);
-  } catch {
-    return false;
-  }
-}
+const siteStoragePersistence = new SiteStoragePersistence({
+  onError: (error) => console.error('Site storage flush failed:', error.message),
+});
 
 function safeHttpUrl(rawUrl, allowLocalHttp = false) {
   try {
@@ -304,8 +322,69 @@ function safeHttpUrl(rawUrl, allowLocalHttp = false) {
   return null;
 }
 
+function customSiteRecords() {
+  return normalizeCustomSites(secureStore?.data?.settings?.customSites);
+}
+
+function getSiteDefinition(siteId) {
+  if (SITES[siteId]) return SITES[siteId];
+  const record = customSiteRecords().find((site) => site.id === siteId);
+  return record ? runtimeCustomSite(record) : null;
+}
+
+function customSiteAction(siteId) {
+  return `site:${siteId}`;
+}
+
+function disposeSiteView(siteId) {
+  const entry = siteViews.get(siteId);
+  if (!entry) return;
+  for (const child of entry.children || []) {
+    try { if (!child.isDestroyed()) child.destroy(); } catch {}
+  }
+  entry.children?.clear();
+  entry.popupCssKeys?.clear();
+  try { entry.view.setVisible(false); } catch {}
+  try { mainWindow?.contentView.removeChildView(entry.view); } catch {}
+  try { entry.view.webContents.close(); } catch {}
+  siteViews.delete(siteId);
+  if (activeSiteId === siteId) activeSiteId = null;
+}
+
+async function clearSiteStorage(site) {
+  if (!site?.partition) return;
+  const siteSession = session.fromPartition(site.partition);
+  await siteSession.closeAllConnections();
+  await siteSession.clearStorageData();
+  await siteSession.clearCache();
+  await siteSession.clearAuthCache();
+}
+
+async function reconcileCustomSiteViews(previousRecords, nextRecords) {
+  const previous = new Map(normalizeCustomSites(previousRecords).map((site) => [site.id, site]));
+  const next = new Map(normalizeCustomSites(nextRecords).map((site) => [site.id, site]));
+  for (const [id, oldRecord] of previous) {
+    const newRecord = next.get(id);
+    if (newRecord && customSiteOrigin(newRecord.url) === customSiteOrigin(oldRecord.url)) continue;
+    disposeSiteView(id);
+    await clearSiteStorage(runtimeCustomSite(oldRecord));
+  }
+}
+
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function assertMainRenderer(event) {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error('不允许的启动器请求');
+  }
+}
+
+function publishDataChange() {
+  const data = secureStore.forRenderer();
+  sendToRenderer('data:changed', data);
+  return data;
 }
 
 function viewBounds() {
@@ -321,13 +400,14 @@ function viewBounds() {
 
 function updateSiteState(siteId, extra = {}) {
   const entry = siteViews.get(siteId);
-  if (!entry || entry.view.webContents.isDestroyed()) return;
+  const site = getSiteDefinition(siteId);
+  if (!entry || !site || entry.view.webContents.isDestroyed()) return;
   const contents = entry.view.webContents;
   const history = contents.navigationHistory;
   sendToRenderer('site:state', {
     id: siteId,
-    title: contents.getTitle() || SITES[siteId].name,
-    url: contents.getURL() || SITES[siteId].url,
+    title: contents.getTitle() || site.name,
+    url: contents.getURL() || site.url,
     loading: contents.isLoading(),
     canGoBack: history.canGoBack(),
     canGoForward: history.canGoForward(),
@@ -370,6 +450,20 @@ async function applySiteStyle(siteId) {
       try { await contents.removeInsertedCSS(key); } catch {}
       return;
     }
+    const markerApplied = await contents.executeJavaScript(
+      "getComputedStyle(document.documentElement).getPropertyValue('--ph-clean-mode').trim() === '1'",
+    );
+    if (revision !== entry.styleRevision || contents.isDestroyed()) {
+      try { await contents.removeInsertedCSS(key); } catch {}
+      return;
+    }
+    if (!markerApplied) {
+      try { await contents.removeInsertedCSS(key); } catch {}
+      entry.cleanApplied = false;
+      entry.cleanAvailable = false;
+      updateSiteState(siteId);
+      return;
+    }
     entry.cssKey = key;
     entry.cleanApplied = true;
     entry.cleanAvailable = true;
@@ -383,10 +477,24 @@ async function applySiteStyle(siteId) {
 }
 
 async function applyPopupStyle(child, siteId) {
-  if (!child || child.isDestroyed() || !secureStore.data.settings.siteCleanMode[siteId]) return;
+  const entry = siteViews.get(siteId);
+  if (!entry || !child || child.isDestroyed()) return;
+  const previousKey = entry.popupCssKeys.get(child.id);
+  entry.popupCssKeys.delete(child.id);
+  if (previousKey) {
+    try { await child.removeInsertedCSS(previousKey); } catch {}
+  }
+  if (!secureStore.data.settings.siteCleanMode[siteId]) return;
   const css = getSiteCss(siteId, child.getURL());
   if (!css) return;
-  try { await child.insertCSS(css, { cssOrigin: 'user' }); } catch {}
+  try {
+    const key = await child.insertCSS(css, { cssOrigin: 'user' });
+    if (child.isDestroyed() || !secureStore.data.settings.siteCleanMode[siteId]) {
+      try { await child.removeInsertedCSS(key); } catch {}
+      return;
+    }
+    entry.popupCssKeys.set(child.id, key);
+  } catch {}
 }
 
 function securePopupOptions(site) {
@@ -407,20 +515,103 @@ function securePopupOptions(site) {
   };
 }
 
+function isTrustedPopupUrl(site, url) {
+  return site.custom ? isTrustedCustomSiteUrl(site, url) : isTrustedSiteUrl(site, url);
+}
+
+function attachSitePopup(child, siteId, site, entry) {
+  if (!child || child.isDestroyed() || entry.children.has(child)) return;
+  entry.children.add(child);
+  const contents = child.webContents;
+  child.once('closed', () => {
+    entry.children.delete(child);
+    entry.popupCssKeys.delete(contents.id);
+  });
+  if (process.platform !== 'darwin') child.setMenuBarVisibility(false);
+  const updateTitleWithHost = () => {
+    try {
+      const host = new URL(contents.getURL()).hostname;
+      child.setTitle(`${host || '安全登录窗口'} · ${site.name}`);
+    } catch {
+      child.setTitle(`安全登录窗口 · ${site.name}`);
+    }
+  };
+  const keepSecureNavigation = (event, url) => {
+    if (safeHttpUrl(url, false)) return;
+    event.preventDefault();
+  };
+  contents.on('will-navigate', keepSecureNavigation);
+  contents.on('will-redirect', keepSecureNavigation);
+  contents.on('did-navigate', updateTitleWithHost);
+  contents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    updateTitleWithHost();
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isTrustedPopupUrl(site, url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: securePopupOptions(site) };
+    }
+    const parsed = safeHttpUrl(url, false);
+    if (parsed) shell.openExternal(parsed.toString());
+    return { action: 'deny' };
+  });
+  contents.on('did-create-window', (nestedChild) => attachSitePopup(nestedChild, siteId, site, entry));
+  contents.on('dom-ready', () => applyPopupStyle(contents, siteId));
+  contents.on('did-finish-load', () => {
+    applyPopupStyle(contents, siteId);
+    siteStoragePersistence.schedule(contents.session);
+  });
+  applyPopupStyle(contents, siteId);
+}
+
 function configureSiteSession(site) {
   const siteSession = session.fromPartition(site.partition);
   if (siteSession.__phConfigured) return;
   siteSession.__phConfigured = true;
+  siteStoragePersistence.watch(siteSession);
+  if (site.custom) {
+    siteSession.on('will-download', (_event, item) => {
+      item.pause();
+      let sourceHost = '自定义网页';
+      try { sourceHost = new URL(item.getURL()).hostname || sourceHost; } catch {}
+      const fileName = path.basename(item.getFilename() || 'download');
+      dialog.showSaveDialog(mainWindow, {
+        title: `保存来自 ${sourceHost} 的文件`,
+        defaultPath: path.join(app.getPath('downloads'), fileName),
+        buttonLabel: '保存',
+      }).then((result) => {
+        if (result.canceled || !result.filePath) item.cancel();
+        else {
+          item.setSavePath(result.filePath);
+          item.resume();
+        }
+      }).catch(() => item.cancel());
+    });
+  }
   siteSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const trusted = isTrustedUrl(site, details.requestingUrl || webContents.getURL());
-    const allowed = new Set(['fullscreen', 'notifications', 'clipboard-sanitized-write']);
-    callback(trusted && allowed.has(permission));
+    if (site.custom) return callback(false);
+    const topLevelUrl = webContents?.getURL() || '';
+    callback(isAllowedSitePermission(site, permission, {
+      topLevelUrl,
+      requestingUrl: details?.requestingUrl || topLevelUrl,
+      embeddingUrl: topLevelUrl,
+    }));
+  });
+  siteSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (site.custom) return false;
+    const topLevelUrl = webContents?.getURL() || details?.embeddingOrigin || requestingOrigin;
+    return isAllowedSitePermission(site, permission, {
+      topLevelUrl,
+      requestingUrl: requestingOrigin || details?.requestingUrl || topLevelUrl,
+      embeddingUrl: details?.embeddingOrigin || topLevelUrl,
+    });
   });
 }
 
 function createSiteView(siteId) {
   if (siteViews.has(siteId)) return siteViews.get(siteId);
-  const site = SITES[siteId];
+  const site = getSiteDefinition(siteId);
+  if (!site) return null;
   configureSiteSession(site);
   const view = new WebContentsView({
     webPreferences: {
@@ -446,22 +637,28 @@ function createSiteView(siteId) {
     cleanAvailable: true,
     styleRevision: 0,
     styleUrl: '',
+    children: new Set(),
+    popupCssKeys: new Map(),
   };
   siteViews.set(siteId, entry);
 
   const contents = view.webContents;
+  const keepSecureNavigation = (event, url) => {
+    if (safeHttpUrl(url, false)) return;
+    event.preventDefault();
+    updateSiteState(siteId, { error: '已阻止不安全的网页跳转' });
+  };
+  contents.on('will-navigate', keepSecureNavigation);
+  contents.on('will-redirect', keepSecureNavigation);
   contents.setWindowOpenHandler(({ url }) => {
-    if (isTrustedUrl(site, url)) {
+    if (isTrustedPopupUrl(site, url)) {
       return { action: 'allow', overrideBrowserWindowOptions: securePopupOptions(site) };
     }
     const parsed = safeHttpUrl(url, false);
     if (parsed) shell.openExternal(parsed.toString());
     return { action: 'deny' };
   });
-  contents.on('did-create-window', (child) => {
-    if (process.platform !== 'darwin') child.setMenuBarVisibility(false);
-    child.webContents.on('dom-ready', () => applyPopupStyle(child.webContents, siteId));
-  });
+  contents.on('did-create-window', (child) => attachSitePopup(child, siteId, site, entry));
   contents.on('did-start-loading', () => updateSiteState(siteId));
   contents.on('did-stop-loading', () => updateSiteState(siteId));
   contents.on('page-title-updated', () => updateSiteState(siteId));
@@ -474,6 +671,7 @@ function createSiteView(siteId) {
   contents.on('did-finish-load', async () => {
     entry.hasLoaded = true;
     await applySiteStyle(siteId);
+    siteStoragePersistence.schedule(contents.session);
     updateSiteState(siteId);
   });
   contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
@@ -486,14 +684,23 @@ function createSiteView(siteId) {
 }
 
 async function showSite(siteId) {
-  if (!SITE_IDS.includes(siteId) || !mainWindow) return false;
-  for (const [id, entry] of siteViews) entry.view.setVisible(id === siteId);
+  const site = getSiteDefinition(siteId);
+  if (!site || !mainWindow) return false;
+  for (const [id, entry] of [...siteViews]) {
+    entry.view.setVisible(id === siteId);
+    const hiddenSite = getSiteDefinition(id);
+    if (id !== siteId && hiddenSite?.custom) {
+      siteStoragePersistence.schedule(entry.view.webContents.session);
+      disposeSiteView(id);
+    }
+  }
   const entry = createSiteView(siteId);
+  if (!entry) return false;
   entry.view.setBounds(viewBounds());
   entry.view.setVisible(true);
   activeSiteId = siteId;
   if (!entry.hasLoaded && !entry.view.webContents.isLoading()) {
-    await entry.view.webContents.loadURL(SITES[siteId].url);
+    await entry.view.webContents.loadURL(site.url);
   }
   updateSiteState(siteId);
   return true;
@@ -501,7 +708,11 @@ async function showSite(siteId) {
 
 function hideSites() {
   activeSiteId = null;
-  for (const entry of siteViews.values()) entry.view.setVisible(false);
+  for (const [id, entry] of [...siteViews]) {
+    entry.view.setVisible(false);
+    siteStoragePersistence.schedule(entry.view.webContents.session);
+    if (getSiteDefinition(id)?.custom) disposeSiteView(id);
+  }
 }
 
 function resizeActiveSite() {
@@ -524,7 +735,12 @@ function registerShortcuts() {
   globalShortcut.unregisterAll();
   const results = {};
   const shortcuts = secureStore.data.settings.shortcuts || {};
-  for (const [action, item] of Object.entries(shortcuts)) {
+  const customShortcuts = customSiteRecords().map((site) => [customSiteAction(site.id), {
+    label: `打开 ${site.name}`,
+    accelerator: site.shortcut,
+    enabled: site.shortcutEnabled,
+  }]);
+  for (const [action, item] of [...Object.entries(shortcuts), ...customShortcuts]) {
     if (!item?.enabled || !item.accelerator) {
       results[action] = { ok: true, disabled: true };
       continue;
@@ -746,25 +962,6 @@ function validateMessages(messages) {
   });
 }
 
-const IB_COMMAND_TERMS = [
-  ['analyze', '分析', '拆解要素或结构，说明它们之间的关系，并据此得出结论。'],
-  ['compare', '比较', '持续指出两个或多个对象之间的相似之处。'],
-  ['compare and contrast', '比较与对比', '同时说明相似点与不同点，并保持两者之间的对应。'],
-  ['contrast', '对比', '持续指出两个或多个对象之间的不同之处。'],
-  ['define', '定义', '给出一个词语或概念准确、简洁的含义。'],
-  ['describe', '描述', '提供某个情境、事件、模式或过程的详细特征。'],
-  ['discuss', '讨论', '呈现经过权衡的论述，包含一系列论据、因素或假设。'],
-  ['evaluate', '评价', '通过权衡优势、局限与证据，对价值或有效性作出判断。'],
-  ['examine', '审视', '细致考虑某个论点或概念，揭示其假设与相互关系。'],
-  ['explain', '解释', '详细说明原因、机制或过程，让“为什么”和“如何”清楚。'],
-  ['identify', '识别', '从若干可能中给出正确答案、名称或简短事实。'],
-  ['justify', '论证', '提供有效理由或证据，支持一个答案、判断或结论。'],
-  ['outline', '概述', '给出主要特征或总体结构，不展开所有细节。'],
-  ['state', '陈述', '给出一个具体名称、数值或简短答案，不要求解释。'],
-  ['suggest', '提出', '给出一种可行方案、假设或答案。'],
-  ['to what extent', '在多大程度上', '权衡证据与反例，判断一个主张成立的范围和条件。'],
-];
-
 function isAiControlEnabled(config = secureStore.data.settings.ai) {
   return Boolean(
     config.enabled &&
@@ -823,7 +1020,7 @@ async function extractEduPageTimetable() {
     throw new Error('请先打开 EduPage，登录后进入“常规课表”，再回到 AI 助手读取');
   }
   const contents = entry.view.webContents;
-  if (!isTrustedUrl(SITES.edupage, contents.getURL())) throw new Error('当前不是可信的 EduPage 页面');
+  if (!isTrustedSiteUrl(SITES.edupage, contents.getURL())) throw new Error('当前不是可信的 EduPage 页面');
   if (contents.isLoading()) throw new Error('EduPage 仍在加载，请稍后重试');
   const raw = await contents.executeJavaScript(EDUPAGE_TIMETABLE_SCRIPT, true);
   return normalizeExtractorResult(raw);
@@ -884,16 +1081,18 @@ async function executeAiTool(name, rawArgs) {
     };
   }
   if (name === 'ib_command_lookup') {
-    const query = args.query.toLocaleLowerCase('en-US');
-    return IB_COMMAND_TERMS
-      .filter(([term, chinese]) => term.includes(query) || chinese.includes(args.query))
-      .slice(0, 8)
-      .map(([term, chinese, explanation]) => ({ term, chinese, explanation }));
+    return listCommandTerms({ subjectId: args.subject, query: args.query })
+      .slice(0, 60)
+      .map(({ term, chinese, action, objectives, subjectIds }) => ({ term, chinese, action, objectives, subjectIds }));
   }
   if (name === 'preview_edupage_timetable') return extractEduPageTimetable();
   if (name === 'open_launcher_page') {
     sendToRenderer('ai:command', { type: 'navigate', target: args.page });
     return { ok: true, message: `已打开 ${args.page}` };
+  }
+  if (name === 'open_custom_site') {
+    sendToRenderer('ai:command', { type: 'navigate', target: args.siteId });
+    return { ok: true, message: `已打开 ${args.siteName}` };
   }
   if (name === 'control_focus_timer') {
     sendToRenderer('ai:command', { type: 'focus', action: args.action });
@@ -1082,6 +1281,12 @@ function registerIpc() {
     const previousOpenAtLogin = Boolean(secureStore.data.settings.openAtLogin);
     const safeData = {};
     for (const key of DATA_KEYS) safeData[key] = nextData?.[key];
+    const incomingSettings = safeData.settings && typeof safeData.settings === 'object' ? safeData.settings : {};
+    safeData.settings = {
+      ...secureStore.data.settings,
+      ...incomingSettings,
+      customSites: secureStore.data.settings.customSites,
+    };
     const result = secureStore.update({ ...secureStore.data, ...safeData });
     if (previousShortcuts !== JSON.stringify(secureStore.data.settings.shortcuts || {})) registerShortcuts();
     if (previousOpenAtLogin !== Boolean(secureStore.data.settings.openAtLogin)) applyLoginItemSetting();
@@ -1107,7 +1312,9 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
     const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+    const previousCustomSites = customSiteRecords();
     const restored = secureStore.update(parsed);
+    await reconcileCustomSiteViews(previousCustomSites, secureStore.data.settings.customSites);
     registerShortcuts();
     sendToRenderer('data:changed', restored);
     return { ok: true, data: restored };
@@ -1139,6 +1346,7 @@ function registerIpc() {
   });
   ipcMain.handle('dictionary:info', () => offlineDictionary.info());
   ipcMain.handle('dictionary:lookup', (_event, query) => offlineDictionary.lookup(query));
+  ipcMain.handle('ib:command-catalog', () => commandTermCatalog());
   ipcMain.handle('system:version', () => app.getVersion());
   ipcMain.handle('system:hardware', () => getHardwareProfile());
   ipcMain.handle('system:open-url', (_event, rawUrl) => {
@@ -1152,6 +1360,39 @@ function registerIpc() {
   );
   ipcMain.handle('shortcuts:register', () => registerShortcuts());
 
+  ipcMain.handle('site:custom-upsert', async (event, input) => {
+    assertMainRenderer(event);
+    const previous = customSiteRecords();
+    const result = upsertCustomSite(previous, input);
+    const oldSite = previous.find((site) => site.id === result.site.id);
+    if (oldSite && customSiteOrigin(oldSite.url) !== customSiteOrigin(result.site.url)) {
+      disposeSiteView(oldSite.id);
+      await clearSiteStorage(runtimeCustomSite(oldSite));
+    }
+    secureStore.data.settings.customSites = result.sites;
+    secureStore.save();
+    registerShortcuts();
+    return { ok: true, created: result.created, site: result.site, data: publishDataChange() };
+  });
+  ipcMain.handle('site:custom-remove', async (event, siteId) => {
+    assertMainRenderer(event);
+    const previous = customSiteRecords();
+    const site = previous.find((item) => item.id === siteId);
+    if (!site) throw new Error('要删除的网页已不存在');
+    disposeSiteView(site.id);
+    await clearSiteStorage(runtimeCustomSite(site));
+    secureStore.data.settings.customSites = removeCustomSite(previous, siteId);
+    secureStore.save();
+    registerShortcuts();
+    return { ok: true, data: publishDataChange() };
+  });
+  ipcMain.handle('site:custom-reorder', (event, orderedIds) => {
+    assertMainRenderer(event);
+    secureStore.data.settings.customSites = reorderCustomSites(customSiteRecords(), orderedIds);
+    secureStore.save();
+    return { ok: true, data: publishDataChange() };
+  });
+
   ipcMain.handle('site:open', (_event, siteId) => showSite(siteId));
   ipcMain.handle('site:hide', () => hideSites());
   ipcMain.handle('site:action', async (_event, siteId, action) => {
@@ -1162,7 +1403,10 @@ function registerIpc() {
     if (action === 'back' && history.canGoBack()) history.goBack();
     else if (action === 'forward' && history.canGoForward()) history.goForward();
     else if (action === 'reload') contents.reload();
-    else if (action === 'home') await contents.loadURL(SITES[siteId].url);
+    else if (action === 'home') {
+      const site = getSiteDefinition(siteId);
+      if (site) await contents.loadURL(site.url);
+    }
     else if (action === 'external') {
       const parsed = safeHttpUrl(contents.getURL(), false);
       if (parsed) await shell.openExternal(parsed.toString());
@@ -1174,15 +1418,17 @@ function registerIpc() {
     secureStore.data.settings.siteCleanMode[siteId] = Boolean(enabled);
     secureStore.save();
     await applySiteStyle(siteId);
+    const entry = siteViews.get(siteId);
+    if (entry) await Promise.all([...entry.children].map((child) => applyPopupStyle(child.webContents, siteId)));
     return true;
   });
   ipcMain.handle('site:clear-data', async (_event, siteId) => {
-    if (!SITE_IDS.includes(siteId)) return false;
-    const siteSession = session.fromPartition(SITES[siteId].partition);
-    await siteSession.clearStorageData();
-    await siteSession.clearCache();
-    const entry = siteViews.get(siteId);
-    if (entry) await entry.view.webContents.loadURL(SITES[siteId].url);
+    const site = getSiteDefinition(siteId);
+    if (!site) return false;
+    const wasActive = activeSiteId === siteId;
+    disposeSiteView(siteId);
+    await clearSiteStorage(site);
+    if (wasActive) await showSite(siteId);
     return true;
   });
 
@@ -1267,6 +1513,30 @@ async function runCapture() {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  if (CAPTURE_ROUTE === 'ib' && CAPTURE_VARIANT) {
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      state.commandSubject = ${JSON.stringify(CAPTURE_VARIANT)};
+      renderCommandTerms();
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (CAPTURE_ROUTE === 'settings' && ['websites', 'custom-site'].includes(CAPTURE_VARIANT)) {
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      state.data.settings.customSites = [{
+        id: 'custom-33333333-3333-4333-8333-333333333333',
+        name: '学习平台',
+        url: 'https://example.com/',
+        color: 'blue',
+        shortcut: 'CommandOrControl+Alt+4',
+        shortcutEnabled: true,
+      }];
+      refreshSiteMeta();
+      renderAll();
+      selectSettingsSection('websites');
+      ${CAPTURE_VARIANT === 'custom-site' ? 'await openCustomSiteDialog();' : ''}
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   const captureState = await mainWindow.webContents.executeJavaScript("({route: document.querySelector('.page.active')?.dataset.page || null, initialized: document.body.dataset.initialized, aiProvider: state.data?.settings?.ai?.provider || null, activeAiChoice: document.querySelector('.ai-choice-list > button.active')?.dataset.aiProvider || null, aiPanelHeading: document.querySelector('#aiConfigPanel h3')?.textContent || null, hardwareReady: Boolean(state.hardware)})");
   console.log(`CAPTURE_STATE ${JSON.stringify(captureState)}`);
   mainWindow.show();
@@ -1346,13 +1616,31 @@ async function runSiteCapture(siteId) {
   await entry.view.webContents.loadURL(SITES[siteId].url);
   const loadResult = await pending;
   await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const selectors = {
+    mail: ['.login-mod-wrapper.login-mod-form', '#donwload_block', 'button[type="submit"]'],
+    managebac: ['.login-wrapper', '.login-page form', '.btn-primary'],
+    edupage: ['.kids_top_nav', 'div[style*="width:72.73%"]', '#comp_HBox_1_VBox_1_Login_0_loginFrm'],
+  }[siteId];
+  const probe = await entry.view.webContents.executeJavaScript(`(() => ({
+    marker: getComputedStyle(document.documentElement).getPropertyValue('--ph-clean-mode').trim(),
+    bodyBackground: getComputedStyle(document.body).backgroundColor,
+    bodyBackgroundImage: getComputedStyle(document.body).backgroundImage,
+    bodyFont: getComputedStyle(document.body).fontFamily,
+    selectors: ${JSON.stringify(selectors)}.map((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return { selector, count: 0 };
+      const style = getComputedStyle(element);
+      return { selector, count: document.querySelectorAll(selector).length, display: style.display, borderRadius: style.borderRadius, backgroundColor: style.backgroundColor };
+    }),
+  }))()`);
+  console.log(`SITE_PROBE ${JSON.stringify({ siteId, loadResult, probe })}`);
   const image = await entry.view.webContents.capturePage({ x: 0, y: 0, width: 1200, height: 800 });
   const outputDir = path.join(app.getAppPath(), 'dist');
   fs.mkdirSync(outputDir, { recursive: true });
   const suffix = CAPTURE_VARIANT ? `-${CAPTURE_VARIANT}` : '';
   const outputPath = path.join(outputDir, `site-preview-${siteId}${suffix}.png`);
   fs.writeFileSync(outputPath, image.toPNG());
-  console.log(`SITE_CAPTURE ${JSON.stringify({ siteId, outputPath, loadResult })}`);
+  console.log(`SITE_CAPTURE ${JSON.stringify({ siteId, outputPath, loadResult, probe })}`);
   process.exitCode = loadResult.ok ? 0 : 1;
   isQuitting = true;
   app.quit();
@@ -1386,6 +1674,22 @@ async function runSelfTest() {
     navigate('dictionary');
     await lookupDictionary('analyze');
     const dictionaryRendered = document.querySelector('#dictionaryResult')?.textContent.includes('分析');
+    const customCreated = await window.ph.sites.saveCustom({
+      name: '自检网页',
+      url: 'https://example.com/',
+      color: 'blue',
+      shortcut: '',
+      shortcutEnabled: false,
+    });
+    state.data = customCreated.data;
+    refreshSiteMeta();
+    renderAll();
+    const customSite = state.data.settings.customSites.find((item) => item.name === '自检网页');
+    const customSiteRendered = Boolean(customSite && document.querySelector('[data-site="' + customSite.id + '"]'));
+    const customRemoved = await window.ph.sites.removeCustom(customSite.id);
+    state.data = customRemoved.data;
+    refreshSiteMeta();
+    renderAll();
     navigate('notes');
     return {
       initialized: document.body.dataset.initialized === 'true',
@@ -1394,6 +1698,9 @@ async function runSelfTest() {
       noteSaved: state.data.notes.some((item) => item.id === note.id && item.body === '本地保存验证'),
       timerConfigured: state.data.settings.timer.focusMinutes === 25,
       dictionaryRendered,
+      customSiteCreated: Boolean(customSite),
+      customSiteRendered,
+      customSiteRemoved: !state.data.settings.customSites.some((item) => item.id === customSite.id),
       navigationWorks: document.querySelector('.page.active')?.dataset.page === 'notes',
     };
   })()`);
@@ -1524,8 +1831,20 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
+let siteStorageQuitInProgress = false;
+let siteStorageReadyToQuit = false;
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (siteStorageReadyToQuit) return;
+  event.preventDefault();
+  if (siteStorageQuitInProgress) return;
+  siteStorageQuitInProgress = true;
+  siteStoragePersistence.flushAll()
+    .catch((error) => console.error('Final site storage flush failed:', error.message))
+    .finally(() => {
+      siteStorageReadyToQuit = true;
+      app.quit();
+    });
 });
 app.on('will-quit', () => {
   localAiDeployment?.cancel();

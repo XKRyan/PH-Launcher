@@ -11,3 +11,9 @@ The offline English-Chinese dictionary is generated from [skywind3000/ECDICT](ht
 Runtime and build dependencies are listed in `package.json` and locked in `package-lock.json`. Their copyright notices and license terms are available in their upstream packages. Distribution builders should retain all notices required by those licenses.
 
 Ollama and Qwen models are optional external downloads and are not redistributed in the PH Launcher source repository or application package. Their own terms apply when a user chooses to install them.
+
+## International Baccalaureate references
+
+PH Launcher is not affiliated with or endorsed by the International Baccalaureate Organization. The subject and examination-version filters use command-term names and assessment-objective labels as references, with original Chinese study prompts. PH Launcher does not bundle IB subject guides, examination papers, question banks, mark schemes, textbooks, or verbatim official command-term definitions. Students must follow their teacher and the current official subject guide.
+
+IB Docs is an optional third-party external website with no affiliation to or endorsement by the International Baccalaureate Organization. Its files are not embedded, mirrored, downloaded, cached, indexed, proxied, or redistributed by PH Launcher. Users must access and use materials only when authorized by their school or the relevant rights holder.

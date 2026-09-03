@@ -42,33 +42,39 @@ if (!edge) throw new Error('Microsoft Edge is required to render the development
 const temporaryProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-icon-'));
 try {
   const sourceMarkup = fs.readFileSync(source, 'utf8');
-  const render = (size, destination, profileSuffix) => {
-    // Chromium enforces a minimum headless viewport on Windows. A responsive
-    // SVG would therefore be cropped for the small ICO frames, so render a
-    // size-specific SVG whose intrinsic dimensions match the screenshot.
-    const renderSourcePath = path.join(temporaryProfile, `icon-render-${size}.svg`);
-    fs.writeFileSync(
-      renderSourcePath,
-      sourceMarkup
-        .replace(/width="256"/, `width="${size}"`)
-        .replace(/height="256"/, `height="${size}"`),
-      'utf8',
-    );
-    return execFileSync(edge, [
-      '--headless=new',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      '--default-background-color=00000000',
-      `--window-size=${size},${size}`,
-      `--user-data-dir=${path.join(temporaryProfile, profileSuffix)}`,
-      `--screenshot=${destination}`,
-      pathToFileURL(renderSourcePath).toString(),
-    ], { windowsHide: true, stdio: 'ignore' });
-  };
-  render(1024, pngPath, 'profile-1024');
+  const masterSourcePath = path.join(temporaryProfile, 'icon-render-1024.svg');
+  fs.writeFileSync(
+    masterSourcePath,
+    sourceMarkup.replace(/width="256"/, 'width="1024"').replace(/height="256"/, 'height="1024"'),
+    'utf8',
+  );
+  execFileSync(edge, [
+    '--headless=new',
+    '--disable-gpu',
+    '--hide-scrollbars',
+    '--default-background-color=00000000',
+    '--window-size=1024,1024',
+    `--user-data-dir=${path.join(temporaryProfile, 'profile-1024')}`,
+    `--screenshot=${pngPath}`,
+    pathToFileURL(masterSourcePath).toString(),
+  ], { windowsHide: true, stdio: 'ignore' });
+
+  // Chromium enforces a minimum headless viewport on Windows. Asking it to
+  // screenshot a 16–128 px SVG produced transparent frames even though the ICO
+  // directory advertised valid sizes. Resize the known-good 1024 px master in
+  // Electron instead, where nativeImage preserves the full canvas and alpha.
+  const electronPath = require('electron');
+  const frameDirectory = path.join(temporaryProfile, 'windows-frames');
+  fs.mkdirSync(frameDirectory, { recursive: true });
+  execFileSync(electronPath, [
+    path.join(__dirname, 'resize-icon-frames.cjs'),
+    pngPath,
+    frameDirectory,
+    WINDOWS_ICON_SIZES.join(','),
+  ], { windowsHide: true, stdio: 'ignore' });
+
   const windowsImages = WINDOWS_ICON_SIZES.map((size) => {
-    const windowsPngPath = path.join(temporaryProfile, `icon-${size}.png`);
-    render(size, windowsPngPath, `profile-${size}`);
+    const windowsPngPath = path.join(frameDirectory, `icon-${size}.png`);
     return { size, png: fs.readFileSync(windowsPngPath) };
   });
   fs.writeFileSync(path.join(assets, 'icon.ico'), buildIco(windowsImages));

@@ -9,26 +9,26 @@ on:
         type: boolean
         default: false
       confirm_tag:
-        description: When publishing, enter mac-preview-v0.5.0-1 exactly
+        description: When publishing, enter mac-preview-v0.5.1-1 exactly
         required: false
         type: string
   push:
     branches:
       - main
     paths:
-      - ".github/releases/mac-preview-v0.5.0-1.trigger"
+      - ".github/releases/mac-preview-v0.5.1-1.trigger"
 
 permissions:
   contents: read
 
 concurrency:
-  group: mac-preview-v0.5.0-1
+  group: mac-preview-v0.5.1-1
   cancel-in-progress: false
 
 env:
-  PREVIEW_TAG: mac-preview-v0.5.0-1
-  PREVIEW_VERSION: 0.5.0
-  MARKER_PATH: .github/releases/mac-preview-v0.5.0-1.trigger
+  PREVIEW_TAG: mac-preview-v0.5.1-1
+  PREVIEW_VERSION: 0.5.1
+  MARKER_PATH: .github/releases/mac-preview-v0.5.1-1.trigger
 
 jobs:
   prepare:
@@ -65,7 +65,7 @@ jobs:
               should_publish=true
             fi
           elif [[ -f "$MARKER_PATH" ]]; then
-            expected=$'PH_LAUNCHER_MAC_PREVIEW\ntag=mac-preview-v0.5.0-1\nversion=0.5.0\npublish-prerelease=true'
+            expected=$'PH_LAUNCHER_MAC_PREVIEW\ntag=mac-preview-v0.5.1-1\nversion=0.5.1\npublish-prerelease=true'
             actual="$(<"$MARKER_PATH")"
             [[ "$actual" == "$expected" ]] || {
               echo "The macOS preview marker does not match the reviewed fixed payload." >&2

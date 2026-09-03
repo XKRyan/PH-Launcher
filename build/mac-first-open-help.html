@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PH Launcher Mac 测试版首次打开帮助</title>
+  <title>PH Launcher Mac 安装与首次打开帮助</title>
   <style>
     :root {
       color-scheme: light;
@@ -65,26 +65,28 @@
 </head>
 <body>
   <header>
-    <h1>PH Launcher Mac 测试版</h1>
-    <p>首次打开帮助 · Apple 芯片与 Intel Mac 通用</p>
+    <h1>PH Launcher Mac 安装与首次打开帮助</h1>
+    <p>认准窗口里的 App · Apple 芯片与 Intel Mac 通用</p>
   </header>
   <main>
     <section class="warning">
-      <h2>请先确认你愿意承担测试风险</h2>
-      <p>这是只有 ad-hoc 临时签名、<strong>没有 Developer ID 身份签名且未经 Apple 公证</strong>的测试版本。macOS 无法确认开发者身份，也无法像正式公证版一样确认文件发布后是否被改动。运行未经 Developer ID 签名和公证的软件可能损害电脑或泄露隐私。</p>
-      <p>仅从 <a href="https://github.com/XKRyan/PH-Launcher">PH Launcher 官方 GitHub 仓库</a>下载，并核对同一下载页提供的 SHA-256 清单。SHA-256 只能帮助发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。如果来源或校验结果不确定，请删除测试包。</p>
+      <h2>如果你使用的是未签名测试版</h2>
+      <p>未签名测试版只有 ad-hoc 临时签名，<strong>没有 Developer ID 身份签名且未经 Apple 公证</strong>。macOS 无法确认开发者身份，也无法像正式公证版一样确认文件发布后是否被改动。运行未经 Developer ID 签名和公证的软件可能损害电脑或泄露隐私。</p>
+      <p>测试版仅从 <a href="https://github.com/XKRyan/PH-Launcher">PH Launcher 官方 GitHub 仓库</a>下载，并核对同一下载页提供的 SHA-256 清单。SHA-256 只能帮助发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。如果来源或校验结果不确定，请删除测试包。</p>
     </section>
 
     <section>
       <h2>安装</h2>
       <ol class="steps">
-        <li>打开 DMG，把 <code>PH Launcher</code> 拖到 <code>应用程序</code>。</li>
-        <li>从“应用程序”文件夹中连按 <code>PH Launcher</code>，先让 macOS 显示安全提醒。</li>
+        <li>在 DMG 安装窗口中，按住<strong>左侧、名称为 <code>PH Launcher</code> 的 App 图标</strong>。不要拖桌面上名称含“安装盘”或版本号的磁盘图标。</li>
+        <li>把这个 App 放到<strong>同一窗口右侧的蓝色 <code>Applications</code> 图标</strong>。不要把 Applications 文件夹拖到桌面。</li>
+        <li>如果拖动不方便：选中窗口左侧 App，按 <code>⌘C</code>；再从 Finder 侧栏打开“应用程序”，按 <code>⌘V</code>。</li>
+        <li>复制完成后推出 <code>PH Launcher 安装盘</code>，再从“应用程序”文件夹打开 PH Launcher。</li>
       </ol>
     </section>
 
     <section class="ok">
-      <h2>macOS 阻止首次打开时</h2>
+      <h2>未签名测试版被 macOS 阻止首次打开时</h2>
       <ol class="steps">
         <li>打开苹果菜单中的 <code>系统设置</code>。</li>
         <li>进入 <code>隐私与安全性</code>，向下滚动到“安全性”。</li>

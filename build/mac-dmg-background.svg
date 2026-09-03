@@ -21,22 +21,26 @@
 
   <g font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif">
     <text x="44" y="52" fill="#f5f2e9" font-size="29" font-weight="700" letter-spacing="0.5">PH Launcher</text>
-    <text x="44" y="83" fill="#e8d39c" font-size="15" font-weight="600">Mac Universal 测试版 · Apple 芯片与 Intel 均可安装</text>
-    <text x="44" y="103" fill="#f5f2e9" opacity="0.78" font-size="12">无 Developer ID 签名 / 未经 Apple 公证，请先阅读首次打开帮助</text>
+    <text x="44" y="83" fill="#e8d39c" font-size="15" font-weight="600">Mac Universal 安装盘 · Apple 芯片与 Intel 均可使用</text>
+    <text x="44" y="103" fill="#f5f2e9" opacity="0.84" font-size="12">桌面上的“PH Launcher 安装盘”不是 App，请只操作本窗口图标</text>
 
     <rect x="38" y="136" width="644" height="178" rx="24" fill="#fffdf8" stroke="#dfd7c4" filter="url(#soft-shadow)"/>
     <rect x="58" y="151" width="28" height="28" rx="14" fill="#173f33"/>
     <text x="72" y="171" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">1</text>
-    <text x="98" y="171" fill="#173f33" font-size="16" font-weight="700">把 PH Launcher 拖到“应用程序”</text>
+    <text x="98" y="171" fill="#173f33" font-size="15" font-weight="700">只拖本窗口左侧 App → 本窗口右侧 Applications</text>
+
+    <text x="150" y="200" fill="#173f33" font-size="13" font-weight="700" text-anchor="middle">按住这里 ↓</text>
+    <text x="570" y="200" fill="#173f33" font-size="13" font-weight="700" text-anchor="middle">放到这里 ↓</text>
 
     <path d="M 286 246 H 430" stroke="#d6ad5c" stroke-width="10" stroke-linecap="round"/>
     <path d="M 421 229 L 449 246 L 421 263" fill="none" stroke="#a9364e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="360" y="290" fill="#6f6658" font-size="13" font-weight="600" text-anchor="middle">拖动安装</text>
+    <text x="360" y="290" fill="#6f6658" font-size="13" font-weight="600" text-anchor="middle">从左向右拖动</text>
 
     <rect x="38" y="332" width="644" height="128" rx="22" fill="#f0e6cf" stroke="#d6ad5c"/>
     <rect x="58" y="347" width="28" height="28" rx="14" fill="#a9364e"/>
     <text x="72" y="367" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">2</text>
-    <text x="98" y="367" fill="#173f33" font-size="15" font-weight="700">第一次打开受阻？双击下方“首次打开帮助”</text>
-    <text x="98" y="392" fill="#6f6658" font-size="12">只从项目官方 GitHub 下载，并核对同一下载页中的 SHA-256 文件。</text>
+    <text x="98" y="367" fill="#173f33" font-size="15" font-weight="700">不要拖桌面上的“PH Launcher 安装盘”</text>
+    <text x="98" y="392" fill="#6f6658" font-size="12">它只是安装介质；也不要把 Applications 文件夹拖到桌面。</text>
+    <text x="590" y="362" fill="#a9364e" font-size="12" font-weight="700" text-anchor="middle">需要帮助？</text>
   </g>
 </svg>

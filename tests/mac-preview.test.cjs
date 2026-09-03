@@ -9,8 +9,8 @@ const { preparePreviewAssets, sha256 } = require('../scripts/prepare-mac-preview
 const projectDirectory = path.resolve(__dirname, '..');
 const expectedPreviewMarker = [
   'PH_LAUNCHER_MAC_PREVIEW',
-  'tag=mac-preview-v0.5.0-1',
-  'version=0.5.0',
+  'tag=mac-preview-v0.5.1-1',
+  'version=0.5.1',
   'publish-prerelease=true',
   '',
 ].join('\n');
@@ -23,21 +23,39 @@ function validateOptionalPreviewMarker(markerPath) {
   };
 }
 
-test('macOS DMG has a branded 720x480 install layout and first-open help', () => {
-  const dmg = require('../build/mac-preview-builder.cjs').dmg;
-  assert.equal(dmg.background, 'build/mac-dmg-background.png');
-  assert.deepEqual(dmg.window, { width: 720, height: 480 });
-  assert.equal(dmg.iconSize, 84);
-  assert.deepEqual(dmg.contents, [
+test('formal and preview macOS DMGs distinguish the installer volume and share clear install guidance', () => {
+  const formalDmg = JSON.parse(fs.readFileSync(path.join(projectDirectory, 'package.json'), 'utf8')).build.dmg;
+  const previewDmg = require('../build/mac-preview-builder.cjs').dmg;
+  const expectedContents = [
     { x: 150, y: 250 },
     { x: 570, y: 250, type: 'link', path: '/Applications' },
-    { x: 360, y: 410, type: 'file', path: 'build/mac-first-open-help.html', name: '首次打开帮助.html' },
-  ]);
+    { x: 590, y: 410, type: 'file', path: 'build/mac-first-open-help.html', name: '首次打开帮助.html' },
+  ];
 
-  const png = fs.readFileSync(path.join(projectDirectory, dmg.background));
+  assert.equal(formalDmg.title, 'PH Launcher 安装盘 ${version}');
+  assert.equal(previewDmg.title, 'PH Launcher 测试安装盘 ${version}');
+  for (const dmg of [formalDmg, previewDmg]) {
+    assert.equal(dmg.background, 'build/mac-dmg-background.png');
+    assert.deepEqual(dmg.window, { width: 720, height: 480 });
+    assert.equal(dmg.iconSize, 84);
+    assert.deepEqual(dmg.contents, expectedContents);
+    assert.equal(dmg.contents[1].path, '/Applications');
+  }
+
+  const png = fs.readFileSync(path.join(projectDirectory, formalDmg.background));
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   assert.equal(png.readUInt32BE(16), 720);
   assert.equal(png.readUInt32BE(20), 480);
+
+  const svg = fs.readFileSync(path.join(projectDirectory, 'build', 'mac-dmg-background.svg'), 'utf8');
+  assert.match(svg, /只拖本窗口左侧 App/);
+  assert.match(svg, /按住这里 ↓/);
+  assert.match(svg, /放到这里 ↓/);
+  assert.match(svg, /不要拖桌面上的“PH Launcher 安装盘”/);
+
+  const renderer = fs.readFileSync(path.join(projectDirectory, 'scripts', 'render-mac-dmg-background.cjs'), 'utf8');
+  assert.match(renderer, /requiredGuidance/);
+  assert.match(renderer, /DMG background is missing required guidance/);
 });
 
 test('macOS app icon is a full-size 1024 PNG suitable for ICNS conversion', () => {
@@ -56,6 +74,12 @@ test('first-open help follows Apple guidance and states unsigned preview risk', 
   assert.match(help, /仍要打开/);
   assert.match(help, /support\.apple\.com\/zh-cn\/guide\/mac-help\/-mh40616\/mac/);
   assert.match(help, /不需要运行任何终端命令/);
+  assert.match(help, /左侧、名称为 <code>PH Launcher<\/code> 的 App 图标/);
+  assert.match(help, /不要拖桌面上名称含“安装盘”或版本号的磁盘图标/);
+  assert.match(help, /同一窗口右侧的蓝色 <code>Applications<\/code> 图标/);
+  assert.match(help, /不要把 Applications 文件夹拖到桌面/);
+  assert.match(help, /⌘C/);
+  assert.match(help, /⌘V/);
   assert.doesNotMatch(help, /\bxattr\b|\bspctl\b|\bsudo\b/i);
 });
 
@@ -114,8 +138,8 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   assert.doesNotThrow(() => yaml.load(source, { schema: yaml.JSON_SCHEMA }));
   assert.match(source, /workflow_dispatch:/);
   assert.match(source, /default: false/);
-  assert.match(source, /\.github\/releases\/mac-preview-v0\.5\.0-1\.trigger/);
-  assert.match(source, /PREVIEW_TAG: mac-preview-v0\.5\.0-1/);
+  assert.match(source, /\.github\/releases\/mac-preview-v0\.5\.1-1\.trigger/);
+  assert.match(source, /PREVIEW_TAG: mac-preview-v0\.5\.1-1/);
   assert.match(source, /permissions:\n\s+contents: read/);
   assert.match(source, /publish:[\s\S]*?permissions:\n\s+contents: write/);
   assert.match(source, /Unable to prove that \$label is absent/);
@@ -132,6 +156,6 @@ test('macOS preview workflow is fixed, manual-safe and fail-closed for publishin
   const shellPayload = expectedPreviewMarker.trimEnd().replaceAll('\n', '\\n');
   assert.ok(source.includes(`expected=$'${shellPayload}'`));
 
-  const repositoryMarkerPath = path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.0-1.trigger');
+  const repositoryMarkerPath = path.join(projectDirectory, '.github', 'releases', 'mac-preview-v0.5.1-1.trigger');
   assert.equal(validateOptionalPreviewMarker(repositoryMarkerPath).valid, true);
 });

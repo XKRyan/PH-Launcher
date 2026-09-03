@@ -1,11 +1,13 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const SITE_META = {
+const BUILTIN_SITE_META = {
   mail: { name: '学校邮箱', icon: 'i-mail', url: 'https://mail.shphschool.com/' },
   managebac: { name: 'ManageBac', icon: 'i-grid', url: 'https://shph.managebac.cn/login' },
   edupage: { name: 'EduPage', icon: 'i-calendar', url: 'https://pingheschool.edupage.org/' },
 };
+const SITE_META = { ...BUILTIN_SITE_META };
+const CUSTOM_SITE_COLORS = new Set(['green', 'wine', 'gold', 'blue', 'slate']);
 const ROUTE_META = {
   today: { title: '今天', eyebrow: 'PH LAUNCHER' },
   plan: { title: '计划', eyebrow: 'PLAN & FOCUS' },
@@ -30,24 +32,6 @@ const WEEK_DAYS = [
   { value: 5, label: '周五', short: 'FRI' },
   { value: 6, label: '周六', short: 'SAT' },
   { value: 0, label: '周日', short: 'SUN' },
-];
-const COMMAND_TERMS = [
-  ['Analyze', '分析', '拆解要素或结构，说明它们之间的关系，并据此得出结论。'],
-  ['Compare', '比较', '持续指出两个或多个对象之间的相似之处。'],
-  ['Compare and contrast', '比较与对比', '同时说明相似点与不同点，并保持两者之间的对应。'],
-  ['Contrast', '对比', '持续指出两个或多个对象之间的不同之处。'],
-  ['Define', '定义', '给出一个词语或概念准确、简洁的含义。'],
-  ['Describe', '描述', '提供某个情境、事件、模式或过程的详细特征。'],
-  ['Discuss', '讨论', '呈现经过权衡的论述，包含一系列论据、因素或假设。'],
-  ['Evaluate', '评价', '通过权衡优势、局限与证据，对价值或有效性作出判断。'],
-  ['Examine', '审视', '细致考虑某个论点或概念，揭示其假设与相互关系。'],
-  ['Explain', '解释', '详细说明原因、机制或过程，让“为什么”和“如何”清楚。'],
-  ['Identify', '识别', '从若干可能中给出正确答案、名称或简短事实。'],
-  ['Justify', '论证', '提供有效理由或证据，支持一个答案、判断或结论。'],
-  ['Outline', '概述', '给出主要特征或总体结构，不展开所有细节。'],
-  ['State', '陈述', '给出一个具体名称、数值或简短答案，不要求解释。'],
-  ['Suggest', '提出', '给出一种可行方案、假设或答案。'],
-  ['To what extent', '在多大程度上', '权衡证据与反例，判断一个主张成立的范围和条件。'],
 ];
 const MILESTONE_TEMPLATES = {
   EE: ['明确兴趣领域与初步选题', '形成可研究的问题', '建立资料与引用清单', '完成结构与主要论证', '提交初稿并根据反馈修订', '完成终稿与反思'],
@@ -78,6 +62,8 @@ const state = {
   aiBusy: false,
   aiControlInfo: null,
   shortcutResults: {},
+  ibCommandCatalog: null,
+  commandSubject: 'common',
   commandItems: [],
   commandIndex: 0,
   timerFinishing: false,
@@ -101,6 +87,32 @@ function uid() {
 
 function icon(id) {
   return `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
+}
+
+function customSites() {
+  return Array.isArray(state.data?.settings?.customSites) ? state.data.settings.customSites : [];
+}
+
+function customSiteMonogram(name) {
+  const characters = [...String(name || '').trim()];
+  return characters.slice(0, 2).join('').toUpperCase() || 'WEB';
+}
+
+function refreshSiteMeta() {
+  for (const id of Object.keys(SITE_META)) {
+    if (!BUILTIN_SITE_META[id]) delete SITE_META[id];
+  }
+  for (const site of customSites()) {
+    SITE_META[site.id] = {
+      name: site.name,
+      icon: 'i-external',
+      url: site.url,
+      color: CUSTOM_SITE_COLORS.has(site.color) ? site.color : 'green',
+      shortcut: site.shortcut || '',
+      shortcutEnabled: Boolean(site.shortcutEnabled),
+      custom: true,
+    };
+  }
 }
 
 function toast(message, type = 'normal') {
@@ -227,34 +239,56 @@ function navigate(route) {
 }
 
 async function openSite(siteId) {
-  if (!SITE_META[siteId]) return;
+  const site = SITE_META[siteId];
+  if (!site) return;
   state.activeSite = siteId;
   state.route = null;
   $$('.page').forEach((page) => page.classList.remove('active'));
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.site === siteId));
   $('#siteToolbar').classList.remove('hidden');
   $('#internalTopActions').classList.add('hidden');
-  setTopbar(SITE_META[siteId].name, 'SCHOOL APP');
+  setTopbar(site.name, site.custom ? 'MY WEBSITE' : 'SCHOOL APP');
   const siteState = state.siteStates[siteId];
-  $('#siteLocation').textContent = siteState?.url || SITE_META[siteId].url;
-  $('#siteCleanToggle').checked = Boolean(state.data.settings.siteCleanMode[siteId]);
-  await window.ph.sites.open(siteId);
+  $('#siteLocation').textContent = siteState?.url || site.url;
+  const cleanToggle = $('#siteCleanToggle').closest('.clean-toggle');
+  cleanToggle?.classList.toggle('hidden', Boolean(site.custom));
+  $('#siteCleanToggle').checked = !site.custom && Boolean(state.data.settings.siteCleanMode[siteId]);
+  cleanToggle?.classList.toggle('applied', Boolean(siteState?.cleanApplied));
+  cleanToggle?.classList.toggle('unavailable', Boolean(siteState?.cleanUnavailable));
+  try {
+    const opened = await window.ph.sites.open(siteId);
+    if (!opened) {
+      toast('网页已不存在或地址无效', 'error');
+      navigate('today');
+    }
+  } catch (error) {
+    toast(`${site.name} 暂时无法连接：${error.message}`, 'error');
+  }
 }
 
 function handleSiteState(siteState) {
+  const site = SITE_META[siteState.id];
+  if (!site) return;
   const previous = state.siteStates[siteState.id];
   state.siteStates[siteState.id] = siteState;
   const nav = $(`.site-nav[data-site="${siteState.id}"]`);
   nav?.classList.toggle('connected', !siteState.error && Boolean(siteState.url));
   if (state.activeSite !== siteState.id) return;
-  $('#siteLocation').textContent = siteState.url || SITE_META[siteState.id].url;
-  $('#siteCleanToggle').checked = Boolean(siteState.cleanMode && !siteState.cleanUnavailable);
-  $('#siteCleanToggle').closest('.clean-toggle')?.classList.toggle('applied', Boolean(siteState.cleanApplied));
+  $('#siteLocation').textContent = siteState.url || site.url;
+  $('#siteCleanToggle').checked = !site.custom && Boolean(siteState.cleanMode);
+  const cleanToggle = $('#siteCleanToggle').closest('.clean-toggle');
+  cleanToggle?.classList.toggle('applied', Boolean(siteState.cleanApplied));
+  cleanToggle?.classList.toggle('unavailable', Boolean(siteState.cleanUnavailable));
+  if (cleanToggle) {
+    cleanToggle.title = siteState.cleanUnavailable
+      ? '这个登录或跳转页面暂不支持；返回学校网站后会自动应用'
+      : '只改变本机显示，可随时恢复原网页';
+  }
   const back = $('[data-site-action="back"]');
   const forward = $('[data-site-action="forward"]');
   back.disabled = !siteState.canGoBack;
   forward.disabled = !siteState.canGoForward;
-  if (siteState.error) toast(`${SITE_META[siteState.id].name}：${siteState.error}`, 'error');
+  if (siteState.error) toast(`${site.name}：${siteState.error}`, 'error');
   if (siteState.cleanUnavailable && !previous?.cleanUnavailable) toast('当前页面不支持简洁显示，已保留原网页');
 }
 
@@ -318,6 +352,38 @@ function renderDashboard() {
   const count = openTasks.length;
   $('#navTaskCount').textContent = String(count);
   $('#navTaskCount').dataset.count = String(count);
+  renderCustomSites();
+}
+
+function siteHostname(rawUrl) {
+  try { return new URL(rawUrl).hostname; } catch { return rawUrl || ''; }
+}
+
+function renderCustomSiteNavigation() {
+  const container = $('#customSiteNav');
+  if (!container) return;
+  container.innerHTML = customSites().map((site) => {
+    const color = CUSTOM_SITE_COLORS.has(site.color) ? site.color : 'green';
+    return `<button class="nav-item site-nav custom-site-nav-item" data-site="${escapeHtml(site.id)}"><i class="custom-nav-mark ${color}">${escapeHtml(customSiteMonogram(site.name))}</i><span>${escapeHtml(site.name)}</span><i class="status-dot"></i></button>`;
+  }).join('');
+}
+
+function renderCustomSiteCards() {
+  const container = $('#customSiteCards');
+  if (!container) return;
+  const sites = customSites();
+  container.innerHTML = sites.length
+    ? sites.map((site) => {
+      const color = CUSTOM_SITE_COLORS.has(site.color) ? site.color : 'green';
+      return `<article class="site-card custom-site-card color-${color}" data-site="${escapeHtml(site.id)}"><div class="site-card-icon custom-site-monogram">${escapeHtml(customSiteMonogram(site.name))}</div><div><span>我的网页</span><h4>${escapeHtml(site.name)}</h4><p>${escapeHtml(siteHostname(site.url))} · 独立登录空间</p></div><button>打开<svg><use href="#i-arrow"/></svg></button></article>`;
+    }).join('')
+    : '<button class="custom-site-empty" type="button" data-action="add-custom-site"><span>＋</span><strong>添加常用网页</strong><small>只需名称和 HTTPS 地址</small></button>';
+}
+
+function renderCustomSites() {
+  refreshSiteMeta();
+  renderCustomSiteNavigation();
+  renderCustomSiteCards();
 }
 
 function openTaskDialog(task = null) {
@@ -738,10 +804,41 @@ function countWords(text) {
 }
 
 function renderCommandTerms() {
+  const catalog = state.ibCommandCatalog;
+  if (!catalog) {
+    $('#commandResults').innerHTML = '<div class="empty-row">正在准备科目词表…</div>';
+    return;
+  }
+  const subjectSelect = $('#commandSubject');
+  if (!subjectSelect.options.length) {
+    const groups = new Map();
+    for (const subject of catalog.subjects) {
+      if (!groups.has(subject.group)) groups.set(subject.group, []);
+      groups.get(subject.group).push(subject);
+    }
+    subjectSelect.innerHTML = [...groups.entries()].map(([group, subjects]) => `<optgroup label="${escapeHtml(group)}">${subjects.map((subject) => `<option value="${escapeHtml(subject.id)}">${escapeHtml(subject.label)}</option>`).join('')}</optgroup>`).join('');
+  }
+  if (!catalog.subjects.some((subject) => subject.id === state.commandSubject)) state.commandSubject = catalog.defaultSubjectId || 'common';
+  subjectSelect.value = state.commandSubject;
   const query = $('#commandSearch')?.value.trim().toLowerCase() || '';
-  const terms = COMMAND_TERMS.filter((term) => !query || term.join(' ').toLowerCase().includes(query));
+  const terms = catalog.terms.filter((term) => {
+    const inSubject = state.commandSubject === 'all' || term.subjectIds.includes(state.commandSubject);
+    const searchable = [term.term, term.chinese, term.action, ...(term.aliases || [])].join(' ').toLocaleLowerCase('zh-CN');
+    return inSubject && (!query || searchable.includes(query));
+  });
+  const subject = catalog.subjects.find((item) => item.id === state.commandSubject);
+  const edition = subject?.edition ? ` · ${subject.edition}` : '';
+  $('#commandSourceNote').textContent = `${subject?.label || '所选科目'}${edition} · ${terms.length} 条。${catalog.note}`;
+  const guideLink = $('#commandGuideLink');
+  guideLink.classList.toggle('hidden', !subject?.sourceUrl);
   $('#commandResults').innerHTML = terms.length
-    ? terms.map(([english, chinese, description]) => `<div class="command-item"><strong>${escapeHtml(english)}</strong><span>${escapeHtml(chinese)}</span><p>${escapeHtml(description)}</p></div>`).join('')
+    ? terms.map((term) => {
+      const objectives = state.commandSubject === 'all' ? [] : (term.subjectObjectives?.[state.commandSubject] || []);
+      const objectiveBadge = objectives.length
+        ? `<span class="command-objective">${escapeHtml(objectives.join(' · '))}</span>`
+        : '';
+      return `<div class="command-item"><div class="command-item-head"><strong>${escapeHtml(term.term)}</strong><span class="command-chinese">${escapeHtml(term.chinese)}</span>${objectiveBadge}</div><p>${escapeHtml(term.action)}</p></div>`;
+    }).join('')
     : '<div class="empty-row">没有匹配的指令词</div>';
 }
 
@@ -1372,15 +1469,113 @@ async function sendAiMessage() {
 
 function renderWebsiteSettings() {
   const descriptions = {
-    mail: '登录页使用轻量显示；进入网易邮箱后只保留字体与滚动条优化。',
-    managebac: '默认原网页，避免第三方页面更新影响课程与作业操作。',
-    edupage: '轻量调整字体、圆角与留白，可随时恢复原网页。',
+    mail: '登录页使用轻量显示；是否记住用户名按邮箱原站设置，启动器不保存密码。',
+    managebac: '需要保持登录时，请在登录页勾选“Remember me for 30 days”。',
+    edupage: 'EduPage 会在真正退出浏览器后删除登录 Cookie；保持托盘运行时可继续使用。',
   };
-  $('#websiteSettings').innerHTML = Object.entries(SITE_META).map(([id, site]) => `<div class="website-setting">
+  $('#websiteSettings').innerHTML = Object.entries(BUILTIN_SITE_META).map(([id, site]) => `<div class="website-setting">
     <div class="site-card-icon ${id === 'mail' ? 'green' : id === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div>
     <div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(descriptions[id])}</small></div>
-    <div class="website-setting-actions"><button class="clear-site-button" data-clear-site="${id}">清除登录数据</button><label class="switch"><input type="checkbox" data-clean-site="${id}" ${state.data.settings.siteCleanMode[id] ? 'checked' : ''}/><span></span></label></div>
+    <div class="website-setting-actions"><button class="clear-site-button" data-clear-site="${id}">清除登录数据</button><div class="clean-setting-control"><small>简洁显示</small><label class="switch"><input type="checkbox" data-clean-site="${id}" ${state.data.settings.siteCleanMode[id] ? 'checked' : ''}/><span></span></label></div></div>
   </div>`).join('');
+  renderCustomWebsiteSettings();
+}
+
+function renderCustomWebsiteSettings() {
+  const container = $('#customWebsiteSettings');
+  if (!container) return;
+  const sites = customSites();
+  container.innerHTML = sites.length ? sites.map((site, index) => {
+    const color = CUSTOM_SITE_COLORS.has(site.color) ? site.color : 'green';
+    const shortcutResult = state.shortcutResults[`site:${site.id}`];
+    const shortcutStatus = shortcutResult && !shortcutResult.ok
+      ? shortcutResult.error
+      : site.shortcutEnabled && site.shortcut ? `快捷键：${site.shortcut}` : '未启用快捷键';
+    return `<div class="website-setting custom-website-setting" data-custom-site-row="${escapeHtml(site.id)}"><div class="site-card-icon custom-site-monogram ${color}">${escapeHtml(customSiteMonogram(site.name))}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(siteHostname(site.url))} · ${escapeHtml(shortcutStatus)}</small></div><div class="custom-site-actions"><button type="button" data-custom-move="up" data-custom-id="${escapeHtml(site.id)}" ${index === 0 ? 'disabled' : ''} aria-label="上移 ${escapeHtml(site.name)}">↑</button><button type="button" data-custom-move="down" data-custom-id="${escapeHtml(site.id)}" ${index === sites.length - 1 ? 'disabled' : ''} aria-label="下移 ${escapeHtml(site.name)}">↓</button><button type="button" data-edit-custom-site="${escapeHtml(site.id)}">编辑</button><button type="button" data-clear-custom-site="${escapeHtml(site.id)}">清除登录</button><button type="button" class="danger" data-remove-custom-site="${escapeHtml(site.id)}">删除</button></div></div>`;
+  }).join('') : '<div class="empty-row custom-site-settings-empty">尚未添加网页。添加后会出现在首页和侧栏。</div>';
+}
+
+function selectSettingsSection(section) {
+  $$('.settings-sections-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsSection === section));
+  $$('.settings-section').forEach((panel) => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
+}
+
+async function openCustomSiteDialog(site = null) {
+  const wasViewingSite = Boolean(state.activeSite);
+  if (wasViewingSite) {
+    navigate('settings');
+    try { await window.ph.sites.hide(); } catch {}
+    selectSettingsSection('websites');
+  }
+  $('#customSiteForm').reset();
+  $('#customSiteId').value = site?.id || '';
+  $('#customSiteName').value = site?.name || '';
+  $('#customSiteUrl').value = site?.url || '';
+  $('#customSiteColor').value = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  $('#customSiteShortcut').value = site?.shortcut || '';
+  $('#customSiteShortcutEnabled').checked = Boolean(site?.shortcutEnabled);
+  $('#customSiteDialogTitle').textContent = site ? '编辑网页' : '添加网页';
+  $('#customSiteDialog').showModal();
+  setTimeout(() => $('#customSiteName').focus(), 30);
+}
+
+async function saveCustomSiteFromDialog(event) {
+  event.preventDefault();
+  const saveButton = $('#saveCustomSiteButton');
+  const shortcut = $('#customSiteShortcut').value.trim();
+  if ($('#customSiteShortcutEnabled').checked && !shortcut) return toast('请先填写快捷键，或关闭快捷键开关', 'error');
+  saveButton.disabled = true;
+  try {
+    const result = await window.ph.sites.saveCustom({
+      id: $('#customSiteId').value || undefined,
+      name: $('#customSiteName').value,
+      url: $('#customSiteUrl').value,
+      color: $('#customSiteColor').value,
+      shortcut,
+      shortcutEnabled: $('#customSiteShortcutEnabled').checked,
+    });
+    state.data = result.data;
+    refreshSiteMeta();
+    $('#customSiteDialog').close();
+    renderAll();
+    toast(result.created ? '网页已添加' : '网页已更新');
+  } catch (error) {
+    toast(`无法保存网页：${error.message}`, 'error');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function removeCustomSite(siteId) {
+  const site = customSites().find((item) => item.id === siteId);
+  if (!site || !confirm(`删除“${site.name}”并清除它的全部登录数据？`)) return;
+  try {
+    const result = await window.ph.sites.removeCustom(siteId);
+    const wasActive = state.activeSite === siteId;
+    state.data = result.data;
+    refreshSiteMeta();
+    if (wasActive) navigate('today');
+    else renderAll();
+    toast(`${site.name} 已删除，登录数据已清除`);
+  } catch (error) {
+    toast(`无法删除网页：${error.message}`, 'error');
+  }
+}
+
+async function moveCustomSite(siteId, direction) {
+  const sites = customSites();
+  const index = sites.findIndex((site) => site.id === siteId);
+  const target = direction === 'up' ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= sites.length) return;
+  const ids = sites.map((site) => site.id);
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  try {
+    const result = await window.ph.sites.reorderCustom(ids);
+    state.data = result.data;
+    renderAll();
+  } catch (error) {
+    toast(`无法调整顺序：${error.message}`, 'error');
+  }
 }
 
 function renderShortcutSettings() {
@@ -1421,12 +1616,20 @@ function commandCatalog() {
     { id: 'mail', label: '打开学校邮箱', description: '校园邮件与通知', icon: 'i-mail', shortcut: 'Ctrl 1' },
     { id: 'managebac', label: '打开 ManageBac', description: '课程、作业与 IB 进度', icon: 'i-grid', shortcut: 'Ctrl 2' },
     { id: 'edupage', label: '打开 EduPage', description: '课表与校园安排', icon: 'i-calendar', shortcut: 'Ctrl 3' },
+    ...customSites().map((site) => ({
+      id: site.id,
+      label: `打开 ${site.name}`,
+      description: `${siteHostname(site.url)} · 我的网页`,
+      icon: 'i-external',
+      shortcut: site.shortcutEnabled ? site.shortcut : '',
+    })),
     { id: 'new-task', label: '新建任务', description: '快速添加待办', icon: 'i-check', shortcut: 'Ctrl Shift A' },
     { id: 'new-note', label: '新建笔记', description: '创建一条本地笔记', icon: 'i-note', shortcut: 'Ctrl Shift N' },
     { id: 'dictionary', label: '打开离线词典', description: '本机英汉释义、音标与词形', icon: 'i-book', shortcut: 'Ctrl D' },
     { id: 'focus', label: '开始或暂停专注', description: '控制当前计时器', icon: 'i-clock', shortcut: 'Ctrl Shift P' },
     { id: 'plan', label: '打开计划', description: '任务、课程表与专注记录', icon: 'i-calendar', shortcut: '' },
     { id: 'ib', label: '打开 IB 工具', description: '指令词、字数与成绩试算', icon: 'i-flask', shortcut: '' },
+    { id: 'ibdocs', label: '打开 IB Docs', description: '非官方资料导航，在系统浏览器中打开', icon: 'i-external', shortcut: '' },
     { id: 'ai', label: '打开 AI 学习助手', description: '可选的本地或 API AI', icon: 'i-spark', shortcut: '' },
     { id: 'settings', label: '打开设置', description: '快捷键、网站与数据', icon: 'i-settings', shortcut: 'Ctrl ,' },
   ];
@@ -1456,6 +1659,23 @@ function executeCommand(commandId) {
   if (commandId === 'new-task') openTaskDialog();
   if (commandId === 'new-note') { navigate('notes'); createNote(); }
   if (commandId === 'focus') toggleTimer();
+  if (commandId === 'ibdocs') openIbDocsResource();
+}
+
+function openOfficialIbResources() {
+  return window.ph.system.openUrl('https://www.ibo.org/programmes/diploma-programme/curriculum/')
+    .catch((error) => toast(`无法打开资源：${error.message}`, 'error'));
+}
+
+function openOfficialIbSamples() {
+  return window.ph.system.openUrl('https://www.ibo.org/programmes/diploma-programme/assessment-and-exams/sample-exam-papers/')
+    .catch((error) => toast(`无法打开资源：${error.message}`, 'error'));
+}
+
+function openIbDocsResource() {
+  if (!confirm('IB Docs 是第三方网站，与 IBO 无隶属或背书关系，可能包含受版权保护的资料。仅在学校或权利人明确授权的情况下访问和使用。继续在浏览器中打开吗？')) return;
+  return window.ph.system.openUrl('https://ibdocs.re/')
+    .catch((error) => toast(`无法打开资源：${error.message}`, 'error'));
 }
 
 function setPlanTab(tab) {
@@ -1468,6 +1688,7 @@ function setPlanTab(tab) {
 }
 
 function renderAll() {
+  refreshSiteMeta();
   updateClock();
   renderDashboard();
   renderTasks();
@@ -1497,6 +1718,7 @@ function handleBodyClick(event) {
   if (action === 'new-note') createNote();
   if (action === 'add-lesson') openLessonDialog();
   if (action === 'open-focus') { navigate('plan'); setPlanTab('focus'); }
+  if (action === 'add-custom-site') openCustomSiteDialog();
 
   const siteAction = event.target.closest('[data-site-action]')?.dataset.siteAction;
   if (siteAction && state.activeSite) window.ph.sites.action(state.activeSite, siteAction);
@@ -1533,9 +1755,7 @@ function handleBodyClick(event) {
 
   const settingsButton = event.target.closest('[data-settings-section]');
   if (settingsButton) {
-    const section = settingsButton.dataset.settingsSection;
-    $$('.settings-sections-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsSection === section));
-    $$('.settings-section').forEach((panel) => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
+    selectSettingsSection(settingsButton.dataset.settingsSection);
   }
 
   const aiProvider = event.target.closest('[data-ai-provider]');
@@ -1591,7 +1811,16 @@ function bindEvents() {
     lookupDictionary('');
     $('#dictionarySearch').focus();
   });
+  $('#commandSubject').addEventListener('change', (event) => {
+    state.commandSubject = event.target.value;
+    renderCommandTerms();
+  });
   $('#commandSearch').addEventListener('input', renderCommandTerms);
+  $('#commandGuideLink').addEventListener('click', () => {
+    const subject = state.ibCommandCatalog?.subjects.find((item) => item.id === state.commandSubject);
+    if (!subject?.sourceUrl) return;
+    window.ph.system.openUrl(subject.sourceUrl).catch(() => toast('暂时无法打开官方依据'));
+  });
   $('#wordCounterInput').addEventListener('input', updateWordStats);
   $('#wordToNote').addEventListener('click', () => {
     const body = $('#wordCounterInput').value.trim();
@@ -1605,6 +1834,9 @@ function bindEvents() {
     renderGradeRows();
     persistData();
   });
+  $('#openOfficialIbResources').addEventListener('click', openOfficialIbResources);
+  $('#openOfficialIbSamples').addEventListener('click', openOfficialIbSamples);
+  $('#openIbDocs').addEventListener('click', openIbDocsResource);
   $('#gradeRows').addEventListener('input', (event) => {
     const field = event.target.dataset.gradeField;
     const rowId = event.target.closest('[data-grade-id]')?.dataset.gradeId;
@@ -1649,7 +1881,7 @@ function bindEvents() {
   });
 
   $('#siteCleanToggle').addEventListener('change', async (event) => {
-    if (!state.activeSite) return;
+    if (!state.activeSite || SITE_META[state.activeSite]?.custom) return;
     state.data.settings.siteCleanMode[state.activeSite] = event.target.checked;
     await window.ph.sites.setClean(state.activeSite, event.target.checked);
     persistData();
@@ -1664,11 +1896,16 @@ function bindEvents() {
   });
   $('#siteClearAction').addEventListener('click', async () => {
     if (!state.activeSite) return;
-    const name = SITE_META[state.activeSite].name;
+    const name = SITE_META[state.activeSite]?.name;
+    if (!name) return;
     if (!confirm(`清除 ${name} 的登录状态、Cookie 与缓存？`)) return;
-    await window.ph.sites.clearData(state.activeSite);
-    $('#sitePopover').classList.add('hidden');
-    toast(`${name} 的登录数据已清除`);
+    try {
+      await window.ph.sites.clearData(state.activeSite);
+      $('#sitePopover').classList.add('hidden');
+      toast(`${name} 的登录数据已清除`);
+    } catch (error) {
+      toast(`无法清除登录数据：${error.message}`, 'error');
+    }
   });
   document.addEventListener('click', (event) => {
     if (!event.target.closest('#sitePopover') && !event.target.closest('#siteMenuButton')) $('#sitePopover').classList.add('hidden');
@@ -1750,6 +1987,31 @@ function bindEvents() {
     await window.ph.sites.clearData(siteId);
     toast(`${SITE_META[siteId].name} 的登录数据已清除`);
   });
+  $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
+  $('#customWebsiteSettings').addEventListener('click', async (event) => {
+    const editId = event.target.closest('[data-edit-custom-site]')?.dataset.editCustomSite;
+    const removeId = event.target.closest('[data-remove-custom-site]')?.dataset.removeCustomSite;
+    const clearId = event.target.closest('[data-clear-custom-site]')?.dataset.clearCustomSite;
+    const moveButton = event.target.closest('[data-custom-move]');
+    if (editId) {
+      const site = customSites().find((item) => item.id === editId);
+      if (site) openCustomSiteDialog(site);
+      return;
+    }
+    if (removeId) return removeCustomSite(removeId);
+    if (clearId) {
+      const site = customSites().find((item) => item.id === clearId);
+      if (!site || !confirm(`清除“${site.name}”的登录状态、Cookie 与缓存？`)) return;
+      try {
+        await window.ph.sites.clearData(clearId);
+        toast(`${site.name} 的登录数据已清除`);
+      } catch (error) {
+        toast(`无法清除登录数据：${error.message}`, 'error');
+      }
+      return;
+    }
+    if (moveButton) moveCustomSite(moveButton.dataset.customId, moveButton.dataset.customMove);
+  });
   $('#shortcutSettings').addEventListener('change', (event) => {
     if (event.target.dataset.shortcutEnabled) updateShortcut(event.target.dataset.shortcutEnabled, { enabled: event.target.checked });
     if (event.target.dataset.shortcutKey) updateShortcut(event.target.dataset.shortcutKey, { accelerator: event.target.value.trim() });
@@ -1786,13 +2048,15 @@ function bindEvents() {
 async function init() {
   bindEvents();
   try {
-    const [appVersion, data, deployment] = await Promise.all([
+    const [appVersion, data, deployment, ibCommandCatalog] = await Promise.all([
       window.ph.system.version(),
       window.ph.data.get(),
       window.ph.ai.deploymentState(),
+      window.ph.ib.commandCatalog(),
     ]);
     state.data = data;
     state.aiDeployment = deployment;
+    state.ibCommandCatalog = ibCommandCatalog;
     $('#appVersion').textContent = `Version ${appVersion}`;
     const platform = state.data.meta?.platform || 'win32';
     document.body.classList.add(`platform-${platform}`);
@@ -1805,6 +2069,8 @@ async function init() {
     if (!Array.isArray(state.data.tasks)) state.data.tasks = [];
     if (!Array.isArray(state.data.schedule)) state.data.schedule = [];
     if (!Array.isArray(state.data.focusSessions)) state.data.focusSessions = [];
+    if (!Array.isArray(state.data.settings.customSites)) state.data.settings.customSites = [];
+    refreshSiteMeta();
     ensureTimer();
     state.selectedNoteId = [...state.data.notes].sort(noteSort)[0]?.id || null;
     renderAll();
@@ -1816,14 +2082,18 @@ async function init() {
   }
   window.ph.sites.onState(handleSiteState);
   window.ph.shortcuts.onAction((action) => {
-    if (SITE_META[action]) openSite(action);
+    if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
+    else if (SITE_META[action]) openSite(action);
     else if (action === 'dictionary') navigate('dictionary');
     else if (action === 'quickNote') { navigate('notes'); createNote(); }
     else if (action === 'focus') toggleTimer();
   });
   window.ph.shortcuts.onResults((results) => {
     state.shortcutResults = results || {};
-    if (state.route === 'settings') renderShortcutSettings();
+    if (state.route === 'settings') {
+      renderShortcutSettings();
+      renderCustomWebsiteSettings();
+    }
   });
   window.ph.ai.onDeployment((deployment) => {
     const previousStage = state.aiDeployment?.stage;
@@ -1846,6 +2116,7 @@ async function init() {
     if (command?.type === 'navigate') {
       if (SITE_META[command.target]) openSite(command.target);
       else if (ROUTE_META[command.target]) navigate(command.target);
+      else if (command.target === 'ibdocs') openIbDocsResource();
     }
     if (command?.type === 'focus') {
       const timer = ensureTimer();
@@ -1854,7 +2125,12 @@ async function init() {
       if (command.action === 'reset') resetTimer();
     }
   });
-  window.ph.data.onChanged((data) => { state.data = data; renderAll(); });
+  window.ph.data.onChanged((data) => {
+    state.data = data;
+    refreshSiteMeta();
+    if (state.activeSite && !SITE_META[state.activeSite]) navigate('today');
+    else renderAll();
+  });
   setInterval(updateClock, 60_000);
   setInterval(updateTimerUi, 500);
   document.body.dataset.initialized = 'true';

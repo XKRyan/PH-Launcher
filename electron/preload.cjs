@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('ph', {
     action: (id, action) => ipcRenderer.invoke('site:action', id, action),
     setClean: (id, enabled) => ipcRenderer.invoke('site:set-clean', id, enabled),
     clearData: (id) => ipcRenderer.invoke('site:clear-data', id),
+    saveCustom: (site) => ipcRenderer.invoke('site:custom-upsert', site),
+    removeCustom: (id) => ipcRenderer.invoke('site:custom-remove', id),
+    reorderCustom: (ids) => ipcRenderer.invoke('site:custom-reorder', ids),
     onState: (callback) => on('site:state', callback),
   },
   ai: {
@@ -39,6 +42,9 @@ contextBridge.exposeInMainWorld('ph', {
   dictionary: {
     info: () => ipcRenderer.invoke('dictionary:info'),
     lookup: (query) => ipcRenderer.invoke('dictionary:lookup', query),
+  },
+  ib: {
+    commandCatalog: () => ipcRenderer.invoke('ib:command-catalog'),
   },
   system: {
     version: () => ipcRenderer.invoke('system:version'),
