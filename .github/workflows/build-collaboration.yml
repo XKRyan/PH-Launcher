@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: collaboration-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     strategy:
@@ -31,6 +35,7 @@ jobs:
       - run: npm run dictionary:prepare
       - run: npm test
       - run: npm run self-test
+        timeout-minutes: 3
       - name: Windows preview
         if: runner.os == 'Windows'
         run: npx electron-builder --win portable nsis --x64 --publish never
@@ -43,10 +48,14 @@ jobs:
         run: npm run dist:mac:preview
       - name: macOS architecture and preview notes
         if: runner.os == 'macOS'
+        timeout-minutes: 5
         run: |
           zsh scripts/verify-mac-preview.sh
-          "release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test
           node scripts/prepare-mac-preview-assets.cjs
+      - name: Packaged macOS launch check
+        if: runner.os == 'macOS'
+        timeout-minutes: 3
+        run: '"release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: PH-Launcher-collaboration-${{ runner.os }}

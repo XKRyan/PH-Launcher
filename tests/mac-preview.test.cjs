@@ -27,7 +27,11 @@ test('collaboration preview enables ad-hoc PR signing without secrets or publish
   assert.equal(preview.mac.notarize, false);
   const verify = job.steps.find((step) => step.name === 'macOS architecture and preview notes');
   assert.match(verify.run, /zsh scripts\/verify-mac-preview\.sh/);
-  assert.match(verify.run, /PH Launcher" --self-test/);
+  assert.equal(verify['timeout-minutes'], 5);
+  const launch = job.steps.find((step) => step.name === 'Packaged macOS launch check');
+  assert.match(launch.run, /PH Launcher" --self-test/);
+  assert.equal(launch['timeout-minutes'], 3);
+  assert.equal(workflow.concurrency['cancel-in-progress'], true);
   assert.ok(job.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['persist-credentials'] === false);
 });
 

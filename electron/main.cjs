@@ -71,6 +71,7 @@ const AI_CONTROL_CONSENT_VERSION = 1;
 const DATA_KEYS = ['notes', 'tasks', 'schedule', 'focusSessions', 'ib', 'settings'];
 const SITE_IDS = ['mail', 'managebac', 'edupage'];
 const SITE_RECOVERY_DELAY_MS = 350;
+const SELF_TEST_TIMEOUT_MS = 90_000;
 const IS_SMOKE_TEST = process.argv.includes('--smoke-test');
 const IS_CAPTURE = process.argv.includes('--capture-ui');
 const IS_SELF_TEST = process.argv.includes('--self-test');
@@ -81,6 +82,10 @@ const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-var
 let headlessUserData = '';
 if (IS_HEADLESS) {
   headlessUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-headless-'));
+  // userData isolation does not isolate macOS Keychain: its service name is
+  // based on app.name. Source and ad-hoc packaged tests must not access each
+  // other's keys (or a student's real keys). Keep actual OS encryption enabled.
+  if (process.platform === 'darwin') app.setName(`PH Launcher Test ${path.basename(headlessUserData)}`);
   app.setPath('userData', headlessUserData);
 }
 
@@ -329,6 +334,8 @@ let localAiDeployment = null;
 let pendingAiActions = null;
 let activeSiteId = null;
 let isQuitting = false;
+let selfTestSettled = false;
+let selfTestTimeout = null;
 const siteViews = new Map();
 const siteLastUrls = new Map();
 const siteRecovery = new Map();
@@ -337,6 +344,35 @@ let reminderDate = '';
 const siteStoragePersistence = new SiteStoragePersistence({
   onError: (error) => console.error('Site storage flush failed:', error.message),
 });
+
+function selfTestStage(stage) {
+  if (IS_SELF_TEST) console.log(`SELF_TEST_STAGE ${stage}`);
+}
+
+function failSelfTest(error) {
+  if (!IS_SELF_TEST || selfTestSettled) return;
+  selfTestSettled = true;
+  if (selfTestTimeout) clearTimeout(selfTestTimeout);
+  const message = String(error?.message || error || 'unknown failure').replace(/[\r\n]+/g, ' ').slice(0, 500);
+  console.error(`SELF_TEST_ERROR ${message}`);
+  process.exitCode = 1;
+  isQuitting = true;
+  app.exit(1);
+}
+
+function completeSelfTest() {
+  if (selfTestSettled) return;
+  selfTestSettled = true;
+  if (selfTestTimeout) clearTimeout(selfTestTimeout);
+  process.exitCode = 0;
+  isQuitting = true;
+  app.exit(0);
+}
+
+function armSelfTestTimeout() {
+  if (!IS_SELF_TEST || selfTestTimeout) return;
+  selfTestTimeout = setTimeout(() => failSelfTest(new Error(`timeout after ${SELF_TEST_TIMEOUT_MS}ms`)), SELF_TEST_TIMEOUT_MS);
+}
 
 function safeHttpUrl(rawUrl, allowLocalHttp = false) {
   try {
@@ -2086,6 +2122,7 @@ async function runSiteCapture(siteId) {
 }
 
 async function runSelfTest() {
+  selfTestStage('tests-start');
   if (!await waitForMainRendererInitialization()) throw new Error('Launcher UI did not finish initializing');
   const checks = await mainWindow.webContents.executeJavaScript(`(async () => {
     navigate('plan');
@@ -2174,9 +2211,8 @@ async function runSelfTest() {
   checks.dictionaryLookup = dictionaryResult.exact?.word === 'analyze' && Boolean(dictionaryResult.exact.translation);
   checks.success = Object.values(checks).every(Boolean);
   console.log(`SELF_TEST_RESULT ${JSON.stringify(checks)}`);
-  process.exitCode = checks.success ? 0 : 1;
-  isQuitting = true;
-  app.exit(checks.success ? 0 : 1);
+  if (!checks.success) throw new Error('one or more self-test checks failed');
+  completeSelfTest();
 }
 
 function createWindow() {
@@ -2210,7 +2246,6 @@ function createWindow() {
   }
   mainWindow = new BrowserWindow(windowOptions);
   if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false);
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   mainWindow.on('resize', resizeActiveSite);
   mainWindow.on('maximize', resizeActiveSite);
   mainWindow.on('unmaximize', resizeActiveSite);
@@ -2227,7 +2262,14 @@ function createWindow() {
     siteViews.clear();
     mainWindow = null;
   });
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, _validatedUrl, isMainFrame) => {
+    if (IS_SELF_TEST && isMainFrame) failSelfTest(new Error(`main renderer load failed (${code}): ${description || 'unknown'}`));
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (IS_SELF_TEST) failSelfTest(new Error(`main renderer crashed: ${details?.reason || 'unknown'}`));
+  });
   mainWindow.webContents.on('did-finish-load', () => {
+    selfTestStage('ui-loaded');
     sendToRenderer('app:ready', { sites: SITES, shortcuts: DEFAULT_SHORTCUTS });
     if (IS_CAPTURE) {
       runCapture().catch((error) => {
@@ -2238,7 +2280,7 @@ function createWindow() {
       });
     }
     if (IS_SMOKE_TEST) runSmokeTest();
-    if (IS_SELF_TEST) runSelfTest();
+    if (IS_SELF_TEST) runSelfTest().catch(failSelfTest);
     if (CAPTURE_SITE) {
       runSiteCapture(CAPTURE_SITE).catch((error) => {
         console.error(`SITE_CAPTURE_ERROR ${error.message}`);
@@ -2248,6 +2290,7 @@ function createWindow() {
       });
     }
   });
+  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 }
 
 // Headless checks use a temporary profile and must not be blocked by a student
@@ -2264,8 +2307,11 @@ if (!gotLock) {
 
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.whenReady().then(() => {
+  selfTestStage('app-ready');
+  armSelfTestTimeout();
   secureStore = new SecureStore(path.join(app.getPath('userData'), 'ph-launcher.secure'));
   secureStore.load();
+  selfTestStage('store-ready');
   credentialVault = new CredentialVault({
     filePath: path.join(app.getPath('userData'), 'ph-launcher.credentials'),
     safeStorage,
