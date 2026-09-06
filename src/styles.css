@@ -45,6 +45,28 @@ textarea { resize: vertical; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .svg-sprite { position: fixed; width: 0; height: 0; overflow: hidden; }
 .hidden { display: none !important; }
+.credential-setting { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid var(--border); }
+.credential-setting > div:nth-child(2) { flex:1; min-width:0; }
+.credential-setting strong, .credential-setting small { display:block; }
+.credential-setting small { margin-top:4px; color:var(--ink-2); overflow-wrap:anywhere; }
+.credential-setting .site-card-icon { width:38px; height:38px; border-radius:10px; }
+.credential-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.credential-actions button { padding:7px 10px; border-radius:8px; background:var(--green-50); color:var(--green-800); }
+.credential-actions .danger { color:var(--wine-700); background:var(--wine-100); }
+.credential-intro, .credential-unavailable { line-height:1.8; color:var(--ink-2); }
+.credential-password-note { margin-top:-8px; font-size:12px; color:var(--ink-3); }
+.credential-autofill { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 0; }
+.credential-autofill small, .credential-unavailable span, .credential-unavailable small { display:block; color:var(--ink-2); }
+.credential-setting-head { margin-top:22px; }
+.page { zoom:var(--content-scale, 1); }
+.appearance-presets { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:16px 0; }
+.appearance-presets button { display:flex; align-items:center; gap:10px; padding:13px; border:1px solid var(--border); border-radius:12px; background:var(--white); }
+.appearance-presets button.selected { border-color:var(--green-700); box-shadow:inset 0 0 0 1px var(--green-700); }
+.appearance-presets i { width:23px; height:23px; border-radius:50%; }
+.appearance-colors { display:flex; flex-wrap:wrap; gap:20px; padding:20px 0; }
+.appearance-colors label { display:flex; align-items:center; gap:8px; }
+.appearance-colors input { width:40px; height:32px; padding:2px; border:1px solid var(--border); border-radius:6px; }
+#appearanceSettings { margin-top:24px; }
 
 *:focus-visible { outline: 3px solid rgba(197, 160, 90, 0.48); outline-offset: 2px; }
 ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -72,7 +94,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   color: #edf3ef;
   background:
     radial-gradient(circle at 18% 5%, rgba(197, 160, 90, 0.2), transparent 24%),
-    linear-gradient(168deg, var(--green-900), #102f27 72%, #0d271f);
+    linear-gradient(168deg, var(--green-900), var(--sidebar-base, #102f27) 72%, var(--green-950));
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   position: relative;
   z-index: 5;
