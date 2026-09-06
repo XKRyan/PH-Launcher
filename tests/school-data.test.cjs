@@ -7,6 +7,7 @@ const { parseHTML } = require('linkedom');
 const {
   SchoolDataClient, readUrl, safeSourceUrl, parseManageBacCourses,
   parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail,
+  parseManageBacDiscussions, parseDiscussionDetail,
   parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows,
 } = require('../electron/school-data.cjs');
 
@@ -28,6 +29,9 @@ test('school transport allowlist rejects off-origin and write-like paths', () =>
     assert.throws(() => readUrl('managebac', value), { code: 'URL_NOT_ALLOWED' });
   }
   assert.throws(() => readUrl('managebac', '/student/classes/21/units', 'POST'), { code: 'URL_NOT_ALLOWED' });
+  assert.equal(readUrl('managebac', '/student/classes/21/discussions/31'), 'https://shph.managebac.cn/student/classes/21/discussions/31');
+  assert.equal(readUrl('managebac', '/student/classes/21/discussions/31/attachments/7/file.pdf'), 'https://shph.managebac.cn/student/classes/21/discussions/31/attachments/7/file.pdf');
+  assert.throws(() => readUrl('managebac', '/student/classes/21/discussions/31/replies', 'POST'), { code: 'URL_NOT_ALLOWED' });
   assert.equal(safeSourceUrl('managebac', 'javascript:alert(1)'), '');
   assert.equal(safeSourceUrl('managebac', '/student/classes/21/leave'), '');
 });
@@ -68,6 +72,20 @@ test('task details return bounded plain text without form values', () => {
   const html = '<div class="core-task-show"><div class="fusion-card-item"><h4 class="title">Essay</h4><div class="badge-label">Pending</div></div><p>Explain biodiversity.</p><form><input value="sensitive"><textarea>private draft</textarea></form></div>';
   const parsed = parseTaskDetail(html);
   assert.equal(parsed.title, 'Essay'); assert.equal(parsed.description, 'Explain biodiversity.');
+});
+
+test('discussion parsers expose bounded plain text, replies, and school-only attachment links', () => {
+  const html = `<div class="discussion" id="discussion_31"><div class="h4 title"><a>Fieldwork notes</a></div><div class="author"><a>Teacher A</a> in <a>Biology</a></div><div class="fr-view">Main &lt;safe&gt; text</div><div class="attachment"><a href="/student/classes/21/discussions/31/attachments/7/notes.pdf">notes.pdf</a><a href="https://evil.test/attachments/8">evil.pdf</a></div></div><div class="reply private" id="reply_9"><div class="header">Student B | role Posted on Sunday at 5:13 PM Reply Edit</div><div class="fr-view">A reply</div></div><script>global.discussionExecuted=true</script>`;
+  global.discussionExecuted = false;
+  const list = parseManageBacDiscussions(html, '21');
+  assert.equal(global.discussionExecuted, false);
+  assert.deepEqual(list.discussions[0].attachments, [{ name: 'notes.pdf', url: 'https://shph.managebac.cn/student/classes/21/discussions/31/attachments/7/notes.pdf' }]);
+  assert.equal(list.discussions[0].preview, 'Main <safe> text');
+  const detail = parseDiscussionDetail(html, '21', '31');
+  assert.equal(detail.main.body, 'Main <safe> text');
+  assert.equal(detail.comments[0].body, 'A reply');
+  assert.equal(detail.comments[0].private, true);
+  delete global.discussionExecuted;
 });
 
 test('EduPage identity JSON is read without evaluating page scripts', () => {
@@ -153,13 +171,47 @@ test('EduPage sync detects account changes instead of mixing account data', asyn
   await assert.rejects(client.syncEduPage({ weekStart: '2026-09-07' }), { code: 'ACCOUNT_CHANGED' });
 });
 
+test('upstream three-anchor windows cover Friday afternoon and Sunday without extra requests', async () => {
+  const anchors = [];
+  const dayAt = (day, delta) => new Date(Date.parse(`${day}T12:00:00Z`) + delta * 86400000).toISOString().slice(0, 10);
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (site, url, init) => {
+    if (url.endsWith('/user')) return response(identityHtml());
+    if (url.includes('eb.php')) return response('<a href="?gpid=4&gsh=nonce">');
+    const form = new URLSearchParams(init.body); const day = form.get('date'); anchors.push(day);
+    assert.equal(form.get('dateto'), dayAt(day, 2));
+    return response(JSON.stringify({ dates: Object.fromEntries([-1, 0, 1].map((delta) => [dayAt(day, delta), { plan: [lesson({ starttime: '14:00', endtime: '14:40' })] }])) }));
+  } });
+  const result = await client.syncEduPage({ weekStart: '2026-09-07' });
+  assert.deepEqual(anchors, ['2026-09-07', '2026-09-10', '2026-09-13']);
+  assert.equal(result.lessons.length, 7);
+  assert.ok(result.lessons.some((item) => item.date === '2026-09-11' && item.start === '14:00'));
+  assert.deepEqual(result.missingDates, []);
+  assert.ok(result.lessons.every((item) => item.date >= '2026-09-07' && item.date <= '2026-09-13'));
+});
+
 test('course/task detail paths reject arbitrary IDs before touching network', async () => {
   let calls = 0;
   const client = new SchoolDataClient({ fetch: async () => { calls += 1; return response(''); } });
   await assert.rejects(client.getCourseDetail('../sessions'), { code: 'INVALID_ID' });
   await assert.rejects(client.getTaskDetail('21', '31?submit=1'), { code: 'INVALID_ID' });
   await assert.rejects(client.getCoreOverview('private'), { code: 'INVALID_ID' });
+  await assert.rejects(client.getCourseDiscussions('../sessions'), { code: 'INVALID_ID' });
+  await assert.rejects(client.getDiscussionDetail('21', '31?reply=1'), { code: 'INVALID_ID' });
   assert.equal(calls, 0);
+});
+
+test('discussion client uses fixed read-only list and detail paths', async () => {
+  const paths = [];
+  const listHtml = '<div class="discussion" id="discussion_31"><div class="h4 title">Topic</div><div class="fr-view">Preview</div></div>';
+  const client = new SchoolDataClient({ now: fixedNow, fetch: async (site, url, init) => { paths.push({ url, method: init.method }); return response(listHtml); } });
+  const list = await client.getCourseDiscussions('21');
+  const detail = await client.getDiscussionDetail('21', '31');
+  assert.equal(list.discussions[0].title, 'Topic');
+  assert.equal(detail.main.body, 'Preview');
+  assert.deepEqual(paths, [
+    { url: 'https://shph.managebac.cn/student/classes/21/discussions', method: 'GET' },
+    { url: 'https://shph.managebac.cn/student/classes/21/discussions/31', method: 'GET' },
+  ]);
 });
 
 function schoolUiHarness(initialSnapshot) {
@@ -179,7 +231,7 @@ function schoolUiHarness(initialSnapshot) {
   const context = { window: { ph: bridge, openSite: async () => {} }, document, Intl, Date, URL, setInterval: () => 0, console };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/school-ui.js'), 'utf8'), context);
   const click = (selector) => { const node = document.querySelector(selector); assert.ok(node, `missing ${selector}`); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
-  return { context, document, click, api, get syncCalls() { return syncCalls; }, get preferenceWrites() { return preferenceWrites; }, setSnapshot: (value) => { snapshot = value; } };
+  return { context, document, click, api, get snapshot() { return snapshot; }, get syncCalls() { return syncCalls; }, get preferenceWrites() { return preferenceWrites; }, setSnapshot: (value) => { snapshot = value; } };
 }
 const settleUi = () => new Promise((resolve) => setImmediate(resolve));
 function currentMonday() {
@@ -198,7 +250,7 @@ test('school UI mounts with explicit consent, no automatic school requests, and 
   assert.equal(harness.syncCalls, 0);
   harness.click('[data-school-action="consent"]'); await settleUi();
   assert.equal(harness.syncCalls, 1);
-  harness.click('[data-tab="courses"]');
+  harness.context.window.schoolUI.open('courses'); await settleUi();
   assert.equal(harness.document.querySelector('#schoolPage img'), null);
   assert.match(harness.document.querySelector('#schoolPage').textContent, /<img src=x onerror=evil\(\)>/);
 });
@@ -208,12 +260,61 @@ test('school UI distinguishes unselected teaching groups from deliberately empty
   const sample = { id: 'edupage:one', date: weekStart, start: '08:00', end: '08:40', course: 'Biology HL', teacher: 'Sample Teacher', room: 'A101', groups: ['G1'], groupKey: '0123456789abcdefabcd', cancelled: false };
   const snapshot = { edupage: { weekStart, accountKey: 'account1', fetchedAt: fixedNow().toISOString(), lessons: [sample], options: [{ key: sample.groupKey, label: 'Biology HL · G1' }], missingDates: [], warnings: [] }, managebac: null, preferences: {} };
   const harness = schoolUiHarness(snapshot); harness.context.window.schoolUI.mount(); await settleUi();
-  assert.equal(harness.document.querySelectorAll('.school-lesson').length, 1);
-  assert.match(harness.document.querySelector('#schoolPage').textContent, /尚不是你的个人课表/);
+  assert.equal(harness.document.querySelectorAll('.school-lesson').length, 0);
+  assert.equal(harness.document.querySelector('.school-timetable'), null);
+  assert.match(harness.document.querySelector('#schoolPage').textContent, /先选择你的教学组/);
   harness.click('[data-school-action="groups"]'); harness.click('[data-school-action="save-groups"]'); await settleUi();
   assert.equal(harness.preferenceWrites, 1);
   assert.equal(harness.document.querySelectorAll('.school-lesson').length, 0);
   assert.ok(harness.document.querySelector('[data-school-action="import-plan"]').hasAttribute('disabled'));
+});
+
+test('school UI aggregates three overlapping lessons and opens the full conflict list', async () => {
+  const weekStart = currentMonday();
+  const make = (index, start, end) => ({ id: `lesson-${index}`, date: weekStart, start, end, course: `Course ${index}`, teacher: `Teacher ${index}`, room: `R${index}`, groups: [`G${index}`], groupKey: `g${index}`, cancelled: false });
+  const lessons = [make(1, '08:00', '08:40'), make(2, '08:10', '08:50'), make(3, '08:20', '09:00')];
+  const snapshot = { edupage: { weekStart, accountKey: 'a', fetchedAt: fixedNow().toISOString(), lessons, options: [], missingDates: [], warnings: [] }, managebac: null, preferences: { accountKey: 'a', groups: ['g1', 'g2', 'g3'], highlights: ['g2'] } };
+  const harness = schoolUiHarness(snapshot); harness.context.window.schoolUI.mount(); await settleUi();
+  assert.equal(harness.document.querySelectorAll('.school-lesson').length, 1);
+  assert.match(harness.document.querySelector('.school-lesson-cluster').textContent, /3 门课程/);
+  harness.click('[data-school-action="lesson-cluster"]');
+  const dialog = harness.document.querySelector('dialog');
+  assert.equal(dialog.querySelectorAll('.school-conflict-row').length, 3);
+  assert.match(dialog.textContent, /Course 1/); assert.match(dialog.textContent, /Teacher 3/);
+});
+
+test('teaching-group chooser filters by search and never selects hidden results', async () => {
+  const weekStart = currentMonday();
+  const snapshot = { edupage: { weekStart, accountKey: 'a', fetchedAt: fixedNow().toISOString(), lessons: [], options: [
+    { key: 'bio', course: 'Biology', label: 'Biology · G1 · Teacher A' },
+    { key: 'math', course: 'Mathematics', label: 'Mathematics · G2 · Teacher B' },
+  ], missingDates: [], warnings: [] }, managebac: null, preferences: {} };
+  const harness = schoolUiHarness(snapshot); harness.context.window.schoolUI.mount(); await settleUi();
+  harness.click('[data-school-action="groups"]');
+  const input = harness.document.querySelector('[data-school-field="group-query"]'); input.value = 'math'; input.dispatchEvent(new harness.document.defaultView.Event('input', { bubbles: true }));
+  assert.equal(harness.document.querySelectorAll('[data-school-group-option]:not([hidden])').length, 1);
+  harness.click('[data-school-action="groups-all"]'); harness.click('[data-school-action="save-groups"]'); await settleUi();
+  assert.deepEqual(Array.from(harness.snapshot.preferences.groups), ['math']);
+  assert.equal(harness.preferenceWrites, 1);
+});
+
+test('course detail exposes read-only discussion list, text, replies, and attachment actions', async () => {
+  const snapshot = { edupage: null, managebac: { fetchedAt: fixedNow().toISOString(), courses: [{ id: '21', name: 'Biology', grade: '6' }], tasks: [], warnings: [] }, preferences: {} };
+  const harness = schoolUiHarness(snapshot);
+  harness.api.course = async () => ({ id: '21', name: 'Biology', grade: '6', url: 'https://shph.managebac.cn/student/classes/21/units', units: '', tasks: [], files: [], events: [], warnings: [] });
+  harness.api.discussions = async () => ({ courseId: '21', url: 'https://shph.managebac.cn/student/classes/21/discussions', discussions: [{ id: '31', title: '<Topic>', author: 'Teacher', category: 'Biology', preview: '<Preview>', attachments: [] }] });
+  harness.api.discussion = async () => ({ courseId: '21', discussionId: '31', title: '<Topic>', url: 'https://shph.managebac.cn/student/classes/21/discussions/31', main: { author: 'Teacher', category: 'Biology', date: 'Today', body: '<Main>', attachments: [{ name: '<file>.pdf', url: 'https://shph.managebac.cn/attachments/7/download' }] }, comments: [{ id: '9', author: 'Student', date: 'Later', body: '<Reply>', attachments: [], private: false }] });
+  harness.context.window.schoolUI.open('courses'); await settleUi();
+  harness.click('[data-school-action="course"]'); harness.click('[data-school-action="consent"]'); await settleUi();
+  assert.ok(harness.document.querySelector('[data-school-action="course-discussions"]'));
+  harness.click('[data-school-action="course-discussions"]'); await settleUi();
+  assert.match(harness.document.querySelector('dialog').textContent, /<Topic>/);
+  harness.click('[data-school-action="discussion"]'); await settleUi();
+  const dialog = harness.document.querySelector('dialog');
+  assert.match(dialog.textContent, /<Main>/); assert.match(dialog.textContent, /<Reply>/);
+  assert.equal(dialog.querySelector('script'), null);
+  assert.ok(dialog.querySelector('[data-school-action="original"][data-url*="attachments"]'));
+  assert.equal(dialog.querySelector('textarea,form'), null);
 });
 
 test('school UI shows login-expired errors instead of treating a failed sync as no classes', async () => {
@@ -222,5 +323,5 @@ test('school UI shows login-expired errors instead of treating a failed sync as 
   harness.context.window.schoolUI.mount(); await settleUi();
   harness.click('[data-school-action="sync"]'); harness.click('[data-school-action="consent"]'); await settleUi();
   assert.match(harness.document.querySelector('[role="alert"]').textContent, /登录已过期/);
-  assert.ok(harness.document.querySelector('[data-school-action="login"]'));
+  assert.ok(harness.document.querySelector('[data-school-action="account"]'));
 });

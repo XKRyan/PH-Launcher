@@ -1,76 +1,47 @@
-# 学校数据整合：开发与验收说明
+# 学校数据整合说明
 
-## 主体与合作署名
+PH Launcher 保留 Electron 应用、学校原网页分区和本地学习工具，并加入 ManageBac 与 EduPage 的只读学校工作台。它不是学校、ManageBac 或 EduPage 的官方软件；原网页仍是成绩、作业与课表的准确信息来源。
 
-采用 [XKRyan/PH-Launcher](https://github.com/XKRyan/PH-Launcher) 的 Electron 主体，保留已有 Windows / macOS 构建链、离线词典、笔记与 AI 接口。参照 [huaziqian40-bot/Hello-Pinghe-Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) 的学校数据工作台，把课表、教学组选课、课程、作业与成绩放到同一入口。
+## 许可证与来源
 
-面向用户的建议署名：**PH Launcher × Hello Pinghe! Launcher — 合作整合**。注明原项目作者 XKRyan、huaziqian40-bot 与各项目贡献者，并链接两个来源仓库。它不是学校官方软件，不代表 ManageBac 或 EduPage。
+本组合发行版采用 **GPL-3.0-or-later**，完整文本见 [LICENSE](../LICENSE)。原 PH Launcher 的 MIT 版权与条款保留在 [LICENSE-MIT-PH-Launcher.txt](../LICENSE-MIT-PH-Launcher.txt)，可分离使用的原始文件仍保留其原有版权声明。
 
-选择依据：同学版本是 Python / pywebview 的重新实现，直接整体迁移会同时更换桌面运行时、打包链、离线工具和现有数据格式。保留 Electron 主体并整合只读数据能力，不需要同学额外安装 Python。
+学校登录适配层 `electron/school-auth.cjs` 与 `electron/edupage-auth-rpc.cjs` 基于下列 GPL-3.0-or-later 来源改编，并保留文件内署名：
 
-## 来源与许可证
+- [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) 的 `hellopinghe/managebac/client.py`，提交 `19683149ad5572464d332fbe121c78a2ee5ba359`；
+- [edupage-api](https://github.com/EdupageAPI/edupage-api) 0.12.5 的 `edupage_api/login.py` 与 `edupage_api/compression.py`。已核对该版本安装 wheel 的 GPLv3+ 元数据及附带 GPLv3 文本。
 
-检查日期：2026-09-06。同学仓库提交：`86bdc7feacfe1d979340748046d77f3e4cb2fe89`。
+本应用没有捆绑 Python 运行时、`edupage-api` wheel 或其 Python 依赖；登录行为已移植到 JavaScript。详细第三方声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。这些记录是来源与许可证说明，不代表所有上游功能都已整合，也不构成法律审查结论。
 
-- [同学项目 README](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher/blob/main/README.md) 声明 GPL-3.0-or-later，依赖 edupage-api。
-- [同学项目第三方声明](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher/blob/main/THIRD_PARTY_NOTICES.md) 标明 PH Launcher 设计来源以及 ManageBac 数据页面参考。
-- [EdupageAPI/edupage-api](https://github.com/EdupageAPI/edupage-api) 提供 EduPage 端点与字段定义的互操作参考；检查提交 `2450bef971eca0f23e76a554d0483c29d82894a3`。
-- [Electron Session 文档](https://www.electronjs.org/docs/latest/api/session) 定义持久化 session 与其 fetch API。
+## 登录与网络边界
 
-本轮 `electron/school-data.cjs` 是为 Electron 新写的适配器，没有复制/打包同学项目或 edupage-api 的 Python 源文件，没有引入 GPL 运行时依赖；上述项目作为互操作与功能设计来源署名。不得把这句话扩展成“经过独立法律审查”或“洁净室实现”。今后如复制、翻译或链接其 GPL 实现，须重新处理整个组合发行版的 GPL 源码交付和版权声明，不能只在鸣谢里加一个链接便继续宣称整个组合仅为 MIT。
+学校网站各自使用已有的持久化 Electron Session。生产请求通过 `net.request` 绑定到对应 Session，使用 Session Cookie、`redirect: 'manual'`，并在网络层取消跳转后先返回合成的 3xx 响应；地址白名单再决定是否允许下一跳。因此不会由传输层盲目访问重定向目的地。浏览器的 SameSite Cookie 规则仍然生效，适配器不会绕过它。
 
-`.integration-reference` 仅为本地检查用的原仓库副本，不应进入应用包或公开源码提交。
+账号框中的“保存并登录”会在用户确认风险后为 ManageBac 或 EduPage 提交本次登录，无需先打开原网页登录。“设置 → 网站 → 账号记忆”中的自动重新登录仍是单独的明确同意项，默认关闭。凭据保存在操作系统保护的凭据库中；开启自动恢复后，认证器只会在读取操作遇到登录失效时尝试一次恢复并重试该读取一次，且同一网站有冷却时间。修改账号后须重新登录；只有验证码、双重验证等学校验证可能要求本人打开学校页面完成。密码只在主进程中用于授权的登录，不回传给界面或 AI；日志不记录密码、Cookie、响应正文或令牌。
 
-## 实际接口
+允许的学校读取请求仍是受限的只读路径：ManageBac 的课程、总评、作业、文件名称、日历、CAS/EE 页面，以及 EduPage 的当前身份、课表令牌和仅 `action=loadData` 的 `/gcall` 读取。地址、方法、查询参数、带用户名密码的 URL 和跨站重定向均拒绝。学校读取模块不提交作业或表单，也不提供任意班级或跨账号查询。邮箱连接与发信使用独立的受控邮件模块，详见第三方声明。
 
-```js
-const client = new SchoolDataClient({
-  fetch: (siteId, url, init) => schoolSessions[siteId].fetch(url, init),
-});
-await client.syncManageBac();
-await client.syncEduPage({ weekStart: '2026-09-07' });
-await client.getCourseDetail('21');
-await client.getTaskDetail('21', '31');
-await client.getCoreOverview('cas'); // 或 ee
-```
+## 同步、缓存与显示
 
-所有调用需要使用 PH Launcher 现有学校网页分区的 Session。用户先在内置原网页登录；模块不读取密码、不导出 Cookie，也不自行提交登录表单。
+学校结果仅存于运行中的内存：EduPage 按周保存多个已读取周，ManageBac 保存当前结果；应用退出后不保留学校快照。EduPage 的新鲜期为 120 秒，ManageBac 为 180 秒。临时网络错误会保留同一账号的最近已验证内容并标记为可能过期；登录退出、账户变化或会话失效会清空相关内存结果，避免混用账号数据。
 
-ManageBac 返回课程、明确标注的总评、作业卡片、课程单元、课程文件名称、课程日历以及 CAS / EE 摘要。年月不完整的截止日期保留原文 `dueText`，`dueAt` 留空；只有包含年月日、时间、时区的明确日期才可自动加入提醒。总评分数必须对应语义标签，不能假定侧栏第四格永远是成绩。文件链接指向原课程文件页面，不转存短时 S3 签名链接。
+自动刷新默认关闭。用户可在学校页面明确开启；开启后仅当页面可见时每五分钟检查，并且只在结果过期后读取。查看不同周、点击刷新和初次读取均保持可见的用户操作。首次读取前有隐私提示；学校数据不会自动发送给 AI。教学组必须由用户选择，未读取到的日期显示为缺失而不是“无课”。
 
-EduPage 返回带具体日期的七日课程、老师、教室、教学组选项、取消标记、未覆盖日期和当前班级名；必须与每周循环计划分开。取消课程不应触发上课提醒。服务器可能每次只返回一个或数个日期，模块针对尚未覆盖的日期继续读，最多七次。未读取到的日期列入 `missingDates`，不可显示为“无课”。用户选择教学组后才能视为“我的课表”。
+学校页面以 inert HTML/JSON 解析器处理响应，不执行其中脚本；单次页面和登录响应设有大小上限。字段以纯文本显示。同步不会覆盖手工创建的本地计划；只有用户确认后，指定日期的课程才会加入本地提醒。
 
-`accountKey` 是 EduPage 服务器当前账户 ID 的截断哈希，不是安全令牌。它用于避免展示其他账号的旧快照，不替代身份验证。同步结束再次核对账号和班级，切换则拒绝混合结果。当前适配器不提供跨账号或跨班级批量查询。
+## 使用
 
-## 允许的网络请求
+1. 在“设置 → 网站 → 账号记忆”中输入 ManageBac 或 EduPage 账号并选择“保存并登录”；是否开启自动重新登录由你单独决定，默认关闭。
+2. 打开“我的课表”或“我的课程”，手动刷新所需课表周或课程数据，并核对教学组、日期和教室。“班级课表”展示当前账号所属班级的全部可见教学组；“我的日程”管理本地日程；“平和邮箱”使用本地收件箱。
+3. 如需自动刷新，开启页面中的选项；它只在页面可见且数据过期时工作。
+4. 以原学校网页核对成绩、作业和调课信息，再选择加入本地课程提醒。
 
-| 网站 | 方法 | 路径 | 用途 |
-| --- | --- | --- | --- |
-| shph.managebac.cn | GET | `/student/classes/my?page=N` | 当前账号课程 |
-| shph.managebac.cn | GET | `/student/classes/ID/units` | 总评、单元 |
-| shph.managebac.cn | GET | `/student/classes/ID/core_tasks[/TASK_ID]` | 作业列表/详情 |
-| shph.managebac.cn | GET | `/student/classes/ID/files` | 文件名称 |
-| shph.managebac.cn | GET | `/student/classes/ID/events.json` | 课程日历 |
-| shph.managebac.cn | GET | `/student/ib/activity/cas` | CAS 概览 |
-| shph.managebac.cn | GET | `/student/ib/pbl/778` | 本校 EE 页面，页面 ID 变动时需更新 |
-| pingheschool.edupage.org | GET | `/user` | 当前身份与科目字段映射 |
-| pingheschool.edupage.org | GET | `/dashboard/eb.php?mode=ttday` | 当前课表读取令牌 |
-| pingheschool.edupage.org | POST | `/gcall` | 仅 `action=loadData`, `changes={}` 的读操作 |
+EduPage 的授权登录与整周课表读取，以及 ManageBac 的真实授权登录和课程列表读取均已完成验证；验证过程不记录或公开账号、密码、Cookie 或课程信息。这不代表所有 ManageBac 详情、成绩或作业页面均已完成真实验证。其余测试使用合成响应和隔离 Session，不包含学生凭据、成绩或 Cookie。
 
-其他地址、方法、任意查询参数、带用户名密码的 URL、跨域重定向全部拒绝。网络错误不回显响应正文、令牌或 Cookie。HTML 使用 inert parser，不执行脚本；RPC 信封只按 JSON 解析，绝不 eval。读取上限为单页 8 MiB；同步分页、课程数、课程卡片数量均有限制。
+## 0.6.0-beta.4 登录边界
 
-## 上层必须遵守的边界
+EduPage 使用与 edupage-api 0.12.5 相同的 getToken／login RPC；登录成功后，需要以不带密码的 GET 消费服务器发放的一次性票据，才能建立会话。票据限于配置的学校 HTTPS 域、受限路径及有界参数；不能跳过票据后只检查 `/user`。RPC 已提交密码后，不再回退到第二种密码登录。最终在固定 `/user` 验证身份。
 
-- IPC 仅允许可信主界面、主 frame 调用。网站页面不得直接获得这些方法。
-- 首次读取需要用户明确同意隐私提示；不得在每次启动时自动采集全量成绩、联系人或邮箱。
-- 账号数据默认不提供给 AI。用户针对当前内容请求 AI 辅助时，仅提供需要的摘要。
-- 本模块不写入网站、不发邮件、不提交作业、不收集全校联系人。整合这些能力时须单独设计操作预览与逐次确认。
-- 清除网站登录数据、退出学校账号或切换账号时，清空相关快照。ManageBac 当前没有可靠的稳定账户 ID 校验，不应跨登录复用其持久化快照。
-- 只有用户确认后的课程/作业才写入本地计划；同步失败不得覆盖已有手工计划。
-- UI 用转义后的纯文本显示所有字段，不能将学校响应或字段当 HTML 插入。保留“在原网页查看”和同步时间。
+ManageBac 的学校 `/sessions` 可能跳转到官方中国 Faria 账号服务 `https://accounts.faria.cn/accounts/otsi?token=…`。只允许服务器发放的这个精确端点及单一 token 参数，切换为 GET 并移除密码正文与表单头；回到学校后固定访问 `/student` 验证。外域、额外参数、无效票据及带密码 POST 的 307／308 重放均拒绝。所有流程最多四次跳转，不把票据写入日志。
 
-## 验证状态
-
-`node --test tests/school-data.test.cjs`：18 / 18 通过。覆盖来源地址隔离、写请求拒绝、重定向、登录过期、HTML 脚本不执行、明确成绩标签、截止日期不猜年份、文件令牌不泄露、课表班级过滤、七日覆盖、停课、教学组、账号切换、详情 ID 校验，以及学校 UI 初始不自动联网、读取同意提示、显示文本转义、教学组未选择与选择为空的区别、同步错误提示。
-
-这些测试使用自造 HTML / JSON 夹具，不包含学生账号或成绩。2026-09-06 无凭据访问真实 ManageBac 课程入口得到 HTTP 401，验证登录门槛仍存在。尚未用真实登录账号完成端到端验证，不能将此版本描述为“所有学校数据功能均已实测可用”。需要最终用户在自己的内置网页登录后，核对一周课表（尤其周五下午）、至少一门课的总评/作业、课程详情和 CAS / EE。该验收不需要向开发者提供密码。
+合成数据测试覆盖带参数的 EduPage 落地链接；真实授权验证确认 EduPage 授权登录与整周课表读取，以及 ManageBac 授权登录和课程列表读取可用。测试结论不包含、保存或公开任何账号、密码或课程内容，也不能推及其他账号、页面或 ManageBac 详情读取情形。

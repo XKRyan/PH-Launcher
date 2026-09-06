@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 
 const MAX_CALENDAR_EVENTS = 2000;
 const CALENDAR_COLORS = Object.freeze(['green', 'wine', 'gold', 'blue', 'purple', 'slate']);
+const CALENDAR_REMINDER_MINUTES = Object.freeze([0, 5, 10, 15, 30, 60]);
 
 function isCalendarDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -33,7 +34,9 @@ function normalizeCalendarEvent(input, { idFactory = randomUUID } = {}) {
   if (typeof notes !== 'string' || notes.length > 4000 || notes.includes('\u0000')) throw new Error('备注最多 4000 字');
   const color = input.color === undefined ? 'green' : input.color;
   if (!CALENDAR_COLORS.includes(color)) throw new Error('请选择有效的日程颜色');
-  return { id, title: input.title.trim(), date: input.date, start, end, notes: notes.replaceAll('\r\n', '\n'), color };
+  const reminderMinutes = input.reminderMinutes === undefined || input.reminderMinutes === null || input.reminderMinutes === '' ? null : Number(input.reminderMinutes);
+  if (reminderMinutes !== null && (!CALENDAR_REMINDER_MINUTES.includes(reminderMinutes) || !start)) throw new Error('请选择有效的提前提醒时间');
+  return { id, title: input.title.trim(), date: input.date, start, end, notes: notes.replaceAll('\r\n', '\n'), color, reminderMinutes };
 }
 
 function normalizeCalendarEvents(input) {
@@ -70,4 +73,4 @@ function removeCalendarEvent(events, id) {
   return normalizeCalendarEvents(events).filter((event) => event.id !== id);
 }
 
-module.exports = { MAX_CALENDAR_EVENTS, CALENDAR_COLORS, isCalendarDate, isCalendarTime, normalizeCalendarEvent, normalizeCalendarEvents, upsertCalendarEvent, removeCalendarEvent };
+module.exports = { MAX_CALENDAR_EVENTS, CALENDAR_COLORS, CALENDAR_REMINDER_MINUTES, isCalendarDate, isCalendarTime, normalizeCalendarEvent, normalizeCalendarEvents, upsertCalendarEvent, removeCalendarEvent };

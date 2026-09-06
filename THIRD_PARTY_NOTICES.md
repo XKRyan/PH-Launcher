@@ -1,30 +1,34 @@
 # Third-party notices
 
-PH Launcher includes or builds upon open-source software. Each component remains subject to its own license.
+The combined PH Launcher distribution is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE). Original PH Launcher material retains its existing MIT copyright and terms in [LICENSE-MIT-PH-Launcher.txt](LICENSE-MIT-PH-Launcher.txt) where it is used separately. This notice records provenance and does not replace any upstream copyright notice or license.
 
-## Hello Pinghe! Launcher collaboration
+These notices apply to PH Launcher `0.6.0-beta.4`.
 
-[huaziqian40-bot/Hello-Pinghe-Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) informed the student-facing school dashboard and interoperability work. Credit: huaziqian40-bot and its contributors. That project is GPL-3.0-or-later; its Python implementation and edupage-api dependency are not redistributed or linked by this Electron build. PH Launcher's session adapter is separately implemented in JavaScript. Reusing GPL implementation code in future releases would require retaining its notices and complying with the applicable license; this credit does not relicense their project.
+## School authentication provenance
 
-## FSRS and HTML parsing
+`electron/school-auth.cjs` and `electron/edupage-auth-rpc.cjs` adapt GPL-licensed school-authentication behavior into the Electron application. They include notices for:
 
-- ts-fsrs 5.4.2, Copyright Open Spaced Repetition, MIT. Provides the actual FSRS 6 review scheduler. [Upstream](https://github.com/open-spaced-repetition/ts-fsrs). Original copyright and license text are retained in the bundled npm package.
-- linkedom 0.18.13, ISC. Used only as an inert school-page parser. [Upstream](https://github.com/WebReflection/linkedom). Its license and transitive dependency licenses are retained in bundled packages.
+- [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher), `hellopinghe/managebac/client.py`, commit `19683149ad5572464d332fbe121c78a2ee5ba359`, GPL-3.0-or-later. Copyright hzq and Hello Pinghe! Launcher contributors.
+- [edupage-api](https://github.com/EdupageAPI/edupage-api), version 0.12.5, `edupage_api/login.py` and `edupage_api/compression.py`, GPL-3.0-or-later. The installed 0.12.5 wheel metadata classifies it as “GNU General Public License v3 or later (GPLv3+)” and includes the GPLv3 text. Copyright EdupageAPI/edupage-api contributors.
 
-The small vocabulary starter packs use original PH Launcher example sentences and locally enriched ECDICT entries. No exam textbook, copyrighted novel or Bilibili transcript is bundled. Reading materials are supplied locally by users; only import and share material you are authorized to use.
+No Python runtime, wheel, or Python dependency from either project is bundled in this Electron application. The JavaScript port and the combined application remain GPL-3.0-or-later; source distributions must retain the file-level notices and this provenance.
 
-## ECDICT
+## Mail client provenance
 
-The offline English-Chinese dictionary is generated from [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT), commit `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`, under the MIT License. The full notice is retained at `assets/dictionary/LICENSE-ECDICT.txt` and is included in packaged applications.
+`electron/mail-client.cjs` adapts mailbox connection behavior from [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher), `hellopinghe/app/services.py`, commit `19683149ad5572464d332fbe121c78a2ee5ba359`, GPL-3.0-or-later. Copyright hzq and Hello Pinghe! Launcher contributors. The combined application remains GPL-3.0-or-later; this notice records provenance and does not grant access to any mailbox or service.
 
-## Electron and npm dependencies
+## Other components
 
-Runtime and build dependencies are listed in `package.json` and locked in `package-lock.json`. Their copyright notices and license terms are available in their upstream packages. Distribution builders should retain all notices required by those licenses.
+- ts-fsrs 5.4.2, MIT — FSRS 6 review scheduler. [Upstream](https://github.com/open-spaced-repetition/ts-fsrs).
+- linkedom 0.18.13, ISC — inert school-page parser. [Upstream](https://github.com/WebReflection/linkedom).
+- imapflow 1.7.7, MIT — IMAP client. [Upstream](https://github.com/postalsys/imapflow).
+- mailparser 3.9.20, MIT — mail parser. [Upstream](https://github.com/nodemailer/mailparser).
+- nodemailer 10.0.0, MIT-0 — SMTP client. [Upstream](https://github.com/nodemailer/nodemailer).
+- [ECDICT](https://github.com/skywind3000/ECDICT), commit `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`, MIT. Its notice is in `assets/dictionary/LICENSE-ECDICT.txt`.
+- Electron and other npm dependencies retain their own upstream terms; their resolved versions are listed in `package-lock.json`.
 
-Ollama and Qwen models are optional external downloads and are not redistributed in the PH Launcher source repository or application package. Their own terms apply when a user chooses to install them.
+Ollama and Qwen models are optional external downloads and are not redistributed by this repository or application package. Their own terms apply.
 
-## International Baccalaureate references
+## References and external services
 
-PH Launcher is not affiliated with or endorsed by the International Baccalaureate Organization. The subject and examination-version filters use command-term names and assessment-objective labels as references, with original Chinese study prompts. PH Launcher does not bundle IB subject guides, examination papers, question banks, mark schemes, textbooks, or verbatim official command-term definitions. Students must follow their teacher and the current official subject guide.
-
-IB Docs is an optional third-party external website with no affiliation to or endorsement by the International Baccalaureate Organization. Its files are not embedded, mirrored, downloaded, cached, indexed, proxied, or redistributed by PH Launcher. Users must access and use materials only when authorized by their school or the relevant rights holder.
+PH Launcher is not affiliated with or endorsed by the International Baccalaureate Organization, Shanghai Pinghe School, ManageBac, EduPage, NetEase, IB Docs, or Ollama. IB Docs is only an external link: its files are not embedded, mirrored, downloaded, cached, indexed, proxied, or redistributed by PH Launcher. Users must use school and third-party services only when authorized.

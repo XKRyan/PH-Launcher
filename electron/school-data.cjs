@@ -1,7 +1,9 @@
-// Copyright (c) 2026 PH Launcher contributors. MIT.
-// Interoperability design: Hello Pinghe! Launcher and EdupageAPI documentation.
-// This is an independent, read-only Electron session adapter; no upstream Python
-// implementation is bundled. See docs/school-integration.md for provenance.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 PH Launcher contributors.
+// EduPage week-window flow adapted from Hello Pinghe! Launcher, huaziqian40-bot
+// and contributors, hellopinghe/app/services.py @ 19683149ad5572464d332fbe121c78a2ee5ba359.
+// Original PH parsing work retains its MIT notice in LICENSE-MIT-PH-Launcher.txt.
+// See docs/school-integration.md for sources and integration changes.
 const { parseHTML } = require('linkedom');
 const { createHash } = require('node:crypto');
 
@@ -30,6 +32,8 @@ function readUrl(site, raw, method = 'GET') {
   if (site === 'managebac' && method === 'GET') {
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
+    if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
+    if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
     if (['/student/ib/activity/cas', '/student/ib/pbl/778'].includes(path) && !url.search) return url.href;
   }
   if (site === 'edupage') {
@@ -43,7 +47,16 @@ function safeSourceUrl(site, raw) {
   try {
     const url = new URL(raw, ORIGINS[site]);
     if (url.origin !== ORIGINS[site] || url.username || url.password) return '';
-    if (site === 'managebac' && !/^\/student\/classes\/\d+(?:\/(?:units|files|core_tasks)(?:\/\d+)?)?\/?$/.test(url.pathname)) return '';
+    if (site === 'managebac' && !/^\/student\/classes\/\d+(?:\/(?:units|files|core_tasks)(?:\/\d+)?|discussions(?:\/\d+)?)?\/?$/.test(url.pathname)) return '';
+    url.search = ''; url.hash = ''; return url.href;
+  } catch { return ''; }
+}
+function safeDiscussionAttachmentUrl(raw, courseId, discussionId) {
+  try {
+    const url = new URL(raw, ORIGINS.managebac);
+    if (url.origin !== ORIGINS.managebac || url.username || url.password) return '';
+    const scoped = new RegExp(`^/student/classes/${courseId}/discussions/${discussionId}/attachments/\\d+(?:/[A-Za-z0-9._~-]+)?/?$`);
+    if (!scoped.test(url.pathname) && !/^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(url.pathname)) return '';
     url.search = ''; url.hash = ''; return url.href;
   } catch { return ''; }
 }
@@ -140,6 +153,73 @@ function parseTaskDetail(html) {
   const copy = root.cloneNode(true);
   for (const node of copy.querySelectorAll('form,input,textarea,button,.recent-discussions,.fusion-card-item')) node.remove();
   return { title, status, dueText, dueAt, score, description: text(copy, null, 8000) };
+}
+function discussionAuthor(node) {
+  if (!node) return { author: '', category: '' };
+  const links = [...node.querySelectorAll('a')].map((link) => text(link, null, 100)).filter(Boolean);
+  if (links.length >= 2) return { author: links[0], category: links.at(-1) };
+  const value = text(node, null, 240);
+  if (links.length === 1) return { author: links[0], category: clean(value.match(/\bin\s+(.+)$/i)?.[1], 100) };
+  const match = value.match(/^(.+?)\s+in\s+(.+)$/i);
+  return match ? { author: clean(match[1], 100), category: clean(match[2], 100) } : { author: clean(value, 100), category: '' };
+}
+function discussionAttachments(node, courseId, discussionId, limit = 8) {
+  if (!node) return [];
+  const items = new Map();
+  for (const link of node.querySelectorAll("a[href*='/attachments/'], .attachment a[href], .files a[href]")) {
+    const url = safeDiscussionAttachmentUrl(link.getAttribute('href'), courseId, discussionId);
+    const name = text(link, null, 180);
+    if (url && name && !items.has(url)) items.set(url, { name, url });
+  }
+  return [...items.values()].slice(0, limit);
+}
+function parseManageBacDiscussions(html, courseId) {
+  const cid = validatedId(courseId);
+  const doc = htmlDocument(html); const discussions = [];
+  const blocks = doc.querySelectorAll("div.discussion[id^='discussion_']");
+  for (const block of [...blocks].slice(0, 200)) {
+    const id = clean(block.id, 40).match(/^discussion_(\d{1,16})$/)?.[1];
+    if (!id) continue;
+    const titleNode = block.querySelector('.h4.title a, .h4.title, h3.title a, h3.title');
+    const byline = discussionAuthor(block.querySelector('.author'));
+    discussions.push({
+      id, title: text(titleNode, null, 240) || '无标题讨论', ...byline,
+      preview: text(block, '.fr-view, .discussion-body', 500),
+      attachments: discussionAttachments(block, cid, id, 5),
+      url: `${ORIGINS.managebac}/student/classes/${cid}/discussions/${id}`,
+    });
+  }
+  const empty = /No (?:discussions|records)|暂无讨论/i.test(doc.documentElement?.textContent || '');
+  return { discussions, recognized: blocks.length > 0 || empty, empty };
+}
+function discussionPost(node, courseId, discussionId) {
+  if (!node) return null;
+  const byline = discussionAuthor(node.querySelector('.author'));
+  const whole = text(node, null, 1000);
+  const date = clean(whole.match(/Posted on\s+(.+? (?:AM|PM))/i)?.[1], 100);
+  return { ...byline, date, body: text(node, '.fr-view, .discussion-body', 12000), attachments: discussionAttachments(node, courseId, discussionId) };
+}
+function parseDiscussionDetail(html, courseId, discussionId) {
+  const cid = validatedId(courseId); const did = validatedId(discussionId);
+  const doc = htmlDocument(html);
+  const mainNode = doc.querySelector("div.discussion[id^='discussion_']");
+  if (!mainNode || mainNode.id !== `discussion_${did}`) fail('PAGE_CHANGED', '没有识别到讨论详情，请在原网页查看');
+  const title = text(mainNode, '.h4.title, h3.title, .h4', 240) || '无标题讨论';
+  const comments = [];
+  for (const reply of [...doc.querySelectorAll("div.reply[id^='reply_']")].slice(0, 500)) {
+    const id = clean(reply.id, 40).match(/^reply_(\d{1,16})$/)?.[1];
+    if (!id) continue;
+    const header = text(reply, '.header', 500);
+    const [authorPart, posted = ''] = header.split(/\s*Posted on\s*/i);
+    comments.push({
+      id, author: clean(authorPart.split('|')[0], 100),
+      date: clean(posted.replace(/\s+(?:Reply|Edit|Delete)\b.*$/i, ''), 100),
+      body: text(reply, '.fr-view, .body', 12000),
+      attachments: discussionAttachments(reply, cid, did),
+      private: /(?:^|\s)private(?:\s|$)/i.test(reply.className || ''),
+    });
+  }
+  return { title, main: discussionPost(mainNode, cid, did), comments };
 }
 function parseCoreOverview(html, kind) {
   const doc = htmlDocument(html);
@@ -244,7 +324,7 @@ function eduRows(dates, identity, requestedDates) {
       const cancelled = Boolean(item.removed) || ['absent', ''].includes(item.type);
       const id = `edupage:${digest(`${identity.accountKey}|${date}|${start}|${end}|${groupKey}|${room}`)}`;
       lessons.push({ id, date, start, end, course, teacher, room, groups, groupKey, cancelled, period: /^\d+$/.test(String(item.uniperiod)) ? Number(item.uniperiod) : null });
-      options.set(groupKey, { key: groupKey, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · ') });
+      options.set(groupKey, { key: groupKey, course, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · ') });
     }
   }
   return { lessons: [...new Map(lessons.map((item) => [item.id, item])).values()].sort((a, b) => `${a.date}${a.start}${a.course}`.localeCompare(`${b.date}${b.start}${b.course}`)), options: [...options.values()], skipped };
@@ -260,7 +340,7 @@ class SchoolDataClient {
     if (method === 'POST') {
       const form = new URLSearchParams(body);
       const keys = ['gpid', 'gsh', 'action', 'user', 'changes', 'date', 'dateto', '_LJSL'];
-      if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || form.get('dateto') !== form.get('date')) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
+      if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || ![0, 1, 2].some((days) => form.get('dateto') === addDays(form.get('date'), days))) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
     }
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), this.timeoutMs);
@@ -290,6 +370,7 @@ class SchoolDataClient {
       fail('PAGE_CHANGED', '学校页面重定向过多，请在原网页查看');
     } catch (error) {
       if (error instanceof SchoolDataError) throw error;
+      if (error.code === 'BODY_TOO_LARGE') fail('PAGE_TOO_LARGE', '学校页面过大，请在原网页查看');
       fail(abort.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR', abort.signal.aborted ? '读取学校数据超时，请稍后刷新' : '暂时无法读取学校网站，请检查网络后刷新');
     } finally { clearTimeout(timer); }
   }
@@ -355,6 +436,17 @@ class SchoolDataClient {
     const path = `/student/classes/${cid}/core_tasks/${tid}`;
     return { id: `managebac:${cid}:${tid}`, courseId: cid, taskId: tid, url: `${ORIGINS.managebac}${path}`, ...parseTaskDetail(await this.request('managebac', path)), fetchedAt: this.now().toISOString() };
   }
+  async getCourseDiscussions(courseId) {
+    const id = validatedId(courseId); const path = `/student/classes/${id}/discussions`;
+    const parsed = parseManageBacDiscussions(await this.request('managebac', path), id);
+    if (!parsed.recognized) fail('PAGE_CHANGED', '没有识别到课程讨论列表，请在原网页查看');
+    return { courseId: id, discussions: parsed.discussions, url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
+  }
+  async getDiscussionDetail(courseId, discussionId) {
+    const cid = validatedId(courseId); const did = validatedId(discussionId);
+    const path = `/student/classes/${cid}/discussions/${did}`;
+    return { courseId: cid, discussionId: did, url: `${ORIGINS.managebac}${path}`, ...parseDiscussionDetail(await this.request('managebac', path), cid, did), fetchedAt: this.now().toISOString() };
+  }
   async getCoreOverview(kind) {
     if (!['cas', 'ee'].includes(kind)) fail('INVALID_ID', '请选择 CAS 或 EE');
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
@@ -365,13 +457,15 @@ class SchoolDataClient {
     const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
     const identity = parseEduPageIdentity(await this.request('edupage', '/user'));
     const merged = {}; const warnings = [];
-    // Request uncovered dates; this handles servers returning one or several days.
-    // Each nonce is refreshed, and the account identity always comes from /user.
-    for (const date of dates) {
+    // Port the upstream three-anchor week request; if the server returns smaller
+    // windows, supplement only uncovered days. Never mistake a missing date for
+    // an empty timetable. At most seven requests; each request gets a fresh nonce.
+    const anchors = [dates[0], dates[3], dates[6]];
+    for (const date of [...anchors, ...dates.filter((day) => !anchors.includes(day))]) {
       if (Array.isArray(merged[date]?.plan)) continue;
       try {
         const nonce = parseEduPageNonce(await this.request('edupage', '/dashboard/eb.php?mode=ttday'));
-        const form = new URLSearchParams({ ...nonce, action: 'loadData', user: identity.id, changes: '{}', date, dateto: date, _LJSL: '4096' });
+        const form = new URLSearchParams({ ...nonce, action: 'loadData', user: identity.id, changes: '{}', date, dateto: addDays(date, 2), _LJSL: '4096' });
         const payload = parseEduPageEnvelope(await this.request('edupage', '/gcall', { method: 'POST', body: form.toString() }));
         for (const requested of dates) if (Array.isArray(payload.dates[requested]?.plan)) merged[requested] = payload.dates[requested];
       } catch (error) {
@@ -393,4 +487,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };

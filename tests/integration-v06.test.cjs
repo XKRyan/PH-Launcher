@@ -28,18 +28,19 @@ test('school plan imports update only the schedule, preserving pending renderer 
   assert.deepEqual(current.schedule, [{ id: 'dated-lesson' }]);
 });
 
-test('opening any built-in school portal invalidates cached school snapshots', () => {
-  const invalidator = main.slice(main.indexOf('function invalidateSchoolSnapshots()'), main.indexOf('async function syncSchool('));
+test('opening a school portal invalidates that source and pending automatic logins', () => {
+  const invalidator = main.slice(main.indexOf('function invalidateSchoolSnapshots(source)'), main.indexOf('async function syncSchool('));
   const showSite = main.slice(main.indexOf('async function showSite('), main.indexOf('function hideSites()'));
-  assert.match(invalidator, /schoolEpoch \+= 1/);
-  assert.match(invalidator, /schoolCache\.managebac = null/);
-  assert.match(invalidator, /schoolCache\.edupage = null/);
-  assert.match(showSite, /if \(SITE_IDS\.includes\(siteId\)\) invalidateSchoolSnapshots\(\)/);
+  assert.match(invalidator, /schoolState\.invalidate\(source\)/);
+  assert.match(invalidator, /schoolAuthenticator\?\.invalidate\(site\)/);
+  assert.match(showSite, /if \(SITE_IDS\.includes\(siteId\)\) invalidateSchoolSnapshots\(siteId\)/);
 });
 
-test('reminder dedupe resets only when the local date changes', () => {
+test('calendar and course reminders share a rolling scheduler without clearing dedupe each tick', () => {
   const reminder = main.slice(main.indexOf('function scheduleReminderTick()'), main.indexOf('function runCommand('));
-  assert.match(reminder, /if \(reminderDate !== dateKey\) \{ reminderKeys\.clear\(\); reminderDate = dateKey; \}/);
-  assert.doesNotMatch(reminder, /reminderKeys\.size/);
-  assert.match(main, /let reminderDate = ''/);
+  assert.match(reminder, /reminderScheduler\.syncCalendar/);
+  assert.match(reminder, /reminderScheduler\.syncGroup\('course:'/);
+  assert.doesNotMatch(reminder, /fired\.clear|reminderKeys/);
+  assert.match(main, /setInterval\(scheduleReminderTick, 15_000\)/);
+  assert.match(main, /onCancel:.*reminderWindows/);
 });

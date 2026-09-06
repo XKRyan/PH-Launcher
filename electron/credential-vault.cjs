@@ -64,6 +64,7 @@ function normalizeStoredRecord(record) {
       username,
       password,
       autoFill: record.autoFill !== false,
+      autoLogin: record.autoLogin === true,
       updatedAt,
     };
   } catch {
@@ -195,6 +196,7 @@ class CredentialVault {
           username: record.username,
           displayUsername: maskUsername(record.username),
           autoFill: record.autoFill,
+          autoLogin: record.autoLogin === true && siteId !== 'mail',
           updatedAt: record.updatedAt,
         }
         : { saved: false, username: '', displayUsername: '', autoFill: false, updatedAt: '' };
@@ -206,7 +208,7 @@ class CredentialVault {
     };
   }
 
-  saveCredential(input) {
+  validateCredential(input) {
     this.ensureLoaded();
     this.assertAvailable();
     if (this.loadError) throw new Error(this.loadError);
@@ -216,12 +218,19 @@ class CredentialVault {
     const username = normalizeUsername(input?.username);
     const suppliedPassword = normalizePassword(input?.password, { required: !existing });
     const password = suppliedPassword || existing.password;
+    return { siteId, username, password, autoFill: input?.autoFill !== false, autoLogin: siteId !== 'mail' && input?.autoLogin === true };
+  }
+
+  saveCredential(input) {
+    const { siteId, username, password, autoFill, autoLogin } = this.validateCredential(input);
     const now = this.now();
     const updatedAt = now instanceof Date && !Number.isNaN(now.getTime()) ? now.toISOString() : new Date().toISOString();
     const nextRecords = { ...this.records, [siteId]: {
       username,
       password,
-      autoFill: input?.autoFill !== false,
+      autoFill,
+      // Existing autofill consent never authorizes submitting a login form.
+      autoLogin,
       updatedAt,
     } };
     this.persistRecords(nextRecords);
@@ -250,6 +259,14 @@ class CredentialVault {
     const record = this.records[siteId];
     if (!record || (!allowDisabled && !record.autoFill)) return null;
     return { username: record.username, password: record.password };
+  }
+
+  getForLogin(siteId) {
+    this.ensureLoaded();
+    if (!['edupage', 'managebac'].includes(siteId) || !this.availability().supported || this.loadError) return null;
+    const record = this.records[siteId];
+    if (record?.autoLogin !== true) return null;
+    return { username: record.username, password: record.password, autoLogin: true };
   }
 }
 

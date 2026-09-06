@@ -1,10 +1,10 @@
 {
   "name": "ph-launcher",
-  "version": "0.6.0-beta.1",
+  "version": "1.0.0",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -42,6 +42,7 @@
       "src/**/*",
       "assets/icon.*",
       "LICENSE",
+      "LICENSE-MIT-PH-Launcher.txt",
       "THIRD_PARTY_NOTICES.md",
       "package.json"
     ],
@@ -129,7 +130,10 @@
     }
   },
   "dependencies": {
+    "imapflow": "1.7.7",
     "linkedom": "0.18.13",
+    "mailparser": "3.9.20",
+    "nodemailer": "10.0.0",
     "ts-fsrs": "5.4.2"
   }
 }

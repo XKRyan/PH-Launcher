@@ -1,0 +1,90 @@
+html { font-size:16px; }
+body { font-size:1rem; }
+.section-kicker, .page-intro > div > .section-kicker { display:none; }
+.page-intro { margin-bottom:24px; }
+.page-intro p { max-width:65ch; line-height:1.7; }
+.primary-nav { min-height:0; overflow-y:auto; }
+.brand { flex:0 0 auto; height:auto; min-height:44px; }
+.brand-copy strong { font-size:clamp(16px,.9375rem,18px); }
+.brand-copy span { white-space:nowrap; font-size:clamp(12px,.8125rem,13px); letter-spacing:.08em; }
+.nav-label { margin-top:10px; margin-bottom:4px; }
+.nav-item { min-height:42px; height:auto; padding-top:8px; padding-bottom:8px; }
+.setting-row { gap:18px; min-height:72px; }
+.setting-row > div { min-width:0; }
+.setting-row small { line-height:1.65; }
+.setting-row select { min-width:120px; flex-shrink:0; }
+.account-storage-options { margin:16px 0; }
+.account-storage-options summary { cursor:pointer; color:var(--ink-2); padding:12px 0; }
+.modal-head > button, .mail-close-compose, .vocab-modal-close { display:grid; place-items:center; padding:0; width:36px; height:36px; min-width:36px; min-height:36px; line-height:1; flex:0 0 36px; text-align:center; }
+button svg { flex-shrink:0; vertical-align:middle; }
+button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
+.nav-item > .nav-count-badge {
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  min-width:21px;
+  height:20px;
+  margin-left:auto;
+  padding:0 6px;
+  border-radius:999px;
+  font-size:clamp(12px,.75rem,14px);
+  font-variant-numeric:tabular-nums;
+  line-height:1;
+  text-align:center;
+}
+.nav-item > .nav-count-badge.hidden { display:none; }
+.toast { max-width:min(520px,calc(100vw - 40px)); overflow-wrap:anywhere; }
+.mail-attachments { margin-top:18px; padding:14px; background:var(--ivory-50); border:1px solid var(--border); border-radius:12px; }
+.mail-attachments h4 { font-size:1rem; }
+.mail-attachments button { background:var(--white); min-height:48px; }
+.mail-contact-note { font-size:.82rem; }
+.startup-sync-status { color:var(--ink-2); font-size:.85rem; margin:0 0 14px; }
+.startup-sync-status:empty { display:none; }
+#commandButton { min-width:240px; max-width:320px; white-space:nowrap; }
+#commandButton span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.primary-nav .nav-group-label { margin-top:12px; margin-bottom:6px; font-weight:600; font-size:.78rem; }
+.agent-workspace { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; align-items:start; }
+.agent-sidebar { padding:22px; border:1px solid var(--border); border-radius:18px; background:var(--white); }
+.agent-sidebar h3 { margin:0 0 12px; font-size:1rem; }
+.agent-sidebar .ai-control-strip { display:block; border:0; padding:0; background:none; }
+.agent-sidebar .ai-control-strip > div { display:block; }
+.agent-sidebar .ai-control-strip strong, .agent-sidebar .ai-control-strip > label { display:none; }
+.agent-sidebar .ai-control-strip small { display:block; font-size:.82rem; line-height:1.6; margin:12px 0 24px; }
+.agent-permissions { display:flex; flex-wrap:wrap; gap:8px; }
+.agent-permissions button { padding:10px; border-radius:12px; background:var(--ivory-100); color:var(--ink-2); font-size:.85rem; }
+.agent-permissions button.active { background:var(--green-800); color:white; }
+.agent-permission-note { margin:10px 0 18px; color:var(--ink-2); font-size:.82rem; line-height:1.55; }
+.agent-sidebar .primary-button, .agent-sidebar .secondary-button { width:100%; margin-bottom:12px; }
+.agent-session-list { display:grid; gap:6px; margin:0 0 24px; }
+.agent-session-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; align-items:center; }
+.agent-session-list button { padding:10px; text-align:left; color:var(--ink-2); background:none; border-radius:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.85rem; }
+.agent-session-list button.active { background:var(--green-50); color:var(--green-800); }
+.agent-session-list .agent-session-delete { padding:7px 9px; text-align:center; color:var(--ink-3); }
+.agent-history-status,.agent-session-notice { margin:-4px 0 10px; color:var(--ink-2); font-size:.78rem; line-height:1.5; }
+.agent-history-status.error,.agent-session-notice { color:var(--wine-700); }
+.agent-history-status button { margin-left:6px; padding:2px 6px; font-size:.78rem; }
+.agent-memory-panel { margin:0 0 22px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); padding:11px 0; }
+.agent-memory-panel summary { cursor:pointer; color:var(--ink); font-size:.92rem; font-weight:650; }
+.agent-memory-panel p { color:var(--ink-2); font-size:.78rem; line-height:1.5; margin:9px 0; }
+.agent-memory-list { display:grid; gap:7px; margin:8px 0; }
+.agent-memory-item { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:5px; align-items:start; padding:8px; border-radius:9px; background:var(--ivory-100); font-size:.78rem; }
+.agent-memory-item span { overflow-wrap:anywhere; }
+.agent-memory-item button { padding:3px 6px; font-size:.75rem; }
+#agentMemoryForm { display:grid; gap:7px; }
+#agentMemoryText { width:100%; resize:vertical; }
+#agentMemoryForm > div { display:flex; gap:6px; }
+.agent-memory-toggle { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:8px 0; color:var(--ink-2); font-size:.82rem; }
+.agent-memory-toggle input { accent-color:var(--green-700); }
+.agent-memory-toggle small { color:var(--wine-700); }
+.agent-model { color:var(--ink-2); font-size:.85rem; overflow-wrap:anywhere; margin:0 0 12px; }
+.agent-conversation { height:calc(100vh - 250px); min-height:420px; grid-template-rows:minmax(0,1fr) auto auto auto auto; }
+.agent-conversation .chat-messages { padding:24px; }
+.agent-conversation .chat-bubble { max-width:88%; font-size:1rem; }
+.agent-conversation .chat-composer textarea { font-size:1rem; min-height:80px; }
+.agent-conversation .prompt-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.agent-conversation .prompt-chips button { height:auto; padding:8px 10px; font-size:.82rem; }
+.agent-conversation .chat-footnote { font-size:.8rem; }
+.agent-conversation .chat-composer button { align-self:end; width:48px; height:48px; }
+.ai-choice-list small { font-size:.85rem; }
+@media(max-width:1100px) { .agent-workspace { grid-template-columns:200px minmax(0,1fr); gap:12px; } .agent-sidebar { padding:16px; } }
+@media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .agent-sidebar h3,.agent-sidebar .ai-control-strip,.agent-sidebar .agent-permission-note,.agent-session-list { grid-column:1/-1; } }

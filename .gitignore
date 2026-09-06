@@ -24,6 +24,7 @@ assets/dictionary/ecdict-building-*.db
 !.env.example
 ph-launcher.secure
 ph-launcher.credentials*
+ph-launcher.ai-history*
 .integration-reference/
 .remote-audit-*/
 .diagnostics/

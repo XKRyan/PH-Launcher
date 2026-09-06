@@ -938,7 +938,7 @@ test('main process keeps school views isolated and web security enabled', () => 
 
 test('package config includes hardened Universal macOS DMG, ZIP and PKG targets', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(packageJson.version, '0.6.0-beta.1');
+  assert.equal(packageJson.version, '1.0.0');
   assert.equal(packageJson.devDependencies.electron, '44.2.0');
   assert.equal(packageJson.build.mac.minimumSystemVersion, '13.0');
   assert.equal(packageJson.build.mac.hardenedRuntime, true);

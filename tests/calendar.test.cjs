@@ -16,14 +16,17 @@ test('calendar dates validate month lengths, leap years, bounds, and exact forma
 test('calendar times are strict 24-hour values, with all-day represented by two empty fields', () => {
   for (const value of ['00:00', '09:05', '23:59']) assert.equal(isCalendarTime(value), true);
   for (const value of ['24:00', '25:00', '12:60', '9:05', '12:00:00', '']) assert.equal(isCalendarTime(value), false);
-  assert.deepEqual(normalizeCalendarEvent({ ...event, start: '', end: '' }), { ...event, start: '', end: '' });
+  assert.deepEqual(normalizeCalendarEvent({ ...event, start: '', end: '' }), { ...event, start: '', end: '', reminderMinutes: null });
   for (const times of [{ start: '15:00', end: '' }, { start: '', end: '16:00' }, { start: '16:00', end: '16:00' }, { start: '23:00', end: '01:00' }, { start: null, end: null }]) assert.throws(() => normalizeCalendarEvent({ ...event, ...times }));
 });
 
 test('calendar normalization creates IDs, trims titles, and whitelists fields', () => {
   const normalized = normalizeCalendarEvent({ title: '  阅读 English Paper 1  ', date: '2026-09-06', unexpected: 'ignore-me' }, { idFactory: () => 'fixture-created' });
-  assert.deepEqual(normalized, { id: 'fixture-created', title: '阅读 English Paper 1', date: '2026-09-06', start: '', end: '', notes: '', color: 'green' });
+  assert.deepEqual(normalized, { id: 'fixture-created', title: '阅读 English Paper 1', date: '2026-09-06', start: '', end: '', notes: '', color: 'green', reminderMinutes: null });
   assert.equal(normalizeCalendarEvent({ ...event, notes: 'one\r\ntwo' }).notes, 'one\ntwo');
+  assert.equal(normalizeCalendarEvent({ ...event, reminderMinutes: 15 }).reminderMinutes, 15);
+  assert.throws(() => normalizeCalendarEvent({ ...event, reminderMinutes: 7 }));
+  assert.throws(() => normalizeCalendarEvent({ ...event, start: '', end: '', reminderMinutes: 5 }));
 });
 
 test('calendar validation rejects malformed and overlong text, IDs, colors and dates', () => {
@@ -57,7 +60,7 @@ test('calendar create, edit and delete return new arrays and preserve unrelated 
 test('stale edits and invalid deletes are rejected while a repeated delete is idempotent', () => {
   assert.throws(() => upsertCalendarEvent([], event));
   assert.throws(() => removeCalendarEvent([event], 'bad/id'));
-  assert.deepEqual(removeCalendarEvent([event], 'missing'), [event]);
+  assert.deepEqual(removeCalendarEvent([event], 'missing'), [{ ...event, reminderMinutes: null }]);
 });
 
 test('calendar size is bounded while editing an existing entry at the cap remains possible', () => {

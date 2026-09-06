@@ -7,6 +7,9 @@ function on(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('ph', {
+  settings: {
+    setLanguage: (language) => ipcRenderer.invoke('settings:language', language),
+  },
   data: {
     get: () => ipcRenderer.invoke('data:get'),
     save: (data) => ipcRenderer.invoke('data:save', data),
@@ -34,7 +37,17 @@ contextBridge.exposeInMainWorld('ph', {
   },
   ai: {
     configure: (config) => ipcRenderer.invoke('ai:configure', config),
-    chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
+    chat: (messages, options) => ipcRenderer.invoke('ai:chat', messages, options),
+    chatStream: (requestId, messages, options) => ipcRenderer.invoke('ai:chat-stream', requestId, messages, options),
+    history: {
+      get: () => ipcRenderer.invoke('ai:history-get'),
+      saveSession: (input) => ipcRenderer.invoke('ai:history-save', input),
+      removeSession: (id) => ipcRenderer.invoke('ai:history-remove', id),
+      saveMemory: (input) => ipcRenderer.invoke('ai:memory-save', input),
+      removeMemory: (id) => ipcRenderer.invoke('ai:memory-remove', id),
+    },
+    cancelStream: (requestId) => ipcRenderer.invoke('ai:cancel-stream', requestId),
+    status: () => ipcRenderer.invoke('ai:status'),
     controlInfo: () => ipcRenderer.invoke('ai:control-info'),
     previewEduPage: () => ipcRenderer.invoke('ai:edupage-preview'),
     confirmAction: (proposalId) => ipcRenderer.invoke('ai:confirm-action', proposalId),
@@ -44,6 +57,8 @@ contextBridge.exposeInMainWorld('ph', {
     cancelDeployment: () => ipcRenderer.invoke('ai:cancel-deployment'),
     showDeploymentLog: () => ipcRenderer.invoke('ai:show-deployment-log'),
     onDeployment: (callback) => on('ai:deployment-state', callback),
+    onStream: (callback) => on('ai:stream', callback),
+    onStatus: (callback) => on('ai:status', callback),
     onCommand: (callback) => on('ai:command', callback),
   },
   dictionary: {
@@ -51,6 +66,14 @@ contextBridge.exposeInMainWorld('ph', {
     lookup: (query) => ipcRenderer.invoke('dictionary:lookup', query),
   },
   vocabulary: {
+    configureAdvisor: (input) => ipcRenderer.invoke('vocabulary:configure-advisor', input),
+    prepareBatch: (input) => ipcRenderer.invoke('vocabulary:prepare-batch', input),
+    cancelPrepareBatch: (input) => ipcRenderer.invoke('vocabulary:cancel-prepare-batch', input),
+    dueCount: () => ipcRenderer.invoke('vocabulary:due-count'),
+    onChanged: (callback) => on('vocabulary:changed', callback),
+    checkExpression: (input) => ipcRenderer.invoke('vocabulary:check-expression', input),
+    catalogWords: (id, limit) => ipcRenderer.invoke('vocabulary:catalog-words', id, limit),
+    placementSubmit: (input) => ipcRenderer.invoke('vocabulary:placement-submit', input),
     get: (subject) => ipcRenderer.invoke('vocabulary:get', subject),
     saveReading: (input) => ipcRenderer.invoke('vocabulary:save-reading', input),
     finishReading: (input) => ipcRenderer.invoke('vocabulary:finish-reading', input),
@@ -68,15 +91,28 @@ contextBridge.exposeInMainWorld('ph', {
     importFile: () => ipcRenderer.invoke('vocabulary:import'),
   },
   school: {
-    get: () => ipcRenderer.invoke('school:get'),
+    get: (options) => ipcRenderer.invoke('school:get', options),
     sync: (source, options) => ipcRenderer.invoke('school:sync', source, options),
+    login: (source, options) => ipcRenderer.invoke('school:login', source, options),
     preferences: (input) => ipcRenderer.invoke('school:preferences', input),
     importPlan: () => ipcRenderer.invoke('school:import-plan'),
     course: (id) => ipcRenderer.invoke('school:course', id),
+    discussions: (courseId) => ipcRenderer.invoke('school:discussions', courseId),
+    discussion: (courseId, id) => ipcRenderer.invoke('school:discussion', courseId, id),
     task: (courseId, id) => ipcRenderer.invoke('school:task', courseId, id),
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
     openUrl: (url) => ipcRenderer.invoke('school:open-url', url),
     onPlanImported: (callback) => on('school:plan-imported', callback),
+  },
+  mail: {
+    status: () => ipcRenderer.invoke('mail:status'),
+    list: (options) => ipcRenderer.invoke('mail:list', options),
+    read: (uid) => ipcRenderer.invoke('mail:read', uid),
+    contacts: () => ipcRenderer.invoke('mail:contacts'),
+    download: (input) => ipcRenderer.invoke('mail:download', input),
+    openLink: (input) => ipcRenderer.invoke('mail:openLink', input),
+    send: (draft) => ipcRenderer.invoke('mail:send', draft),
+    onCleared: (callback) => on('mail:cleared', callback),
   },
   calendar: {
     get: () => ipcRenderer.invoke('calendar:get'),

@@ -152,7 +152,7 @@ test('preview asset preparation emits only DMG, ZIP, checksum and Chinese notes'
     assert.match(manifest, new RegExp(`^${sha256(zip)}  PH-Launcher-${version}-macOS-universal\\.zip`, 'm'));
     const notesName = `PH-Launcher-${version}-macOS-UNSIGNED-TEST-zh-CN.md`;
     const notes = fs.readFileSync(path.join(releaseDirectory, notesName), 'utf8');
-    assert.match(notes, /pre-release（预发布版本）/);
+    assert.match(notes, /Mac 体验包/);
     assert.match(notes, /没有 Developer ID 开发者身份签名/);
     assert.doesNotMatch(notes, /\{\{VERSION\}\}/);
     assert.ok(result.assets.some((asset) => path.basename(asset) === notesName));

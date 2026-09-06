@@ -46,6 +46,22 @@ function fixture(t, options = {}) {
 
 const first = { siteId: 'mail', username: 'student@example.test', password: 'fixture-secret-123', autoFill: true };
 
+test('automatic school login needs separate opt-in, persists encrypted, and can be revoked', (t) => {
+  const { vault, config } = fixture(t);
+  const input = { ...first, siteId: 'edupage' };
+  vault.saveCredential(input);
+  assert.equal(vault.getForLogin('edupage'), null);
+  vault.saveCredential({ ...input, autoFill: false, autoLogin: true });
+  assert.equal(vault.getForFill('edupage'), null);
+  assert.equal(new CredentialVault(config).getForLogin('edupage').autoLogin, true);
+  assert.equal(vault.status().sites.edupage.autoLogin, true);
+  assert.ok(!JSON.stringify(vault.status()).includes(first.password));
+  vault.saveCredential({ ...input, autoLogin: false });
+  assert.equal(new CredentialVault(config).getForLogin('edupage'), null);
+  vault.saveCredential({ ...first, autoLogin: true });
+  assert.equal(vault.getForLogin('mail'), null);
+});
+
 test('credentials are encrypted at rest, reload correctly, and never appear in renderer status', (t) => {
   const { vault, config, filePath, directory } = fixture(t);
   const result = vault.saveCredential(first);
