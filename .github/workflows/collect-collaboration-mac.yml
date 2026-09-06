@@ -1,0 +1,70 @@
+name: Collect verified collaboration Mac preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths: [".github/workflows/collect-collaboration-mac.yml"]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  split-verified-download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Only redistributes the already tested artifact from c33d654eaed078fc5a6101fa2bcabe86165acf6c.
+      # No application code is run and no release/main-branch writes are granted.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          repository: XKRyan/PH-Launcher
+          run-id: 34023246036
+          artifact-ids: 9986240869
+          merge-multiple: true
+          path: mac-tested
+      - name: Verify original checksums and exact file set
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const root = 'mac-tested/';
+          const names = ['PH-Launcher-0.6.0-beta.1-macOS-universal.dmg', 'PH-Launcher-0.6.0-beta.1-macOS-universal.zip'];
+          const notes = 'PH-Launcher-0.6.0-beta.1-macOS-UNSIGNED-TEST-zh-CN.md';
+          const expected = [...names, notes, 'SHA256SUMS.txt'].sort();
+          if (JSON.stringify(fs.readdirSync(root).sort()) !== JSON.stringify(expected)) throw Error('Unexpected artifact files');
+          const manifest = fs.readFileSync(root + 'SHA256SUMS.txt', 'utf8').trim().split(/\r?\n/);
+          if (manifest.length !== 2) throw Error('Unexpected checksum count');
+          (async () => {
+            for (const name of names) {
+              if (!fs.lstatSync(root + name).isFile()) throw Error('Not a regular file');
+              const hash = crypto.createHash('sha256');
+              for await (const chunk of fs.createReadStream(root + name)) hash.update(chunk);
+              const digest = hash.digest('hex');
+              if (!manifest.includes(digest + '  ' + name)) throw Error('Checksum mismatch: ' + name);
+              console.log('Verified ' + name + ' ' + digest);
+            }
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PH-Launcher-0.6-macOS-DMG
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            mac-tested/*.dmg
+            mac-tested/SHA256SUMS.txt
+            mac-tested/*UNSIGNED*.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PH-Launcher-0.6-macOS-ZIP
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            mac-tested/*.zip
+            mac-tested/SHA256SUMS.txt
+            mac-tested/*UNSIGNED*.md
