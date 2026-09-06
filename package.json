@@ -1,6 +1,6 @@
 {
   "name": "ph-launcher",
-  "version": "0.5.1",
+  "version": "0.6.0-beta.1",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",
@@ -16,7 +16,7 @@
     "dictionary:fetch": "node scripts/fetch-dictionary.cjs",
     "dictionary": "node scripts/build-dictionary.cjs",
     "dictionary:prepare": "npm run dictionary:fetch && npm run dictionary",
-    "test": "node --test tests/*.test.cjs",
+    "test": "node -e \"require('electron')\" && node --test tests/*.test.cjs",
     "dist": "electron-builder --win portable --x64",
     "dist:installer": "electron-builder --win nsis --x64",
     "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "csv-parse": "^7.0.2",
-    "electron": "44.1.0",
+    "electron": "44.2.0",
     "electron-builder": "26.15.3"
   },
   "build": {
@@ -41,6 +41,8 @@
       "electron/**/*",
       "src/**/*",
       "assets/icon.*",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
       "package.json"
     ],
     "extraResources": [
@@ -125,5 +127,9 @@
       "createStartMenuShortcut": true,
       "shortcutName": "PH Launcher"
     }
+  },
+  "dependencies": {
+    "linkedom": "0.18.13",
+    "ts-fsrs": "5.4.2"
   }
 }

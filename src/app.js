@@ -13,6 +13,9 @@ const ROUTE_META = {
   plan: { title: '计划', eyebrow: 'PLAN & FOCUS' },
   notes: { title: '笔记', eyebrow: 'LOCAL NOTES' },
   dictionary: { title: '离线词典', eyebrow: 'OFFLINE DICTIONARY' },
+  vocabulary: { title: '语境背词', eyebrow: 'WORDS IN CONTEXT' },
+  school: { title: '我的学校', eyebrow: 'MY SCHOOL' },
+  calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
   ai: { title: 'AI 学习助手', eyebrow: 'OPTIONAL AI' },
   settings: { title: '设置', eyebrow: 'PREFERENCES' },
@@ -62,6 +65,7 @@ const state = {
   aiBusy: false,
   aiControlInfo: null,
   shortcutResults: {},
+  credentialStatus: null,
   ibCommandCatalog: null,
   commandSubject: 'common',
   commandItems: [],
@@ -177,18 +181,26 @@ async function persistData(immediate = false) {
   if (saveState) saveState.lastChild.textContent = '保存中';
   clearTimeout(persistTimer);
   const commit = async () => {
+    persistTimer = null;
+    const submitted = structuredClone(state.data);
     try {
-      const saved = await window.ph.data.save(state.data);
-      state.data = saved;
+      const saved = await window.ph.data.save(submitted);
+      // Typing may continue while the save is in flight. Keep edits made since
+      // submission instead of replacing them with the older server response.
+      for (const key of Object.keys(saved)) {
+        if (JSON.stringify(state.data[key]) === JSON.stringify(submitted[key])) state.data[key] = saved[key];
+      }
       saveState?.classList.remove('saving');
       if (saveState) saveState.lastChild.textContent = '已保存';
+      return true;
     } catch (error) {
       saveState?.classList.remove('saving');
       if (saveState) saveState.lastChild.textContent = '保存失败';
       toast(`保存失败：${error.message}`, 'error');
+      return false;
     }
   };
-  if (immediate) await commit();
+  if (immediate) return await commit();
   else persistTimer = setTimeout(commit, 420);
 }
 
@@ -227,6 +239,9 @@ function navigate(route) {
     renderFocusStats();
   }
   if (route === 'notes') renderNotes();
+  if (route === 'vocabulary') window.vocabularyUI?.refresh();
+  if (route === 'school') window.schoolUI?.refresh();
+  if (route === 'calendar') window.calendarUI?.refresh();
   if (route === 'dictionary') {
     renderDictionary();
     loadDictionaryInfo();
@@ -288,7 +303,7 @@ function handleSiteState(siteState) {
   const forward = $('[data-site-action="forward"]');
   back.disabled = !siteState.canGoBack;
   forward.disabled = !siteState.canGoForward;
-  if (siteState.error) toast(`${site.name}：${siteState.error}`, 'error');
+  if (siteState.error && siteState.error !== previous?.error) toast(`${site.name}：${siteState.error}`, 'error');
   if (siteState.cleanUnavailable && !previous?.cleanUnavailable) toast('当前页面不支持简洁显示，已保留原网页');
 }
 
@@ -301,6 +316,7 @@ function nextLesson() {
       const day = new Date(now);
       day.setDate(now.getDate() + offset);
       if (day.getDay() !== Number(lesson.dayOfWeek)) continue;
+      if (lesson.date && localDateKey(day) !== lesson.date) continue;
       const [hour, minute] = lesson.start.split(':').map(Number);
       day.setHours(hour, minute, 0, 0);
       if (day <= now) continue;
@@ -488,6 +504,13 @@ function renderTasks() {
 }
 
 function openLessonDialog(lesson = null) {
+  let notice = $('#lessonDateNotice');
+  if (!notice) {
+    notice = document.createElement('p'); notice.id = 'lessonDateNotice';
+    $('#lessonForm .modal-head').after(notice);
+  }
+  notice.textContent = lesson?.date ? `仅 ${lesson.date} 当天生效；重新同步可更新日期与教学组。` : '每周重复课程';
+  $('#lessonDay').disabled = Boolean(lesson?.date);
   $('#lessonId').value = lesson?.id || '';
   $('#lessonCourse').value = lesson?.course || '';
   $('#lessonDay').value = String(lesson?.dayOfWeek ?? 1);
@@ -543,7 +566,10 @@ function renderSchedule() {
   const today = new Date().getDay();
   $('#weekGrid').innerHTML = WEEK_DAYS.map((day) => {
     const lessons = state.data.schedule
-      .filter((lesson) => Number(lesson.dayOfWeek) === day.value)
+      .filter((lesson) => Number(lesson.dayOfWeek) === day.value && (!lesson.date || (() => {
+        const date = new Date(); date.setDate(date.getDate() - (date.getDay() + 6) % 7 + (day.value + 6) % 7);
+        return localDateKey(date) === lesson.date;
+      })()))
       .sort((a, b) => String(a.start).localeCompare(String(b.start)));
     return `<section class="week-day${today === day.value ? ' today' : ''}">
       <div class="week-day-head"><strong>${day.label}</strong><span>${day.short}</span></div>
@@ -766,7 +792,7 @@ function renderDictionary() {
     ${entry.definition ? `<section class="dictionary-definition"><span>英文释义</span><p lang="en">${dictionaryText(entry.definition)}</p></section>` : ''}
     ${entry.exchange?.length ? `<section class="dictionary-forms"><span>词形变化</span><div>${entry.exchange.map((item) => `<button data-dict-word="${escapeHtml(item.word)}"><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.word)}</strong></button>`).join('')}</div></section>` : ''}
     ${frequency.length ? `<div class="dictionary-frequency">${frequency.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
-    <div class="dictionary-actions"><button class="secondary-button" id="dictionaryToNote">${icon('i-note')}保存到笔记</button><span>离线查询 · 不会发送搜索内容</span></div>`;
+    <div class="dictionary-actions"><button class="primary-button" id="dictionaryToVocabulary">${icon('i-plus')}加入词本</button><button class="secondary-button" id="dictionaryToNote">${icon('i-note')}保存到笔记</button><span>离线查询 · 不会发送搜索内容</span></div>`;
 }
 
 function speakDictionaryEntry() {
@@ -1469,16 +1495,136 @@ async function sendAiMessage() {
 
 function renderWebsiteSettings() {
   const descriptions = {
-    mail: '登录页使用轻量显示；是否记住用户名按邮箱原站设置，启动器不保存密码。',
-    managebac: '需要保持登录时，请在登录页勾选“Remember me for 30 days”。',
-    edupage: 'EduPage 会在真正退出浏览器后删除登录 Cookie；保持托盘运行时可继续使用。',
+    mail: '登录页使用轻量显示；可在下方选择使用账号记忆，或按邮箱原站设置保持登录。',
+    managebac: '需要保持登录时，可在登录页勾选“Remember me for 30 days”，也可选择账号记忆。',
+    edupage: 'EduPage 可能在真正退出浏览器后删除登录 Cookie；账号记忆可在下次登录页填入信息。',
   };
   $('#websiteSettings').innerHTML = Object.entries(BUILTIN_SITE_META).map(([id, site]) => `<div class="website-setting">
     <div class="site-card-icon ${id === 'mail' ? 'green' : id === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div>
     <div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(descriptions[id])}</small></div>
     <div class="website-setting-actions"><button class="clear-site-button" data-clear-site="${id}">清除登录数据</button><div class="clean-setting-control"><small>简洁显示</small><label class="switch"><input type="checkbox" data-clean-site="${id}" ${state.data.settings.siteCleanMode[id] ? 'checked' : ''}/><span></span></label></div></div>
   </div>`).join('');
+  renderCredentialSettings();
   renderCustomWebsiteSettings();
+}
+
+function credentialEntry(siteId) {
+  return state.credentialStatus?.sites?.[siteId] || {
+    saved: false,
+    username: '',
+    displayUsername: '',
+    autoFill: false,
+    updatedAt: '',
+  };
+}
+
+function renderCredentialSettings() {
+  const container = $('#credentialSettings');
+  if (!container) return;
+  const status = state.credentialStatus;
+  if (!status) {
+    container.innerHTML = '<div class="empty-row credential-loading">正在检查系统安全存储…</div>';
+    return;
+  }
+  if (!status.supported || status.issue) {
+    const reason = status.issue || status.reason || '当前系统无法安全保存密码';
+    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small></div>`;
+    return;
+  }
+  container.innerHTML = Object.entries(BUILTIN_SITE_META).map(([siteId, site]) => {
+    const credential = credentialEntry(siteId);
+    const statusText = credential.saved
+      ? `已加密保存 ${credential.displayUsername || '账号'} · ${credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
+      : '未保存密码；仍可使用网站自己的保持登录';
+    const actions = credential.saved
+      ? `<button type="button" data-fill-credential="${siteId}">填入一次</button><button type="button" data-edit-credential="${siteId}">修改</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
+      : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
+    return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
+  }).join('');
+}
+
+function openCredentialDialog(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  const status = state.credentialStatus;
+  if (!site || !status?.supported || status.issue) {
+    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+  }
+  const credential = credentialEntry(siteId);
+  $('#credentialForm').reset();
+  $('#credentialSiteId').value = siteId;
+  $('#credentialUsername').value = credential.username || '';
+  $('#credentialPassword').required = !credential.saved;
+  $('#credentialPasswordNote').textContent = credential.saved
+    ? '如需保留原密码，请留空；保存后不会显示密码。'
+    : '保存后不会显示密码；如需更新，请重新输入。';
+  $('#credentialAutoFill').checked = credential.saved ? Boolean(credential.autoFill) : true;
+  $('#credentialDialogTitle').textContent = credential.saved ? `修改 ${site.name} 登录信息` : `记住 ${site.name} 登录信息`;
+  $('#credentialRiskAccepted').checked = false;
+  $('#saveCredentialButton').disabled = true;
+  $('#credentialDialog').showModal();
+  setTimeout(() => $('#credentialUsername').focus(), 30);
+}
+
+async function saveCredentialFromDialog(event) {
+  event.preventDefault();
+  if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
+  const saveButton = $('#saveCredentialButton');
+  const credential = {
+    siteId: $('#credentialSiteId').value,
+    username: $('#credentialUsername').value,
+    password: $('#credentialPassword').value,
+    autoFill: $('#credentialAutoFill').checked,
+  };
+  // Clear the editable password field before waiting for IPC. The main process
+  // receives the value through the isolated bridge and never returns it.
+  $('#credentialPassword').value = '';
+  saveButton.disabled = true;
+  try {
+    state.credentialStatus = await window.ph.credentials.save(credential);
+    $('#credentialDialog').close();
+    renderCredentialSettings();
+    toast('登录信息已使用当前系统用户密钥加密保存');
+  } catch (error) {
+    toast(`无法保存登录信息：${error.message}`, 'error');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function removeCredential(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  if (!site || !confirm(`删除 ${site.name} 保存的账号和密码？网站登录状态不会受影响。`)) return;
+  try {
+    const result = await window.ph.credentials.remove(siteId);
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    toast(`${site.name} 保存的登录信息已删除`);
+  } catch (error) {
+    toast(`无法删除登录信息：${error.message}`, 'error');
+  }
+}
+
+async function fillCredentialOnce(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  if (!site) return;
+  await openSite(siteId);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (state.activeSite !== siteId) return;
+    try {
+      const result = await window.ph.credentials.fill(siteId);
+      if (result.filled) {
+        toast('已填入登录信息；请自行确认并登录');
+        return;
+      }
+      if (result.reason === 'fields-not-empty') return toast('登录栏已有内容，未覆盖；请检查后自行登录');
+      if (['untrusted-page', 'untrusted-form-action', 'not-login-form', 'ambiguous-form'].includes(result.reason)) break;
+    } catch (error) {
+      toast(`无法填入登录信息：${error.message}`, 'error');
+      return;
+    }
+  }
+  toast('当前页面没有可填写的登录栏；请前往对应网站的登录页后重试', 'error');
 }
 
 function renderCustomWebsiteSettings() {
@@ -1688,6 +1834,7 @@ function setPlanTab(tab) {
 }
 
 function renderAll() {
+  window.appearanceUI?.apply(state.data?.settings?.appearance);
   refreshSiteMeta();
   updateClock();
   renderDashboard();
@@ -1698,6 +1845,7 @@ function renderAll() {
   renderIbTools();
   renderAi();
   renderSettings();
+  window.appearanceUI?.render();
   renderFocusStats();
   updateTimerUi();
 }
@@ -1898,11 +2046,13 @@ function bindEvents() {
     if (!state.activeSite) return;
     const name = SITE_META[state.activeSite]?.name;
     if (!name) return;
-    if (!confirm(`清除 ${name} 的登录状态、Cookie 与缓存？`)) return;
+    const includesSavedPassword = Boolean(BUILTIN_SITE_META[state.activeSite]);
+    if (!confirm(`清除 ${name} 的登录状态、Cookie、缓存${includesSavedPassword ? '与已保存密码' : ''}？`)) return;
     try {
-      await window.ph.sites.clearData(state.activeSite);
+      const result = await window.ph.sites.clearData(state.activeSite);
       $('#sitePopover').classList.add('hidden');
-      toast(`${name} 的登录数据已清除`);
+      if (result?.credentialError) return toast('网页登录状态已清除，但保存密码删除失败。请在账号记忆设置中检查，暂未重新打开网站。', 'error');
+      toast(result?.credentialRemoved ? `${name} 的登录数据和保存密码已清除` : `${name} 的登录数据已清除`);
     } catch (error) {
       toast(`无法清除登录数据：${error.message}`, 'error');
     }
@@ -1983,9 +2133,27 @@ function bindEvents() {
   });
   $('#websiteSettings').addEventListener('click', async (event) => {
     const siteId = event.target.closest('[data-clear-site]')?.dataset.clearSite;
-    if (!siteId || !confirm(`清除 ${SITE_META[siteId].name} 的全部登录数据？`)) return;
-    await window.ph.sites.clearData(siteId);
-    toast(`${SITE_META[siteId].name} 的登录数据已清除`);
+    if (!siteId || !confirm(`清除 ${SITE_META[siteId].name} 的登录状态、Cookie、缓存与已保存密码？`)) return;
+    const result = await window.ph.sites.clearData(siteId);
+    if (result?.credentialError) return toast('网页登录状态已清除，但保存密码删除失败。请在账号记忆设置中检查。', 'error');
+    toast(result?.credentialRemoved ? `${SITE_META[siteId].name} 的登录数据和保存密码已清除` : `${SITE_META[siteId].name} 的登录数据已清除`);
+  });
+  $('#credentialSettings').addEventListener('click', (event) => {
+    const editId = event.target.closest('[data-edit-credential]')?.dataset.editCredential;
+    const removeId = event.target.closest('[data-remove-credential]')?.dataset.removeCredential;
+    const fillId = event.target.closest('[data-fill-credential]')?.dataset.fillCredential;
+    if (editId) return openCredentialDialog(editId);
+    if (removeId) return removeCredential(removeId);
+    if (fillId) return fillCredentialOnce(fillId);
+  });
+  $('#credentialRiskAccepted').addEventListener('change', (event) => {
+    $('#saveCredentialButton').disabled = !event.target.checked;
+  });
+  $('#credentialForm').addEventListener('submit', saveCredentialFromDialog);
+  $('#credentialDialog').addEventListener('close', () => {
+    $('#credentialPassword').value = '';
+    $('#credentialRiskAccepted').checked = false;
+    $('#saveCredentialButton').disabled = true;
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
@@ -2047,16 +2215,31 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  const appearanceHost = document.createElement('div');
+  appearanceHost.id = 'appearanceSettings';
+  $('[data-settings-panel="general"]').append(appearanceHost);
+  const collaborationCredit = document.createElement('p');
+  collaborationCredit.className = 'disclaimer';
+  collaborationCredit.textContent = '合作整合：PH Launcher（XKRyan）× Hello Pinghe! Launcher（huaziqian40-bot）。学校学习面板结合两个学生项目的设计与接口经验。';
+  $('[data-settings-panel="about"]').append(collaborationCredit);
+  window.vocabularyUI?.mount();
+  window.schoolUI?.mount();
+  window.calendarUI?.mount();
+  $('#dictionaryResult').addEventListener('click', (event) => {
+    if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
+  });
   try {
-    const [appVersion, data, deployment, ibCommandCatalog] = await Promise.all([
+    const [appVersion, data, deployment, ibCommandCatalog, credentialStatus] = await Promise.all([
       window.ph.system.version(),
       window.ph.data.get(),
       window.ph.ai.deploymentState(),
       window.ph.ib.commandCatalog(),
+      window.ph.credentials.status(),
     ]);
     state.data = data;
     state.aiDeployment = deployment;
     state.ibCommandCatalog = ibCommandCatalog;
+    state.credentialStatus = credentialStatus;
     $('#appVersion').textContent = `Version ${appVersion}`;
     const platform = state.data.meta?.platform || 'win32';
     document.body.classList.add(`platform-${platform}`);
@@ -2081,6 +2264,10 @@ async function init() {
     toast(`启动失败：${error.message}`, 'error');
   }
   window.ph.sites.onState(handleSiteState);
+  window.ph.credentials.onChanged((credentialStatus) => {
+    state.credentialStatus = credentialStatus;
+    if (state.route === 'settings') renderCredentialSettings();
+  });
   window.ph.shortcuts.onAction((action) => {
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
@@ -2130,6 +2317,10 @@ async function init() {
     refreshSiteMeta();
     if (state.activeSite && !SITE_META[state.activeSite]) navigate('today');
     else renderAll();
+  });
+  window.ph.school.onPlanImported((schedule) => {
+    state.data.schedule = schedule;
+    renderSchedule(); renderDashboard();
   });
   setInterval(updateClock, 60_000);
   setInterval(updateTimerUi, 500);

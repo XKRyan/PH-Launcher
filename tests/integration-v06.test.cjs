@@ -1,0 +1,45 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+
+const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8');
+const main = read('electron', 'main.cjs');
+const preload = read('electron', 'preload.cjs');
+const renderer = read('src', 'app.js');
+
+test('school plan imports update only the schedule, preserving pending renderer edits', () => {
+  const importPlan = main.slice(main.indexOf('function importSchoolPlan()'), main.indexOf('function enrichVocabularyEntries('));
+  assert.match(importPlan, /sendToRenderer\('school:plan-imported', next\)/);
+  assert.doesNotMatch(importPlan, /publishDataChange\(\)/);
+  assert.match(preload, /onPlanImported:\s*\(callback\)\s*=>\s*on\('school:plan-imported', callback\)/);
+  assert.match(renderer, /window\.ph\.school\.onPlanImported\(\(schedule\)\s*=>\s*\{\s*state\.data\.schedule\s*=\s*schedule;/);
+
+  // This mirrors the save reconciliation: a remote response may update only
+  // fields unchanged since submission, so typing while an IPC save is pending
+  // cannot be overwritten by the older response.
+  const submitted = { notes: [{ body: 'before import' }], schedule: [] };
+  const current = { notes: [{ body: 'still typing' }], schedule: [] };
+  const saved = { notes: [{ body: 'before import' }], schedule: [{ id: 'dated-lesson' }] };
+  for (const key of Object.keys(saved)) {
+    if (JSON.stringify(current[key]) === JSON.stringify(submitted[key])) current[key] = saved[key];
+  }
+  assert.equal(current.notes[0].body, 'still typing');
+  assert.deepEqual(current.schedule, [{ id: 'dated-lesson' }]);
+});
+
+test('opening any built-in school portal invalidates cached school snapshots', () => {
+  const invalidator = main.slice(main.indexOf('function invalidateSchoolSnapshots()'), main.indexOf('async function syncSchool('));
+  const showSite = main.slice(main.indexOf('async function showSite('), main.indexOf('function hideSites()'));
+  assert.match(invalidator, /schoolEpoch \+= 1/);
+  assert.match(invalidator, /schoolCache\.managebac = null/);
+  assert.match(invalidator, /schoolCache\.edupage = null/);
+  assert.match(showSite, /if \(SITE_IDS\.includes\(siteId\)\) invalidateSchoolSnapshots\(\)/);
+});
+
+test('reminder dedupe resets only when the local date changes', () => {
+  const reminder = main.slice(main.indexOf('function scheduleReminderTick()'), main.indexOf('function runCommand('));
+  assert.match(reminder, /if \(reminderDate !== dateKey\) \{ reminderKeys\.clear\(\); reminderDate = dateKey; \}/);
+  assert.doesNotMatch(reminder, /reminderKeys\.size/);
+  assert.match(main, /let reminderDate = ''/);
+});

@@ -7,6 +7,34 @@ const yaml = require('js-yaml');
 const { preparePreviewAssets, sha256 } = require('../scripts/prepare-mac-preview-assets.cjs');
 
 const projectDirectory = path.resolve(__dirname, '..');
+
+test('collaboration preview enables ad-hoc PR signing without secrets or publish access', () => {
+  const source = fs.readFileSync(path.join(projectDirectory, '.github', 'workflows', 'build-collaboration.yml'), 'utf8');
+  const workflow = yaml.load(source, { schema: yaml.JSON_SCHEMA });
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.ok(workflow.on.pull_request);
+  assert.equal(workflow.on.pull_request_target, undefined);
+  assert.doesNotMatch(source, /secrets\.|contents:\s*write|id-token:\s*write/);
+  const job = workflow.jobs.package;
+  assert.equal(job.env.CSC_IDENTITY_AUTO_DISCOVERY, 'false');
+  assert.equal(job.env.CSC_FOR_PULL_REQUEST, undefined);
+  const build = job.steps.find((step) => step.name === 'Unsigned universal macOS preview');
+  assert.equal(build.if, "runner.os == 'macOS'");
+  assert.deepEqual(build.env, { CSC_FOR_PULL_REQUEST: 'true' });
+  assert.equal(build.run, 'npm run dist:mac:preview');
+  const preview = require('../build/mac-preview-builder.cjs');
+  assert.equal(preview.mac.identity, '-');
+  assert.equal(preview.mac.notarize, false);
+  const verify = job.steps.find((step) => step.name === 'macOS architecture and preview notes');
+  assert.match(verify.run, /zsh scripts\/verify-mac-preview\.sh/);
+  assert.equal(verify['timeout-minutes'], 5);
+  const launch = job.steps.find((step) => step.name === 'Packaged macOS launch check');
+  assert.match(launch.run, /PH Launcher" --self-test/);
+  assert.equal(launch['timeout-minutes'], 3);
+  assert.equal(workflow.concurrency['cancel-in-progress'], true);
+  assert.ok(job.steps.find((step) => step.uses?.startsWith('actions/checkout@')).with['persist-credentials'] === false);
+});
+
 const expectedPreviewMarker = [
   'PH_LAUNCHER_MAC_PREVIEW_RETRY',
   'tag=mac-preview-v0.5.1-1',

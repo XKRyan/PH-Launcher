@@ -14,6 +14,8 @@ DMG 与 ZIP 内是同一个 Universal 应用，可在 Apple 芯片和 Intel Mac 
 
 本测试包只有用于启动兼容性的 **ad-hoc 临时签名**，没有 Developer ID 开发者身份签名，也没有经过 Apple 公证。macOS 无法确认开发者身份，也无法像正式公证版一样确认文件发布后是否被改动。运行未经 Developer ID 签名和公证的软件可能损害电脑或泄露隐私。
 
+升级这种测试包后，macOS 可能再次询问是否允许 PH Launcher 访问自己的钥匙串加密项。先核实应用来源，再决定是否授权；不要删除钥匙串项目或关闭系统安全功能，否则可能无法读取已有的加密数据。[加密存储与签名说明](https://www.electronjs.org/docs/latest/api/safe-storage)
+
 只应从 `https://github.com/XKRyan/PH-Launcher` 的预发布页面下载，并核对同一页面中的 SHA-256 清单。SHA-256 只能发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。对来源或校验结果有疑问时，请不要打开。
 
 ## 第一次打开

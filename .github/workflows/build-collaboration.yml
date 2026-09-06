@@ -1,0 +1,69 @@
+name: Build collaboration preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["electron/**", "src/**", "tests/**", "package*.json", "build/**", ".github/workflows/build-collaboration.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collaboration-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run dictionary:prepare
+      - run: npm test
+      - run: npm run self-test
+        timeout-minutes: 3
+      - name: Windows preview
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win portable nsis --x64 --publish never
+      - name: Unsigned universal macOS preview
+        if: runner.os == 'macOS'
+        # Ad-hoc identity only; no signing credentials or publishing token are supplied.
+        # electron-builder otherwise skips even ad-hoc signing on pull requests.
+        env:
+          CSC_FOR_PULL_REQUEST: "true"
+        run: npm run dist:mac:preview
+      - name: macOS architecture and preview notes
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: |
+          zsh scripts/verify-mac-preview.sh
+          node scripts/prepare-mac-preview-assets.cjs
+      - name: Packaged macOS launch check
+        if: runner.os == 'macOS'
+        timeout-minutes: 3
+        run: '"release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PH-Launcher-collaboration-${{ runner.os }}
+          retention-days: 14
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*UNSIGNED*.md
+            release/SHA256SUMS.txt
+          if-no-files-found: error

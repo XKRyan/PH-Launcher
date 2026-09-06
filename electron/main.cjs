@@ -55,6 +55,14 @@ const {
   DATA_VERSION,
   normalizeCleanDisplaySettings,
 } = require('./site-settings.cjs');
+const { decideAutoRecovery } = require('./site-recovery.cjs');
+const { CredentialVault } = require('./credential-vault.cjs');
+const { credentialAutofillScript, isCredentialUrlAllowed, CREDENTIAL_ISOLATED_WORLD_ID } = require('./credential-autofill.cjs');
+const vocabulary = require('./vocabulary.cjs');
+const vocabularyReading = require('./vocabulary-reading.cjs');
+const { starterPacks, starterCards } = require('./vocabulary-starters.cjs');
+const { SchoolDataClient, readUrl: schoolReadUrl } = require('./school-data.cjs');
+const calendar = require('./calendar.cjs');
 
 const APP_ID = 'cn.phlauncher.desktop';
 const SIDEBAR_WIDTH = 248;
@@ -62,6 +70,8 @@ const TOPBAR_HEIGHT = 72;
 const AI_CONTROL_CONSENT_VERSION = 1;
 const DATA_KEYS = ['notes', 'tasks', 'schedule', 'focusSessions', 'ib', 'settings'];
 const SITE_IDS = ['mail', 'managebac', 'edupage'];
+const SITE_RECOVERY_DELAY_MS = 350;
+const SELF_TEST_TIMEOUT_MS = 90_000;
 const IS_SMOKE_TEST = process.argv.includes('--smoke-test');
 const IS_CAPTURE = process.argv.includes('--capture-ui');
 const IS_SELF_TEST = process.argv.includes('--self-test');
@@ -72,8 +82,18 @@ const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-var
 let headlessUserData = '';
 if (IS_HEADLESS) {
   headlessUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-headless-'));
+  // userData isolation does not isolate macOS Keychain: its service name is
+  // based on app.name. Source and ad-hoc packaged tests must not access each
+  // other's keys (or a student's real keys). Keep actual OS encryption enabled.
+  if (process.platform === 'darwin') app.setName(`PH Launcher Test ${path.basename(headlessUserData)}`);
   app.setPath('userData', headlessUserData);
 }
+
+// School portals do not need GPU-only features. Software rendering avoids a
+// Chromium renderer crash path seen with some virtual-display drivers while
+// retaining normal browser rendering and persistent sign-in storage.
+const USE_SOFTWARE_RENDERING = process.platform === 'win32' && !process.argv.includes('--ph-use-gpu');
+if (USE_SOFTWARE_RENDERING) app.disableHardwareAcceleration();
 
 const SITES = {
   mail: {
@@ -120,6 +140,8 @@ function createDefaultData() {
     tasks: [],
     schedule: [],
     focusSessions: [],
+    vocabulary: vocabulary.emptyVocabulary(),
+    calendarEvents: [],
     ib: {
       milestones: [],
       commandSearches: [],
@@ -160,6 +182,8 @@ function mergeDefaults(source) {
     ...defaults,
     ...incoming,
     version: DATA_VERSION,
+    vocabulary: vocabulary.normalizeVocabulary(incoming.vocabulary),
+    calendarEvents: calendar.normalizeCalendarEvents(incoming.calendarEvents),
     settings: {
       ...defaults.settings,
       ...settings,
@@ -280,6 +304,10 @@ class SecureStore {
 
   forRenderer() {
     const copy = structuredClone(this.data);
+    // Vocabulary has its own transactional bridge; generic note saves must not
+    // replace newer review progress with a stale renderer snapshot.
+    delete copy.vocabulary;
+    delete copy.calendarEvents;
     const hasApiKey = Boolean(copy.settings.ai.apiKey);
     copy.settings.ai.apiKey = '';
     copy.settings.ai.apiKeySaved = hasApiKey;
@@ -296,16 +324,55 @@ class SecureStore {
 let mainWindow = null;
 let tray = null;
 let secureStore = null;
+let credentialVault = null;
+let schoolClient = null;
+let schoolEpoch = 0;
+const schoolCache = { managebac: null, edupage: null };
+const schoolPending = new Map();
 let offlineDictionary = null;
 let localAiDeployment = null;
 let pendingAiActions = null;
 let activeSiteId = null;
 let isQuitting = false;
+let selfTestSettled = false;
+let selfTestTimeout = null;
 const siteViews = new Map();
+const siteLastUrls = new Map();
+const siteRecovery = new Map();
 const reminderKeys = new Set();
+let reminderDate = '';
 const siteStoragePersistence = new SiteStoragePersistence({
   onError: (error) => console.error('Site storage flush failed:', error.message),
 });
+
+function selfTestStage(stage) {
+  if (IS_SELF_TEST) console.log(`SELF_TEST_STAGE ${stage}`);
+}
+
+function failSelfTest(error) {
+  if (!IS_SELF_TEST || selfTestSettled) return;
+  selfTestSettled = true;
+  if (selfTestTimeout) clearTimeout(selfTestTimeout);
+  const message = String(error?.message || error || 'unknown failure').replace(/[\r\n]+/g, ' ').slice(0, 500);
+  console.error(`SELF_TEST_ERROR ${message}`);
+  process.exitCode = 1;
+  isQuitting = true;
+  app.exit(1);
+}
+
+function completeSelfTest() {
+  if (selfTestSettled) return;
+  selfTestSettled = true;
+  if (selfTestTimeout) clearTimeout(selfTestTimeout);
+  process.exitCode = 0;
+  isQuitting = true;
+  app.exit(0);
+}
+
+function armSelfTestTimeout() {
+  if (!IS_SELF_TEST || selfTestTimeout) return;
+  selfTestTimeout = setTimeout(() => failSelfTest(new Error(`timeout after ${SELF_TEST_TIMEOUT_MS}ms`)), SELF_TEST_TIMEOUT_MS);
+}
 
 function safeHttpUrl(rawUrl, allowLocalHttp = false) {
   try {
@@ -332,13 +399,71 @@ function getSiteDefinition(siteId) {
   return record ? runtimeCustomSite(record) : null;
 }
 
+function isTrustedRuntimeUrl(site, rawUrl) {
+  return Boolean(site && isTrustedPopupUrl(site, rawUrl));
+}
+
+function rememberSiteUrl(siteId, site, rawUrl) {
+  if (isTrustedRuntimeUrl(site, rawUrl)) siteLastUrls.set(siteId, rawUrl);
+}
+
+function siteStartUrl(siteId, site, forceHome = false) {
+  const remembered = forceHome ? '' : siteLastUrls.get(siteId);
+  return isTrustedRuntimeUrl(site, remembered) ? remembered : site.url;
+}
+
+function isSiteViewUsable(entry) {
+  const contents = entry?.view?.webContents;
+  if (!contents || entry.disposed || entry.rendererGone || contents.isDestroyed()) return false;
+  try {
+    return typeof contents.isCrashed !== 'function' || !contents.isCrashed();
+  } catch {
+    return false;
+  }
+}
+
+function cancelSiteRecovery(siteId, { preserveAttempts = false } = {}) {
+  const recovery = siteRecovery.get(siteId);
+  if (!recovery) return;
+  if (recovery.timer) clearTimeout(recovery.timer);
+  recovery.timer = null;
+  if (!preserveAttempts) siteRecovery.delete(siteId);
+}
+
+function scheduleSiteRecovery(siteId, failedEntry) {
+  if (!failedEntry || failedEntry.disposed || activeSiteId !== siteId) return false;
+  let recovery = siteRecovery.get(siteId);
+  if (!recovery) {
+    recovery = { attempts: [], timer: null };
+    siteRecovery.set(siteId, recovery);
+  }
+  if (recovery.timer) return true;
+  const decision = decideAutoRecovery(recovery.attempts);
+  recovery.attempts = decision.attempts;
+  if (!decision.retry) return false;
+  recovery.timer = setTimeout(() => {
+    recovery.timer = null;
+    const current = siteViews.get(siteId);
+    if (current !== failedEntry || current?.disposed || !current?.rendererGone || activeSiteId !== siteId) return;
+    // Electron completes renderer teardown asynchronously. Recreate only after
+    // the current event turn so a crash cannot cascade into the browser process.
+    disposeSiteView(siteId, { preserveRecovery: true });
+    showSite(siteId).catch((error) => console.error(`Site recovery failed for ${siteId}:`, error.message));
+  }, SITE_RECOVERY_DELAY_MS);
+  return true;
+}
+
 function customSiteAction(siteId) {
   return `site:${siteId}`;
 }
 
-function disposeSiteView(siteId) {
+function disposeSiteView(siteId, { preserveRecovery = false } = {}) {
   const entry = siteViews.get(siteId);
+  if (preserveRecovery) cancelSiteRecovery(siteId, { preserveAttempts: true });
+  else cancelSiteRecovery(siteId);
   if (!entry) return;
+  entry.disposed = true;
+  try { rememberSiteUrl(siteId, getSiteDefinition(siteId), entry.view.webContents.getURL()); } catch {}
   for (const child of entry.children || []) {
     try { if (!child.isDestroyed()) child.destroy(); } catch {}
   }
@@ -353,6 +478,7 @@ function disposeSiteView(siteId) {
 
 async function clearSiteStorage(site) {
   if (!site?.partition) return;
+  siteLastUrls.delete(site.id);
   const siteSession = session.fromPartition(site.partition);
   await siteSession.closeAllConnections();
   await siteSession.clearStorageData();
@@ -376,7 +502,9 @@ function sendToRenderer(channel, payload) {
 }
 
 function assertMainRenderer(event) {
-  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
+      event.senderFrame !== mainWindow.webContents.mainFrame ||
+      !event.senderFrame.url.startsWith('file:')) {
     throw new Error('不允许的启动器请求');
   }
 }
@@ -385,6 +513,137 @@ function publishDataChange() {
   const data = secureStore.forRenderer();
   sendToRenderer('data:changed', data);
   return data;
+}
+
+function credentialStatus() {
+  return credentialVault?.status() || {
+    supported: false,
+    reason: '安全存储尚未准备好',
+    issue: '',
+    sites: {},
+  };
+}
+
+function publishCredentialChange() {
+  const status = credentialStatus();
+  sendToRenderer('credentials:changed', status);
+  return status;
+}
+
+function vocabularySnapshot(subject = '') {
+  return { ...vocabulary.snapshot(secureStore.data.vocabulary, new Date(), String(subject || '').slice(0, 60)), packs: starterPacks() };
+}
+
+function changeVocabulary(change) {
+  const previous = secureStore.data.vocabulary;
+  const next = structuredClone(previous);
+  const result = change(next);
+  secureStore.data.vocabulary = next;
+  try { secureStore.save(); }
+  catch (error) { secureStore.data.vocabulary = previous; throw error; }
+  return { result, snapshot: vocabularySnapshot() };
+}
+
+function schoolSnapshot() {
+  return { ...schoolCache, preferences: secureStore.data.settings.schoolPreferences || {} };
+}
+
+function invalidateSchoolSnapshots() {
+  schoolEpoch += 1;
+  schoolCache.managebac = null;
+  schoolCache.edupage = null;
+}
+
+async function syncSchool(source, options = {}) {
+  if (!['managebac', 'edupage'].includes(source)) throw new Error('未知学校数据源');
+  if (schoolPending.has(source)) throw new Error('正在同步，请稍候');
+  const epoch = schoolEpoch;
+  const pending = source === 'managebac' ? schoolClient.syncManageBac() : schoolClient.syncEduPage({ weekStart: options.weekStart });
+  schoolPending.set(source, pending);
+  try {
+    const result = await pending;
+    if (epoch !== schoolEpoch) throw new Error('登录状态已改变，请重新同步');
+    schoolCache[source] = result;
+    return schoolSnapshot();
+  } catch (error) {
+    // Never continue displaying another account's data after a failed refresh.
+    schoolCache[source] = null;
+    throw error;
+  } finally { if (schoolPending.get(source) === pending) schoolPending.delete(source); }
+}
+
+function updateSchoolPreferences(input) {
+  const old = secureStore.data.settings.schoolPreferences || {};
+  const next = { ...old };
+  if (Array.isArray(input.groups)) {
+    const current = schoolCache.edupage;
+    if (!current) throw new Error('请先同步 EduPage 课表');
+    const allowed = new Set(current.options.map((o) => o.key));
+    next.accountKey = current.accountKey;
+    next.groups = [...new Set(input.groups)].filter((id) => allowed.has(id)).slice(0, 200);
+  }
+  if (Array.isArray(input.highlights)) next.highlights = input.highlights.filter((x) => typeof x === 'string' && /^[a-f0-9]{20}$/.test(x)).slice(0, 200);
+  if (Array.isArray(input.hiddenTasks)) next.hiddenTasks = input.hiddenTasks.filter((x) => typeof x === 'string' && x.length < 100).slice(0, 1000);
+  secureStore.data.settings.schoolPreferences = next;
+  try { secureStore.save(); } catch (error) { secureStore.data.settings.schoolPreferences = old; throw error; }
+  return schoolSnapshot();
+}
+
+function importSchoolPlan() {
+  const current = schoolCache.edupage;
+  const preferences = secureStore.data.settings.schoolPreferences || {};
+  if (!current || preferences.accountKey !== current.accountKey || !preferences.groups?.length) throw new Error('请先同步课表并选择自己的教学组');
+  const lessons = current.lessons.filter((lesson) => !lesson.cancelled && preferences.groups.includes(lesson.groupKey));
+  if (!lessons.length) throw new Error('没有可导入的课程');
+  const previous = secureStore.data.schedule;
+  const ids = new Set(lessons.map((l) => l.id));
+  // Exact-date entries never silently become recurring lessons. Preserve manual
+  // entries and other weeks; resync is an explicit update of this account/week.
+  const dates = new Set(current.lessons.map((l) => l.date));
+  const next = previous.filter((l) => !ids.has(l.id) && !(l.schoolAccount === current.accountKey && dates.has(l.date)));
+  const at = new Date().toISOString();
+  for (const lesson of lessons) next.push({ id: lesson.id, date: lesson.date, dayOfWeek: new Date(`${lesson.date}T12:00:00`).getDay(),
+    course: lesson.course, start: lesson.start, end: lesson.end, room: lesson.room, teacher: lesson.teacher,
+    enabled: true, remindMinutes: secureStore.data.settings.defaultReminderMinutes, schoolAccount: current.accountKey,
+    source: 'edupage-dated', createdAt: at, updatedAt: at });
+  secureStore.data.schedule = next;
+  try { secureStore.save(); } catch (error) { secureStore.data.schedule = previous; throw error; }
+  sendToRenderer('school:plan-imported', next);
+  return { added: lessons.length };
+}
+
+function enrichVocabularyEntries(entries) {
+  return entries.map((input) => {
+    const word = String(input?.word || '').trim().slice(0, 100);
+    let entry;
+    try { entry = offlineDictionary.lookup(word).exact; } catch {}
+    if (!entry || vocabulary.wordKey(entry.word) !== vocabulary.wordKey(word)) entry = null;
+    return { ...input, word, meaning: input.meaning || entry?.translation || entry?.definition || '',
+      phonetic: input.phonetic || entry?.phonetic || '', definition: input.definition || entry?.definition || '' };
+  });
+}
+
+async function fillSavedCredential(siteId, { manual = false } = {}) {
+  const site = SITES[siteId];
+  const entry = siteViews.get(siteId);
+  if (!site || !entry || !isSiteViewUsable(entry)) return { ok: false, reason: 'site-not-ready' };
+  const contents = entry.view.webContents;
+  const currentUrl = contents.getURL();
+  if (!isCredentialUrlAllowed(siteId, currentUrl)) return { ok: false, reason: 'untrusted-page' };
+  if (!manual && entry.credentialFillUrl === currentUrl) return { ok: true, filled: false, reason: 'already-filled' };
+  const credential = credentialVault?.getForFill(siteId, { allowDisabled: manual });
+  if (!credential) return { ok: false, reason: manual ? 'no-saved-credential' : 'autofill-disabled' };
+  try {
+    const result = await contents.executeJavaScriptInIsolatedWorld(CREDENTIAL_ISOLATED_WORLD_ID,
+      [{ code: credentialAutofillScript(siteId, credential, { expectedUrl: currentUrl }) }]);
+    if (result?.filled) entry.credentialFillUrl = currentUrl;
+    return { ok: true, filled: Boolean(result?.filled), reason: result?.reason || '' };
+  } catch (error) {
+    // Do not include the evaluated script or page text in diagnostics: both may
+    // contain credential values after a page-side validation error.
+    console.error(`Credential autofill failed for ${siteId}:`, error?.name || 'unknown');
+    return { ok: false, reason: 'fill-failed' };
+  }
 }
 
 function viewBounds() {
@@ -401,7 +660,7 @@ function viewBounds() {
 function updateSiteState(siteId, extra = {}) {
   const entry = siteViews.get(siteId);
   const site = getSiteDefinition(siteId);
-  if (!entry || !site || entry.view.webContents.isDestroyed()) return;
+  if (!entry || entry.disposed || !site || entry.view.webContents.isDestroyed()) return;
   const contents = entry.view.webContents;
   const history = contents.navigationHistory;
   sendToRenderer('site:state', {
@@ -420,7 +679,7 @@ function updateSiteState(siteId, extra = {}) {
 
 async function applySiteStyle(siteId) {
   const entry = siteViews.get(siteId);
-  if (!entry || entry.view.webContents.isDestroyed()) return;
+  if (!entry || entry.disposed || entry.view.webContents.isDestroyed()) return;
   const contents = entry.view.webContents;
   const revision = ++entry.styleRevision;
   const previousKey = entry.cssKey;
@@ -430,7 +689,7 @@ async function applySiteStyle(siteId) {
       await contents.removeInsertedCSS(previousKey);
     } catch {}
   }
-  if (revision !== entry.styleRevision || contents.isDestroyed()) return;
+  if (revision !== entry.styleRevision || entry.disposed || contents.isDestroyed()) return;
   if (!secureStore.data.settings.siteCleanMode[siteId]) {
     entry.cleanApplied = false;
     entry.cleanAvailable = true;
@@ -446,14 +705,14 @@ async function applySiteStyle(siteId) {
   }
   try {
     const key = await contents.insertCSS(css, { cssOrigin: 'user' });
-    if (revision !== entry.styleRevision || contents.isDestroyed()) {
+    if (revision !== entry.styleRevision || entry.disposed || contents.isDestroyed()) {
       try { await contents.removeInsertedCSS(key); } catch {}
       return;
     }
     const markerApplied = await contents.executeJavaScript(
       "getComputedStyle(document.documentElement).getPropertyValue('--ph-clean-mode').trim() === '1'",
     );
-    if (revision !== entry.styleRevision || contents.isDestroyed()) {
+    if (revision !== entry.styleRevision || entry.disposed || contents.isDestroyed()) {
       try { await contents.removeInsertedCSS(key); } catch {}
       return;
     }
@@ -478,7 +737,7 @@ async function applySiteStyle(siteId) {
 
 async function applyPopupStyle(child, siteId) {
   const entry = siteViews.get(siteId);
-  if (!entry || !child || child.isDestroyed()) return;
+  if (!entry || entry.disposed || !child || child.isDestroyed()) return;
   const previousKey = entry.popupCssKeys.get(child.id);
   entry.popupCssKeys.delete(child.id);
   if (previousKey) {
@@ -622,7 +881,6 @@ function createSiteView(siteId) {
       allowRunningInsecureContent: false,
       devTools: false,
       spellcheck: true,
-      backgroundThrottling: false,
       partition: site.partition,
     },
   });
@@ -633,10 +891,13 @@ function createSiteView(siteId) {
     view,
     cssKey: null,
     hasLoaded: false,
+    disposed: false,
+    rendererGone: false,
     cleanApplied: false,
     cleanAvailable: true,
     styleRevision: 0,
     styleUrl: '',
+    credentialFillUrl: '',
     children: new Set(),
     popupCssKeys: new Map(),
   };
@@ -659,59 +920,112 @@ function createSiteView(siteId) {
     return { action: 'deny' };
   });
   contents.on('did-create-window', (child) => attachSitePopup(child, siteId, site, entry));
-  contents.on('did-start-loading', () => updateSiteState(siteId));
+  contents.on('did-start-loading', () => {
+    entry.credentialFillUrl = '';
+    updateSiteState(siteId);
+  });
   contents.on('did-stop-loading', () => updateSiteState(siteId));
   contents.on('page-title-updated', () => updateSiteState(siteId));
-  contents.on('did-navigate', () => updateSiteState(siteId));
-  contents.on('dom-ready', () => applySiteStyle(siteId));
+  contents.on('did-navigate', () => {
+    if (entry.disposed) return;
+    rememberSiteUrl(siteId, site, contents.getURL());
+    updateSiteState(siteId);
+  });
+  contents.on('dom-ready', () => {
+    applySiteStyle(siteId);
+    fillSavedCredential(siteId).catch(() => {});
+  });
   contents.on('did-navigate-in-page', async () => {
     await applySiteStyle(siteId);
     updateSiteState(siteId);
   });
   contents.on('did-finish-load', async () => {
+    if (entry.disposed) return;
     entry.hasLoaded = true;
+    entry.rendererGone = false;
+    rememberSiteUrl(siteId, site, contents.getURL());
     await applySiteStyle(siteId);
+    await fillSavedCredential(siteId);
     siteStoragePersistence.schedule(contents.session);
     updateSiteState(siteId);
   });
   contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
-    if (isMainFrame && code !== -3) updateSiteState(siteId, { error: `${description} (${code})`, url: validatedUrl });
+    if (isMainFrame && code !== -3 && !entry.disposed && !entry.rendererGone) {
+      console.error(`Site load event failed for ${siteId}:`, JSON.stringify({ code, description }));
+      const error = code === -2
+        ? '网页暂时无法加载，请点击刷新重试'
+        : `网页加载失败（${code}），请点击刷新重试`;
+      updateSiteState(siteId, { error, url: validatedUrl });
+    }
   });
   contents.on('render-process-gone', (_event, details) => {
-    updateSiteState(siteId, { error: `网页进程已停止：${details.reason}` });
+    if (entry.disposed) return;
+    entry.rendererGone = true;
+    entry.hasLoaded = false;
+    const retrying = scheduleSiteRecovery(siteId, entry);
+    const reason = String(details?.reason || 'unknown');
+    console.error(`Site renderer stopped for ${siteId}:`, JSON.stringify({ reason, exitCode: details?.exitCode ?? null }));
+    updateSiteState(siteId, {
+      error: retrying
+        ? `网页进程意外停止（${reason}），正在重新打开…`
+        : `网页进程已停止（${reason}），请点击刷新重试`,
+    });
   });
   return entry;
 }
 
-async function showSite(siteId) {
+async function loadSite(entry, site, { forceHome = false } = {}) {
+  const contents = entry?.view?.webContents;
+  if (!entry || !contents || contents.isDestroyed()) return false;
+  entry.rendererGone = false;
+  entry.hasLoaded = false;
+  try {
+    await contents.loadURL(siteStartUrl(site.id, site, forceHome));
+    return true;
+  } catch (error) {
+    if (!entry.disposed && !contents.isDestroyed()) {
+      console.error(`Site load failed for ${site.id}:`, error.code || error.name || 'unknown');
+      updateSiteState(site.id, { error: '网页暂时无法加载，请点击刷新重试' });
+    }
+    return false;
+  }
+}
+
+async function showSite(siteId, { forceReload = false, forceHome = false } = {}) {
   const site = getSiteDefinition(siteId);
   if (!site || !mainWindow) return false;
+  // A student can switch accounts inside the portal without using our settings.
+  // Never retain the previous dashboard across a return to that login space.
+  if (SITE_IDS.includes(siteId)) invalidateSchoolSnapshots();
   for (const [id, entry] of [...siteViews]) {
-    entry.view.setVisible(id === siteId);
-    const hiddenSite = getSiteDefinition(id);
-    if (id !== siteId && hiddenSite?.custom) {
-      siteStoragePersistence.schedule(entry.view.webContents.session);
-      disposeSiteView(id);
-    }
+    if (id === siteId) continue;
+    entry.view.setVisible(false);
+    siteStoragePersistence.schedule(entry.view.webContents.session);
+    // Keeping all three full school portals alive in the background leaves
+    // unnecessary Chromium renderers running. Their partitions preserve login.
+    disposeSiteView(id);
   }
-  const entry = createSiteView(siteId);
+  let entry = siteViews.get(siteId);
+  if (entry && !isSiteViewUsable(entry)) disposeSiteView(siteId, { preserveRecovery: true });
+  entry = createSiteView(siteId);
   if (!entry) return false;
   entry.view.setBounds(viewBounds());
   entry.view.setVisible(true);
   activeSiteId = siteId;
-  if (!entry.hasLoaded && !entry.view.webContents.isLoading()) {
-    await entry.view.webContents.loadURL(site.url);
+  if ((forceReload || !entry.hasLoaded) && !entry.view.webContents.isLoading()) {
+    await loadSite(entry, site, { forceHome });
   }
   updateSiteState(siteId);
   return true;
 }
 
 function hideSites() {
+  if (SITE_IDS.includes(activeSiteId)) invalidateSchoolSnapshots();
   activeSiteId = null;
   for (const [id, entry] of [...siteViews]) {
     entry.view.setVisible(false);
     siteStoragePersistence.schedule(entry.view.webContents.session);
-    if (getSiteDefinition(id)?.custom) disposeSiteView(id);
+    disposeSiteView(id);
   }
 }
 
@@ -864,8 +1178,10 @@ function scheduleReminderTick() {
   const now = new Date();
   const day = now.getDay();
   const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+  if (reminderDate !== dateKey) { reminderKeys.clear(); reminderDate = dateKey; }
   for (const lesson of secureStore.data.schedule || []) {
     if (!lesson.enabled || Number(lesson.dayOfWeek) !== day || !/^\d{2}:\d{2}$/.test(lesson.start || '')) continue;
+    if (lesson.date && vocabulary.dateKey(now) !== lesson.date) continue;
     const [hour, minute] = lesson.start.split(':').map(Number);
     const start = new Date(now);
     start.setHours(hour, minute, 0, 0);
@@ -881,7 +1197,6 @@ function scheduleReminderTick() {
       showNotification(`${remindMinutes} 分钟后上课`, `${lesson.course || '课程'}${room} · ${lesson.start}`);
     }
   }
-  if (reminderKeys.size > 200) reminderKeys.clear();
 }
 
 function runCommand(file, args, timeout = 8_000) {
@@ -988,6 +1303,7 @@ function launcherOverview() {
       const date = new Date(now);
       date.setDate(now.getDate() + offset);
       if (date.getDay() !== Number(lesson.dayOfWeek)) continue;
+      if (lesson.date && vocabulary.dateKey(date) !== lesson.date) continue;
       const [hour, minute] = lesson.start.split(':').map(Number);
       date.setHours(hour, minute, 0, 0);
       if (date <= now) continue;
@@ -1275,6 +1591,74 @@ async function createEduPageImportProposal() {
 }
 
 function registerIpc() {
+  const calendarHandle = (name, handler) => ipcMain.handle(`calendar:${name}`, (event, ...args) => { assertMainRenderer(event); return handler(...args); });
+  const saveCalendar = (next) => {
+    const previous = secureStore.data.calendarEvents;
+    secureStore.data.calendarEvents = next;
+    try { secureStore.save(); } catch (error) { secureStore.data.calendarEvents = previous; throw error; }
+    return next;
+  };
+  calendarHandle('get', () => secureStore.data.calendarEvents);
+  calendarHandle('save', (input) => saveCalendar(calendar.upsertCalendarEvent(secureStore.data.calendarEvents, input)));
+  calendarHandle('remove', (id) => saveCalendar(calendar.removeCalendarEvent(secureStore.data.calendarEvents, id)));
+  const schoolHandle = (name, handler) => ipcMain.handle(`school:${name}`, (event, ...args) => {
+    assertMainRenderer(event); return handler(...args);
+  });
+  schoolHandle('get', schoolSnapshot);
+  schoolHandle('sync', syncSchool);
+  schoolHandle('preferences', (input) => updateSchoolPreferences(input || {}));
+  schoolHandle('import-plan', importSchoolPlan);
+  schoolHandle('course', (id) => schoolClient.getCourseDetail(id));
+  schoolHandle('task', (courseId, id) => schoolClient.getTaskDetail(courseId, id));
+  schoolHandle('ib-overview', (kind) => schoolClient.getCoreOverview(kind));
+  schoolHandle('open-url', async (raw) => {
+    const url = new URL(String(raw || ''));
+    const siteId = url.origin === 'https://shph.managebac.cn' ? 'managebac' : url.origin === 'https://pingheschool.edupage.org' ? 'edupage' : '';
+    const validated = schoolReadUrl(siteId, url.href, 'GET');
+    await showSite(siteId);
+    const entry = siteViews.get(siteId);
+    if (!isSiteViewUsable(entry)) throw new Error('网页暂未准备好');
+    await entry.view.webContents.loadURL(validated);
+    return { ok: true };
+  });
+  const vocabHandle = (name, handler) => ipcMain.handle(`vocabulary:${name}`, (event, ...args) => {
+    assertMainRenderer(event);
+    return handler(...args);
+  });
+  vocabHandle('get', vocabularySnapshot);
+  vocabHandle('save-reading', (input) => changeVocabulary((data) => vocabularyReading.saveReading(data, input)));
+  vocabHandle('finish-reading', (input) => changeVocabulary((data) => vocabularyReading.finishReading(data, input)));
+  vocabHandle('remove-reading', (id) => changeVocabulary((data) => {
+    data.readings = data.readings.filter((r) => r.id !== id);
+    data.readingLogs = data.readingLogs.filter((r) => r.readingId !== id);
+    return { ok: true };
+  }));
+  vocabHandle('add', (entries) => {
+    if (!Array.isArray(entries) || entries.length > 1000) throw new Error('一次最多添加 1000 个词条');
+    return changeVocabulary((data) => vocabulary.addCards(data, enrichVocabularyEntries(entries)));
+  });
+  vocabHandle('starter', (subject) => changeVocabulary((data) => vocabulary.addCards(data, enrichVocabularyEntries(starterCards(subject)))));
+  vocabHandle('review', (input) => changeVocabulary((data) => vocabulary.reviewCard(data, input || {})));
+  vocabHandle('undo', () => changeVocabulary(vocabulary.undoReview));
+  vocabHandle('update', (input) => changeVocabulary((data) => vocabulary.updateCard(data, input || {})));
+  vocabHandle('remove', (id) => changeVocabulary((data) => vocabulary.removeCard(data, id)));
+  vocabHandle('configure', (input) => changeVocabulary((data) => vocabulary.configure(data, input || {})));
+  vocabHandle('extract', (text) => vocabulary.paragraphCandidates(text, offlineDictionary, secureStore.data.vocabulary.cards));
+  vocabHandle('import-text', (raw) => changeVocabulary((data) => vocabulary.addCards(data, enrichVocabularyEntries(vocabulary.parseWordList(raw)))));
+  vocabHandle('export', async () => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: '导出词本与学习记录',
+      defaultPath: `PH-vocabulary-${vocabulary.dateKey(new Date())}.json`, filters: [{ name: '词本 JSON', extensions: ['json'] }] });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    fs.writeFileSync(result.filePath, JSON.stringify({ format: 'ph-vocabulary', version: 1, data: secureStore.data.vocabulary }, null, 2), { mode: 0o600 });
+    return { ok: true };
+  });
+  vocabHandle('import', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: '合并词本（保留已有词条与进度）', properties: ['openFile'], filters: [{ name: '词本 JSON', extensions: ['json'] }] });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    if (fs.statSync(result.filePaths[0]).size > 40_000_000) throw new Error('词本超过 40 MB，请分批导入');
+    const parsed = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+    return changeVocabulary((data) => vocabulary.importVocabulary(data, parsed));
+  });
   ipcMain.handle('data:get', () => secureStore.forRenderer());
   ipcMain.handle('data:save', (_event, nextData) => {
     const previousShortcuts = JSON.stringify(secureStore.data.settings.shortcuts || {});
@@ -1286,6 +1670,7 @@ function registerIpc() {
       ...secureStore.data.settings,
       ...incomingSettings,
       customSites: secureStore.data.settings.customSites,
+      schoolPreferences: secureStore.data.settings.schoolPreferences,
     };
     const result = secureStore.update({ ...secureStore.data, ...safeData });
     if (previousShortcuts !== JSON.stringify(secureStore.data.settings.shortcuts || {})) registerShortcuts();
@@ -1318,6 +1703,25 @@ function registerIpc() {
     registerShortcuts();
     sendToRenderer('data:changed', restored);
     return { ok: true, data: restored };
+  });
+  ipcMain.handle('credentials:status', (event) => {
+    assertMainRenderer(event);
+    return credentialStatus();
+  });
+  ipcMain.handle('credentials:save', (event, input) => {
+    assertMainRenderer(event);
+    credentialVault.saveCredential(input || {});
+    return publishCredentialChange();
+  });
+  ipcMain.handle('credentials:remove', (event, siteId) => {
+    assertMainRenderer(event);
+    const result = credentialVault.removeCredential(siteId);
+    return { ok: true, existed: result.existed, status: publishCredentialChange() };
+  });
+  ipcMain.handle('credentials:fill', async (event, siteId) => {
+    assertMainRenderer(event);
+    if (!SITE_IDS.includes(siteId)) throw new Error('此网站不支持保存密码');
+    return fillSavedCredential(siteId, { manual: true });
   });
   ipcMain.handle('ai:configure', (_event, config) => secureStore.updateAi(config || {}));
   ipcMain.handle('ai:chat', (_event, messages) => aiChat(messages));
@@ -1393,10 +1797,22 @@ function registerIpc() {
     return { ok: true, data: publishDataChange() };
   });
 
-  ipcMain.handle('site:open', (_event, siteId) => showSite(siteId));
-  ipcMain.handle('site:hide', () => hideSites());
-  ipcMain.handle('site:action', async (_event, siteId, action) => {
+  ipcMain.handle('site:open', (event, siteId) => {
+    assertMainRenderer(event);
+    return showSite(siteId);
+  });
+  ipcMain.handle('site:hide', (event) => {
+    assertMainRenderer(event);
+    return hideSites();
+  });
+  ipcMain.handle('site:action', async (event, siteId, action) => {
+    assertMainRenderer(event);
     const entry = siteViews.get(siteId);
+    const site = getSiteDefinition(siteId);
+    if (!site) return false;
+    if ((action === 'reload' || action === 'home') && (!entry || !isSiteViewUsable(entry))) {
+      return showSite(siteId, { forceReload: true, forceHome: action === 'home' });
+    }
     if (!entry) return false;
     const contents = entry.view.webContents;
     const history = contents.navigationHistory;
@@ -1404,8 +1820,8 @@ function registerIpc() {
     else if (action === 'forward' && history.canGoForward()) history.goForward();
     else if (action === 'reload') contents.reload();
     else if (action === 'home') {
-      const site = getSiteDefinition(siteId);
-      if (site) await contents.loadURL(site.url);
+      siteLastUrls.delete(siteId);
+      await loadSite(entry, site, { forceHome: true });
     }
     else if (action === 'external') {
       const parsed = safeHttpUrl(contents.getURL(), false);
@@ -1422,14 +1838,33 @@ function registerIpc() {
     if (entry) await Promise.all([...entry.children].map((child) => applyPopupStyle(child.webContents, siteId)));
     return true;
   });
-  ipcMain.handle('site:clear-data', async (_event, siteId) => {
+  ipcMain.handle('site:clear-data', async (event, siteId) => {
+    assertMainRenderer(event);
     const site = getSiteDefinition(siteId);
     if (!site) return false;
     const wasActive = activeSiteId === siteId;
     disposeSiteView(siteId);
     await clearSiteStorage(site);
-    if (wasActive) await showSite(siteId);
-    return true;
+    if (SITE_IDS.includes(siteId)) {
+      schoolEpoch += 1;
+      schoolCache.managebac = null;
+      schoolCache.edupage = null;
+    }
+    let credentialRemoved = false;
+    let credentialError = false;
+    if (SITE_IDS.includes(siteId) && credentialVault) {
+      try {
+        credentialRemoved = credentialVault.removeCredential(siteId).existed;
+        if (credentialRemoved) publishCredentialChange();
+      } catch (error) {
+        // Cookie clearing remains available even if an old OS-encrypted vault
+        // cannot be opened on this account.
+        console.error(`Saved credential could not be cleared for ${siteId}:`, error?.name || 'unknown');
+        credentialError = true;
+      }
+    }
+    if (wasActive && !credentialError) await showSite(siteId);
+    return { ok: !credentialError, credentialRemoved, credentialError };
   });
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
@@ -1447,7 +1882,7 @@ async function runCapture() {
     if (initialized) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (['today', 'plan', 'notes', 'dictionary', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
+  if (['today', 'plan', 'notes', 'dictionary', 'vocabulary', 'school', 'calendar', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
     await mainWindow.webContents.executeJavaScript(`navigate(${JSON.stringify(CAPTURE_ROUTE)})`);
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
@@ -1567,28 +2002,55 @@ async function runCapture() {
 function waitForLoad(contents, timeoutMs = 25_000) {
   return new Promise((resolve) => {
     let settled = false;
+    let timer;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      contents.removeListener('dom-ready', onDomReady);
+      contents.removeListener('did-finish-load', onFinishLoad);
+      contents.removeListener('did-frame-finish-load', onMainFrameFinish);
+      contents.removeListener('did-fail-load', onFailLoad);
       resolve(result);
     };
-    const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs);
-    contents.once('did-finish-load', () =>
-      finish({ ok: true, url: contents.getURL(), title: contents.getTitle() }),
-    );
-    contents.once('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    const onDomReady = () => finish({ ok: true, url: contents.getURL(), title: contents.getTitle() });
+    const onFinishLoad = () => finish({ ok: true, url: contents.getURL(), title: contents.getTitle() });
+    const onMainFrameFinish = (_event, isMainFrame) => {
+      if (isMainFrame) finish({ ok: true, url: contents.getURL(), title: contents.getTitle() });
+    };
+    const onFailLoad = (_event, code, description, url, isMainFrame) => {
       if (isMainFrame && code !== -3) finish({ ok: false, code, error: description, url });
-    });
+    };
+    timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs);
+    contents.once('dom-ready', onDomReady);
+    contents.once('did-finish-load', onFinishLoad);
+    contents.on('did-frame-finish-load', onMainFrameFinish);
+    contents.once('did-fail-load', onFailLoad);
   });
 }
 
 async function runSmokeTest() {
+  if (!await waitForMainRendererInitialization()) {
+    console.log('SMOKE_RESULT {"rendererLoaded":false,"sites":[]}');
+    process.exitCode = 1;
+    isQuitting = true;
+    app.quit();
+    return;
+  }
+  mainWindow.show();
+  mainWindow.focus();
   const results = [];
   for (const siteId of SITE_IDS) {
+    for (const [existingId, existing] of [...siteViews]) {
+      if (existingId === siteId) continue;
+      existing.view.setVisible(false);
+      disposeSiteView(existingId);
+    }
     const entry = createSiteView(siteId);
+    entry.view.setBounds(viewBounds());
+    entry.view.setVisible(true);
     const pending = waitForLoad(entry.view.webContents);
-    await entry.view.webContents.loadURL(SITES[siteId].url);
+    try { await entry.view.webContents.loadURL(SITES[siteId].url); } catch {}
     const result = await pending;
     results.push({ siteId, ...result });
   }
@@ -1597,6 +2059,18 @@ async function runSmokeTest() {
   process.exitCode = results.every((item) => item.ok) ? 0 : 1;
   isQuitting = true;
   app.quit();
+}
+
+async function waitForMainRendererInitialization(maxAttempts = 40) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    try {
+      const initialized = await mainWindow.webContents.executeJavaScript("document.body.dataset.initialized === 'true'");
+      if (initialized) return true;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
 }
 
 async function runSiteCapture(siteId) {
@@ -1609,6 +2083,7 @@ async function runSiteCapture(siteId) {
   }
   if (CAPTURE_VARIANT === 'clean') secureStore.data.settings.siteCleanMode[siteId] = true;
   if (CAPTURE_VARIANT === 'original') secureStore.data.settings.siteCleanMode[siteId] = false;
+  if (!await waitForMainRendererInitialization()) throw new Error('Launcher UI did not finish initializing');
   const entry = createSiteView(siteId);
   entry.view.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
   entry.view.setVisible(true);
@@ -1647,11 +2122,8 @@ async function runSiteCapture(siteId) {
 }
 
 async function runSelfTest() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const initialized = await mainWindow.webContents.executeJavaScript("document.body.dataset.initialized === 'true'");
-    if (initialized) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  selfTestStage('tests-start');
+  if (!await waitForMainRendererInitialization()) throw new Error('Launcher UI did not finish initializing');
   const checks = await mainWindow.webContents.executeJavaScript(`(async () => {
     navigate('plan');
     openTaskDialog();
@@ -1674,6 +2146,29 @@ async function runSelfTest() {
     navigate('dictionary');
     await lookupDictionary('analyze');
     const dictionaryRendered = document.querySelector('#dictionaryResult')?.textContent.includes('分析');
+    await window.ph.vocabulary.addStarter('学术表达');
+    const vocabBefore = await window.ph.vocabulary.get();
+    const firstWord = vocabBefore.cards.find((c) => c.id === vocabBefore.queueIds[0]);
+    await window.ph.vocabulary.review({ id: firstWord.id, expectedReps: 0, rating: 3, mode: 'meaning' });
+    await persistData(true);
+    const vocabAfterNoteSave = await window.ph.vocabulary.get();
+    const vocabProgressPreserved = vocabAfterNoteSave.cards.find((c) => c.id === firstWord.id)?.schedule.reps === 1;
+    await window.ph.vocabulary.undo();
+    const reading = await window.ph.vocabulary.saveReading({ title: '自检阅读', text: 'The evidence supports a different explanation.' });
+    await window.ph.vocabulary.finishReading({ id: reading.result.id, unknownWords: ['evidence'], seconds: 30, expectedReadCount: 0 });
+    const readingSaved = (await window.ph.vocabulary.get()).readingStats.todayWords === 6;
+    navigate('vocabulary');
+    await window.vocabularyUI.refresh();
+    const vocabularyRendered = document.querySelector('#vocabularyPage')?.textContent.includes('学术表达');
+    await window.ph.calendar.save({ title: '自检日程', date: '2026-09-06', start: '17:00', end: '18:00' });
+    await persistData(true);
+    const calendarSaved = (await window.ph.calendar.get()).some((e) => e.title === '自检日程');
+    navigate('calendar');
+    await window.calendarUI.refresh();
+    const calendarRendered = document.querySelector('#calendarPage')?.textContent.includes('日程');
+    navigate('school');
+    await window.schoolUI.refresh();
+    const schoolRendered = Boolean(document.querySelector('#schoolPage')?.textContent.includes('EduPage'));
     const customCreated = await window.ph.sites.saveCustom({
       name: '自检网页',
       url: 'https://example.com/',
@@ -1698,6 +2193,12 @@ async function runSelfTest() {
       noteSaved: state.data.notes.some((item) => item.id === note.id && item.body === '本地保存验证'),
       timerConfigured: state.data.settings.timer.focusMinutes === 25,
       dictionaryRendered,
+      vocabProgressPreserved,
+      readingSaved,
+      vocabularyRendered,
+      calendarSaved,
+      calendarRendered,
+      schoolRendered,
       customSiteCreated: Boolean(customSite),
       customSiteRendered,
       customSiteRemoved: !state.data.settings.customSites.some((item) => item.id === customSite.id),
@@ -1710,9 +2211,8 @@ async function runSelfTest() {
   checks.dictionaryLookup = dictionaryResult.exact?.word === 'analyze' && Boolean(dictionaryResult.exact.translation);
   checks.success = Object.values(checks).every(Boolean);
   console.log(`SELF_TEST_RESULT ${JSON.stringify(checks)}`);
-  process.exitCode = checks.success ? 0 : 1;
-  isQuitting = true;
-  app.quit();
+  if (!checks.success) throw new Error('one or more self-test checks failed');
+  completeSelfTest();
 }
 
 function createWindow() {
@@ -1735,7 +2235,6 @@ function createWindow() {
       webSecurity: true,
       devTools: !app.isPackaged,
       spellcheck: true,
-      backgroundThrottling: false,
     },
   };
   if (process.platform !== 'darwin') {
@@ -1747,7 +2246,6 @@ function createWindow() {
   }
   mainWindow = new BrowserWindow(windowOptions);
   if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false);
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
   mainWindow.on('resize', resizeActiveSite);
   mainWindow.on('maximize', resizeActiveSite);
   mainWindow.on('unmaximize', resizeActiveSite);
@@ -1764,7 +2262,14 @@ function createWindow() {
     siteViews.clear();
     mainWindow = null;
   });
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, _validatedUrl, isMainFrame) => {
+    if (IS_SELF_TEST && isMainFrame) failSelfTest(new Error(`main renderer load failed (${code}): ${description || 'unknown'}`));
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (IS_SELF_TEST) failSelfTest(new Error(`main renderer crashed: ${details?.reason || 'unknown'}`));
+  });
   mainWindow.webContents.on('did-finish-load', () => {
+    selfTestStage('ui-loaded');
     sendToRenderer('app:ready', { sites: SITES, shortcuts: DEFAULT_SHORTCUTS });
     if (IS_CAPTURE) {
       runCapture().catch((error) => {
@@ -1775,7 +2280,7 @@ function createWindow() {
       });
     }
     if (IS_SMOKE_TEST) runSmokeTest();
-    if (IS_SELF_TEST) runSelfTest();
+    if (IS_SELF_TEST) runSelfTest().catch(failSelfTest);
     if (CAPTURE_SITE) {
       runSiteCapture(CAPTURE_SITE).catch((error) => {
         console.error(`SITE_CAPTURE_ERROR ${error.message}`);
@@ -1785,12 +2290,15 @@ function createWindow() {
       });
     }
   });
+  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
 }
 
-const gotLock = app.requestSingleInstanceLock();
+// Headless checks use a temporary profile and must not be blocked by a student
+// already running the packaged launcher on the same computer.
+const gotLock = IS_HEADLESS || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
-} else {
+} else if (!IS_HEADLESS) {
   app.on('second-instance', () => {
     mainWindow?.show();
     mainWindow?.focus();
@@ -1799,8 +2307,21 @@ if (!gotLock) {
 
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.whenReady().then(() => {
+  selfTestStage('app-ready');
+  armSelfTestTimeout();
   secureStore = new SecureStore(path.join(app.getPath('userData'), 'ph-launcher.secure'));
   secureStore.load();
+  selfTestStage('store-ready');
+  credentialVault = new CredentialVault({
+    filePath: path.join(app.getPath('userData'), 'ph-launcher.credentials'),
+    safeStorage,
+    platform: process.platform,
+    siteIds: SITE_IDS,
+  });
+  credentialVault.load();
+  schoolClient = new SchoolDataClient({
+    fetch: (siteId, url, init) => session.fromPartition(SITES[siteId].partition, { cache: true }).fetch(url, init),
+  });
   const dictionaryPath = app.isPackaged
     ? path.join(process.resourcesPath, 'dictionary', 'ecdict.db')
     : path.join(__dirname, '..', 'assets', 'dictionary', 'ecdict.db');
