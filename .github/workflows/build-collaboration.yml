@@ -57,6 +57,7 @@ jobs:
         timeout-minutes: 3
         run: '"release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: runner.os == 'Windows'
         with:
           name: PH-Launcher-collaboration-${{ runner.os }}
           retention-days: 14
@@ -67,3 +68,27 @@ jobs:
             release/*UNSIGNED*.md
             release/SHA256SUMS.txt
           if-no-files-found: error
+      - name: macOS DMG download
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PH-Launcher-macOS-DMG
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*UNSIGNED*.md
+            release/SHA256SUMS.txt
+      - name: macOS ZIP download
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: PH-Launcher-macOS-ZIP
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            release/*.zip
+            release/*UNSIGNED*.md
+            release/SHA256SUMS.txt

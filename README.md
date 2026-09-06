@@ -23,7 +23,7 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 ## 下载与状态
 
 - Windows x64 提供安装版与免安装版；请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 中实际存在的最新发布为准，并核对同一发布页的 SHA-256。Windows 目前没有商业代码签名证书，可能显示“未知发布者”。
-- `1.0.0` 的 Windows／Mac 发布状态仍待最终核验。只有 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 实际列出对应附件后才表示该平台可下载；文件名、签名与校验值以发布页为准。
+- `1.0.0` 提供 Windows x64 安装版／文件夹版，以及 Mac Universal 体验包。安装包可由开发者直接分享；源码位于 [1.0 分支](https://github.com/XKRyan/PH-Launcher/tree/codex/v1.0-release-check)，GitHub Releases 的发布进度可能不同。Mac 本体要求 macOS 13+，本地 AI 一键部署要求 macOS 14+；该包只有 ad-hoc 签名、没有 Developer ID 与 Apple 公证，首次打开需要手动确认。请核对随包 SHA-256 清单。
 
 ## 主要功能
 

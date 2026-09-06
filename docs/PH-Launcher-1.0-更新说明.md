@@ -7,7 +7,14 @@
 - 可选 AI 支持本地对话逐步显示、停止和加密保存会话／手动长期记忆。完整权限必须单独确认；可按请求读取启动器学习内容。邮件相关内容生成日程时先给出待确认清单，只有确认后才写入。
 - 课表、日程和专注结束使用独立大提醒窗口，可关闭或延后 5 分钟。个人课表默认显示周一至周五，课程、教室和老师信息有更宽的显示空间。
 
-## 权限与数据
+## 体验改进与问题修复
+
+- 字号默认 16px、可在设置调整；支持中英文界面，六套主题联动顶部与窗口按钮。
+- 统一弹窗留白与关闭按钮位置，改善数字徽标、任务栏和托盘图标显示，补回 AI 设置的明显返回入口。
+- 专注时间、目标和学习页面可设置；暂停、继续与结束操作更明确。改善邮件附件与正文按钮链接显示。
+- 本地 AI 仅在选用本地模式时随程序准备，普通聊天逐步显示回复；词汇学习可选本地 AI 或 API 推荐，不可用时回到离线流程。
+
+## 权限与数据说明
 
 完整权限不等于电脑完全访问：密码、Cookie、客户端授权码和邮件附件不会提供给 AI；代发邮件、代交作业和未经确认的写入未开放。使用 API 时，当前请求获准读取的内容会发送给所选服务商；本地模式在电脑上处理。普通聊天不会自动读取收件箱。
 
@@ -17,6 +24,8 @@
 
 华子谦大概率会提供服务器支持。自动更新和可选云端数据保存仍未上线；当前数据保存在本机，未来云端功能会另行说明并由用户自行选择，不会自动上传。
 
-Windows／Mac 的 1.0.0 发布状态仍待最终核验，请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 实际列出的附件、平台和校验信息为准。项目由 [XKRyan/PH-Launcher](https://github.com/XKRyan/PH-Launcher) 与 [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) 协作整合；合作署名：11年级9班 华子谦——提供了优质的方案和程序。
+本次提供 Windows x64 安装版／文件夹版，以及 Mac Universal 体验包。Mac 兼容 Apple 芯片与 Intel，尚未获得 Developer ID 身份签名和 Apple 公证，首次打开需要手动确认。请核对随包校验清单；代码分支与公开 Releases 的发布进度可能不同。
+
+项目由 [XKRyan/PH-Launcher](https://github.com/XKRyan/PH-Launcher) 与 [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) 协作整合；[1.0 源码](https://github.com/XKRyan/PH-Launcher/tree/codex/v1.0-release-check)。合作署名：11年级9班 华子谦——提供了优质的方案和程序。
 
 PH Launcher 是独立学生工具，不是学校、ManageBac、EduPage、网易、IBO 或 Ollama 的官方产品。学校记录和 AI 内容都应由使用者核对。
