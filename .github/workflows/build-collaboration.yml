@@ -36,11 +36,16 @@ jobs:
         run: npx electron-builder --win portable nsis --x64 --publish never
       - name: Unsigned universal macOS preview
         if: runner.os == 'macOS'
+        # Ad-hoc identity only; no signing credentials or publishing token are supplied.
+        # electron-builder otherwise skips even ad-hoc signing on pull requests.
+        env:
+          CSC_FOR_PULL_REQUEST: "true"
         run: npm run dist:mac:preview
       - name: macOS architecture and preview notes
         if: runner.os == 'macOS'
         run: |
           zsh scripts/verify-mac-preview.sh
+          "release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test
           node scripts/prepare-mac-preview-assets.cjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

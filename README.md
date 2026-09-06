@@ -22,7 +22,7 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 ## 下载与状态
 
 - Windows x64 提供安装版与免安装版；请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 中实际存在的最新发布为准，并核对同一发布页的 SHA-256。Windows 目前没有商业代码签名证书，可能显示“未知发布者”。
-- 标有 `mac-preview` 的 macOS 包是 Universal 未签名测试版，支持 Apple 芯片与 Intel Mac。它只有 ad-hoc 临时签名，没有 Developer ID 身份签名且未经 Apple 公证；请从完整预发布页下载、阅读风险提示并核对 SHA-256，不要把它当作正式版。
+- macOS 测试包采用 Universal 架构，面向 Apple 芯片与 Intel Mac；只有 ad-hoc 临时签名，没有 Developer ID 身份签名且未经 Apple 公证。0.6 安装包请以对应预发布页实际提供的附件为准，源码更新不代表安装包已经发布；下载后阅读风险提示并核对 SHA-256，不要把测试包当作正式版。
 - Mac 正式版仍需 Developer ID 签名、Apple 公证、Gatekeeper 检查和更多实机安装验证。
 
 ## 主要功能
@@ -56,7 +56,7 @@ Windows 构建：`npm run dist` 和 `npm run dist:installer`。Mac 未签名测�
 
 ## 隐私与安全
 
-网站密码由原网站和系统浏览器组件处理，PH Launcher 不读取或保存密码。笔记、任务、课程和专注记录默认保存在本机；导出备份不包含 API Key。云端 AI 只应接收用户主动提交或明确授权的数据。
+网站登录默认由原网站处理。可选“账号记忆”只保存你主动输入并同意保存的账号密码，使用 Windows／macOS 系统密钥加密；仅可填入三个指定学校网站的登录页，不自动提交。账号密码不进入备份，也不提供给 AI；共享电脑不建议启用。笔记、任务、课程和专注记录默认保存在本机；导出备份不包含 API Key。云端 AI 只应接收用户主动提交或明确授权的数据。
 
 IB Docs 仅作为带风险提示的第三方外部链接。PH Launcher 不内嵌、下载、缓存、镜像、索引或代理其中内容；仅在学校或权利人明确授权的情况下访问和使用。
 
