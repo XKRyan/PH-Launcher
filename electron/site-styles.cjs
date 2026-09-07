@@ -196,7 +196,40 @@ const EDUPAGE_LANDING = `
   }
 `;
 
-function getSiteCss(siteId, rawUrl) {
+function validHex(value) { return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value); }
+
+function xinlvThemeCss(appearance = {}) {
+  const primary = validHex(appearance.primary) ? appearance.primary : '#173f33';
+  const accent = validHex(appearance.accent) ? appearance.accent : '#8b3445';
+  const gold = validHex(appearance.gold) ? appearance.gold : '#b58d45';
+  const paper = validHex(appearance.paper) ? appearance.paper : '#f5f2e9';
+  // Xinlv exposes its visual system as CSS variables. Override those variables
+  // in the embedded view instead of copying or rewriting its page source.
+  return `
+    :root {
+      --bg: ${paper} !important;
+      --card: color-mix(in srgb, ${paper} 26%, #ffffff) !important;
+      --ink: ${primary} !important;
+      --muted: color-mix(in srgb, ${primary} 54%, #ffffff) !important;
+      --line: color-mix(in srgb, ${primary} 16%, ${paper}) !important;
+      --accent: ${primary} !important;
+      --accent-d: ${primary} !important;
+      --accent-l: color-mix(in srgb, ${primary} 42%, #ffffff) !important;
+      --gold: ${gold} !important;
+      --grad-warm: linear-gradient(135deg, ${primary} 0%, color-mix(in srgb, ${primary} 72%, ${accent}) 100%) !important;
+      --grad-soft: linear-gradient(180deg, color-mix(in srgb, ${paper} 60%, #ffffff) 0%, ${paper} 100%) !important;
+      --shadow-hover: 0 10px 32px color-mix(in srgb, ${primary} 18%, transparent) !important;
+    }
+    body { background-color: var(--bg) !important; }
+    .topbar, .calendar-card, .block, .about, .m-card, .modal, .chat,
+    .login-card, .crisis-card { background-color: var(--card) !important; border-color: var(--line) !important; }
+    .day, .mood-opt, .chip, .crisis-line { background-color: var(--card) !important; border-color: var(--line) !important; }
+    .bubble.user, button.primary, a.primary, .acc-btn, .m-nav a.active { background: var(--grad-warm) !important; }
+    .bubble.assistant, .modal textarea, .composer textarea, .login-card input { background-color: color-mix(in srgb, ${paper} 54%, #ffffff) !important; }
+  `;
+}
+
+function getSiteCss(siteId, rawUrl, appearance) {
   let url;
   try {
     url = new URL(rawUrl);
@@ -205,6 +238,10 @@ function getSiteCss(siteId, rawUrl) {
   }
   if (url.protocol !== 'https:') return '';
   const host = url.hostname.toLowerCase();
+  if (siteId === 'psychology') {
+    return host === 'xin-lv.com' || host.endsWith('.xin-lv.com')
+      ? `${BASE}\n${xinlvThemeCss(appearance)}` : '';
+  }
   if (siteId === 'mail') {
     if (host === 'mail.shphschool.com') return `${BASE}\n${MAIL}\n${MAIL_LANDING}`;
     if (host === 'qiye.163.com' || host.endsWith('.qiye.163.com') || host.endsWith('.mail.163.com')) return `${BASE}\n${MAIL}`;

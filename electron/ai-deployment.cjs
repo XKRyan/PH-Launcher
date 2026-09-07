@@ -151,6 +151,11 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function assertSignalActive(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : cancellationError();
+}
+
 class LocalAiDeploymentManager {
   constructor({
     getHardwareProfile,
@@ -1088,7 +1093,8 @@ class LocalAiDeploymentManager {
     return '';
   }
 
-  async ensureOllamaService(ollamaPath) {
+  async ensureOllamaService(ollamaPath, { signal } = {}) {
+    assertSignalActive(signal);
     this.update({
       stage: 'starting-service',
       progress: 41,
@@ -1096,9 +1102,11 @@ class LocalAiDeploymentManager {
       detail: '只监听本机地址，不会开放学校网页数据。',
     });
     if (await this.isApiReady()) {
+      assertSignalActive(signal);
       if (this.platform === 'darwin') await this.verifyMacOllamaListener(ollamaPath);
       return;
     }
+    assertSignalActive(signal);
 
     if (this.platform === 'darwin') {
       const appPath = this.ollamaAppPath || path.resolve(path.dirname(ollamaPath), '..', '..');
@@ -1106,18 +1114,24 @@ class LocalAiDeploymentManager {
         throw securityError('无法确认 Ollama.app 的准确位置，已停止自动启动。');
       }
       await this.verifyMacOllamaApp(appPath, { silent: true });
+      assertSignalActive(signal);
       this.update({
         detail: 'Ollama 已通过签名与公证校验。若系统询问，请核对名称后选择“打开”；若 Ollama 询问是否移动到系统“应用程序”，请选择暂不移动，命令行链接也可跳过。',
       });
+      assertSignalActive(signal);
       this.spawnDetached('/usr/bin/open', [appPath]);
-      if (await this.waitForApi(35)) {
+      if (await this.waitForApi(35, { signal })) {
+        assertSignalActive(signal);
         await this.verifyMacOllamaListener(ollamaPath);
         return;
       }
+      assertSignalActive(signal);
       const refreshedPath = await this.findOllama();
       if (refreshedPath) ollamaPath = refreshedPath;
+      assertSignalActive(signal);
       this.spawnDetached(ollamaPath, ['serve'], { env: { ...process.env, OLLAMA_HOST: '127.0.0.1:11434' } });
-      if (await this.waitForApi(20)) {
+      if (await this.waitForApi(20, { signal })) {
+        assertSignalActive(signal);
         await this.verifyMacOllamaListener(ollamaPath);
         return;
       }
@@ -1126,12 +1140,14 @@ class LocalAiDeploymentManager {
 
     const appExecutable = path.join(path.dirname(ollamaPath), 'ollama app.exe');
     const localOnlyEnvironment = { ...process.env, OLLAMA_HOST: '127.0.0.1:11434' };
+    assertSignalActive(signal);
     if (fs.existsSync(appExecutable)) this.spawnDetached(appExecutable, [], { env: localOnlyEnvironment });
     else this.spawnDetached(ollamaPath, ['serve'], { env: localOnlyEnvironment });
-    if (await this.waitForApi(14)) return;
+    if (await this.waitForApi(14, { signal })) return;
 
+    assertSignalActive(signal);
     if (fs.existsSync(appExecutable)) this.spawnDetached(ollamaPath, ['serve'], { env: localOnlyEnvironment });
-    if (await this.waitForApi(20)) return;
+    if (await this.waitForApi(20, { signal })) return;
     throw new Error('Ollama 已安装，但本地服务未能启动；请在开始菜单打开 Ollama 后重试。');
   }
 
@@ -1191,11 +1207,15 @@ class LocalAiDeploymentManager {
     } catch {}
   }
 
-  async waitForApi(attempts) {
+  async waitForApi(attempts, { signal } = {}) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       this.assertNotCanceled();
+      assertSignalActive(signal);
       await delay(700);
-      if (await this.isApiReady()) return true;
+      assertSignalActive(signal);
+      const ready = await this.isApiReady();
+      assertSignalActive(signal);
+      if (ready) return true;
     }
     return false;
   }

@@ -69,6 +69,11 @@ const {
   DATA_VERSION,
   normalizeCleanDisplaySettings,
 } = require('../electron/site-settings.cjs');
+const {
+  DEFAULT_MAX_AUTO_RETRIES,
+  DEFAULT_WINDOW_MS,
+  decideAutoRecovery,
+} = require('../electron/site-recovery.cjs');
 
 test('hardware recommendation is conservative on low-memory and low-disk PCs', () => {
   assert.equal(recommendLocalModel({ ramGb: 7.9, vramGb: 8, diskFreeGb: 100 }).recommended, false);
@@ -550,6 +555,10 @@ test('clean display styles are limited to approved school-site domains', () => {
   assert.match(getSiteCss('mail', 'https://entry.mail.163.com/'), /--ph-clean-mode:\s*1/);
   assert.match(getSiteCss('managebac', 'https://shph.managebac.cn/dashboard'), /linear-gradient/);
   assert.match(getSiteCss('edupage', 'https://pingheschool.edupage.org/timetable/'), /erte-section-inner/);
+  const xinlvCss = getSiteCss('psychology', 'https://xin-lv.com/', { primary: '#203f60', accent: '#83546f', gold: '#ac803c', paper: '#edf3f7' });
+  assert.match(xinlvCss, /--accent:\s*#203f60/);
+  assert.match(xinlvCss, /--bg:\s*#edf3f7/);
+  assert.equal(getSiteCss('psychology', 'https://example.com/'), '');
   assert.equal(getSiteCss('mail', 'https://example.com/'), '');
   assert.equal(getSiteCss('edupage', 'javascript:alert(1)'), '');
 });
@@ -750,6 +759,20 @@ test('site storage flush timeout remains referenced until its rejection is obser
   assert.equal(child.stdout, 'timeout-observed');
 });
 
+test('renderer crash recovery retries once, then stops until the retry window expires', () => {
+  const first = decideAutoRecovery([], 1_000);
+  assert.deepEqual(first, { retry: true, attempts: [1_000] });
+  assert.equal(DEFAULT_MAX_AUTO_RETRIES, 1);
+  assert.equal(DEFAULT_WINDOW_MS, 60_000);
+
+  const repeated = decideAutoRecovery(first.attempts, 1_001);
+  assert.deepEqual(repeated, { retry: false, attempts: [1_000] });
+
+  const afterWindow = decideAutoRecovery(first.attempts, 61_001);
+  assert.deepEqual(afterWindow, { retry: true, attempts: [61_001] });
+  assert.throws(() => decideAutoRecovery([], Number.NaN), /Invalid site recovery policy/);
+});
+
 test('custom website IPC cannot bypass sanitization and clearing closes every view before erasing its session', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
   const preload = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
@@ -899,6 +922,11 @@ test('main process keeps school views isolated and web security enabled', () => 
   assert.match(source, /setPermissionCheckHandler/);
   assert.match(source, /siteStoragePersistence\.flushAll\(\)/);
   assert.match(source, /--ph-clean-mode/);
+  assert.match(source, /app\.disableHardwareAcceleration\(\)/);
+  assert.match(source, /function scheduleSiteRecovery/);
+  assert.match(source, /disposeSiteView\(siteId, \{ preserveRecovery: true \}\)/);
+  assert.match(source, /function siteStartUrl/);
+  assert.doesNotMatch(source, /backgroundThrottling: false/);
   assert.doesNotMatch(source, /pingheschool\.edupage\.org；/);
   assert.match(source, /hiddenInset/);
   assert.match(source, /process\.platform === 'darwin'/);
@@ -907,11 +935,15 @@ test('main process keeps school views isolated and web security enabled', () => 
   assert.match(siteSessionSource, /flushStorageData\(\)/);
   assert.doesNotMatch(siteSessionSource, /cookies\.get\(/);
   assert.doesNotMatch(siteSessionSource, /cookies\.set\(/);
+
+  const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+  assert.match(renderer, /siteState\.error && siteState\.error !== previous\?\.error/);
 });
 
 test('package config includes hardened Universal macOS DMG, ZIP and PKG targets', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(packageJson.version, '0.5.1');
+  assert.equal(packageJson.version, '1.0.7');
+  assert.equal(packageJson.devDependencies.electron, '44.2.0');
   assert.equal(packageJson.build.mac.minimumSystemVersion, '13.0');
   assert.equal(packageJson.build.mac.hardenedRuntime, true);
   assert.deepEqual(packageJson.build.mac.target, ['dmg', 'zip', 'pkg']);

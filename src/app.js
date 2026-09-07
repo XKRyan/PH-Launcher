@@ -1,22 +1,36 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const localizedConfirm = message => window.confirmAction(message);
 
 const BUILTIN_SITE_META = {
-  mail: { name: '学校邮箱', icon: 'i-mail', url: 'https://mail.shphschool.com/' },
+  mail: { name: '平和邮箱', icon: 'i-mail', url: 'https://mail.shphschool.com/' },
   managebac: { name: 'ManageBac', icon: 'i-grid', url: 'https://shph.managebac.cn/login' },
   edupage: { name: 'EduPage', icon: 'i-calendar', url: 'https://pingheschool.edupage.org/' },
 };
-const SITE_META = { ...BUILTIN_SITE_META };
+// Embedded first-party modules are fixed navigation items, but are deliberately
+// kept out of BUILTIN_SITE_META so they never appear in credential settings.
+const FIXED_SITE_META = {
+  psychology: { name: '心理', icon: 'i-spark', url: 'https://xin-lv.com/', eyebrow: 'WELLBEING', embedded: true },
+};
+const SITE_META = { ...BUILTIN_SITE_META, ...FIXED_SITE_META };
 const CUSTOM_SITE_COLORS = new Set(['green', 'wine', 'gold', 'blue', 'slate']);
 const ROUTE_META = {
   today: { title: '今天', eyebrow: 'PH LAUNCHER' },
   plan: { title: '计划', eyebrow: 'PLAN & FOCUS' },
   notes: { title: '笔记', eyebrow: 'LOCAL NOTES' },
   dictionary: { title: '离线词典', eyebrow: 'OFFLINE DICTIONARY' },
+  vocabulary: { title: '背单词', eyebrow: 'WORDS IN CONTEXT' },
+  timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
+  calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
+  mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
+  'class-timetable': { title: '班级课表', eyebrow: 'CLASS TIMETABLE', page: 'school' },
+  courses: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
   ai: { title: 'AI 学习助手', eyebrow: 'OPTIONAL AI' },
   settings: { title: '设置', eyebrow: 'PREFERENCES' },
 };
+const ROUTE_ALIASES = { school: 'timetable' };
+const SCHOOL_WORKSPACE_ROUTES = new Set(['timetable', 'class-timetable', 'courses']);
 const SUBJECTS = ['通用', 'English', 'Chinese', 'Math', 'Physics', 'Chemistry', 'Biology', 'Economics', 'Humanities', 'EE', 'TOK', 'CAS'];
 const LOCAL_MODEL_SIZES = {
   'qwen3.5:0.8b': 1.0,
@@ -58,19 +72,31 @@ const state = {
   hardwareLoading: false,
   aiDeployment: null,
   aiEditing: false,
+  aiEditConfig: null,
   aiMessages: [],
   aiBusy: false,
+  aiRequestId: '',
+  aiStreamStatus: '',
+  aiLocalWarmup: { localWarmup: 'idle', detail: '' },
+  aiUseMemories: undefined,
+  aiMemoryProvider: '',
   aiControlInfo: null,
+  aiPendingPermissionMode: '',
   shortcutResults: {},
+  credentialStatus: null,
   ibCommandCatalog: null,
   commandSubject: 'common',
   commandItems: [],
   commandIndex: 0,
   timerFinishing: false,
+  onboardingStep: 0,
+  onboardingPending: false,
 };
 
 let persistTimer = null;
 let dictionarySearchTimer = null;
+let vocabularyBadgeRequest = 0;
+let credentialSubmitInFlight = false;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -100,7 +126,7 @@ function customSiteMonogram(name) {
 
 function refreshSiteMeta() {
   for (const id of Object.keys(SITE_META)) {
-    if (!BUILTIN_SITE_META[id]) delete SITE_META[id];
+    if (!BUILTIN_SITE_META[id] && !FIXED_SITE_META[id]) delete SITE_META[id];
   }
   for (const site of customSites()) {
     SITE_META[site.id] = {
@@ -177,18 +203,26 @@ async function persistData(immediate = false) {
   if (saveState) saveState.lastChild.textContent = '保存中';
   clearTimeout(persistTimer);
   const commit = async () => {
+    persistTimer = null;
+    const submitted = structuredClone(state.data);
     try {
-      const saved = await window.ph.data.save(state.data);
-      state.data = saved;
+      const saved = await window.ph.data.save(submitted);
+      // Typing may continue while the save is in flight. Keep edits made since
+      // submission instead of replacing them with the older server response.
+      for (const key of Object.keys(saved)) {
+        if (JSON.stringify(state.data[key]) === JSON.stringify(submitted[key])) state.data[key] = saved[key];
+      }
       saveState?.classList.remove('saving');
       if (saveState) saveState.lastChild.textContent = '已保存';
+      return true;
     } catch (error) {
       saveState?.classList.remove('saving');
       if (saveState) saveState.lastChild.textContent = '保存失败';
       toast(`保存失败：${error.message}`, 'error');
+      return false;
     }
   };
-  if (immediate) await commit();
+  if (immediate) return await commit();
   else persistTimer = setTimeout(commit, 420);
 }
 
@@ -210,15 +244,18 @@ function setTopbar(title, eyebrow) {
 }
 
 function navigate(route) {
+  route = ROUTE_ALIASES[route] || route;
   if (!ROUTE_META[route]) return;
   state.route = route;
   state.activeSite = null;
   window.ph.sites.hide();
-  $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === route));
+  const pageRoute = ROUTE_META[route].page || route;
+  $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === pageRoute));
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === route));
   $('#siteToolbar').classList.add('hidden');
   $('#internalTopActions').classList.remove('hidden');
   setTopbar(ROUTE_META[route].title, ROUTE_META[route].eyebrow);
+  if (route === 'today' && state.onboardingPending) setTimeout(() => openOnboarding(state.onboardingStep), 50);
   $('#sitePopover').classList.add('hidden');
   if (route === 'today') renderDashboard();
   if (route === 'plan') {
@@ -227,6 +264,21 @@ function navigate(route) {
     renderFocusStats();
   }
   if (route === 'notes') renderNotes();
+  if (route === 'vocabulary') {
+    window.vocabularyUI?.refresh();
+    refreshVocabularyBadge();
+  }
+  if (SCHOOL_WORKSPACE_ROUTES.has(route)) {
+    if (typeof window.schoolUI?.open === 'function') window.schoolUI.open(route);
+    else window.schoolUI?.refresh();
+  }
+  if (route === 'calendar') window.calendarUI?.refresh();
+  if (route === 'mail') {
+    updateMailBadge(0);
+    window.mailUI?.markViewed?.();
+    const opening = window.mailUI?.open?.();
+    Promise.resolve(opening).then(() => { if (state.route === 'mail') window.mailUI?.markViewed?.(); }).catch(() => {});
+  }
   if (route === 'dictionary') {
     renderDictionary();
     loadDictionaryInfo();
@@ -239,22 +291,21 @@ function navigate(route) {
 }
 
 async function openSite(siteId) {
+  if (siteId === 'mail') return navigate('mail');
   const site = SITE_META[siteId];
   if (!site) return;
   state.activeSite = siteId;
   state.route = null;
   $$('.page').forEach((page) => page.classList.remove('active'));
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.site === siteId));
-  $('#siteToolbar').classList.remove('hidden');
-  $('#internalTopActions').classList.add('hidden');
-  setTopbar(site.name, site.custom ? 'MY WEBSITE' : 'SCHOOL APP');
+  // Xinlv is presented as a launcher module: its server UI is rendered inside
+  // this window, while browser chrome stays out of the way.
+  $('#siteToolbar').classList.toggle('hidden', site.embedded === true);
+  $('#internalTopActions').classList.toggle('hidden', site.embedded === true ? false : true);
+  const title = window.i18n?.t?.(site.name) || site.name;
+  setTopbar(title, site.custom ? 'MY WEBSITE' : (site.eyebrow || 'SCHOOL APP'));
   const siteState = state.siteStates[siteId];
   $('#siteLocation').textContent = siteState?.url || site.url;
-  const cleanToggle = $('#siteCleanToggle').closest('.clean-toggle');
-  cleanToggle?.classList.toggle('hidden', Boolean(site.custom));
-  $('#siteCleanToggle').checked = !site.custom && Boolean(state.data.settings.siteCleanMode[siteId]);
-  cleanToggle?.classList.toggle('applied', Boolean(siteState?.cleanApplied));
-  cleanToggle?.classList.toggle('unavailable', Boolean(siteState?.cleanUnavailable));
   try {
     const opened = await window.ph.sites.open(siteId);
     if (!opened) {
@@ -262,7 +313,7 @@ async function openSite(siteId) {
       navigate('today');
     }
   } catch (error) {
-    toast(`${site.name} 暂时无法连接：${error.message}`, 'error');
+    toast(`${title} 暂时无法连接：${error.message}`, 'error');
   }
 }
 
@@ -275,21 +326,11 @@ function handleSiteState(siteState) {
   nav?.classList.toggle('connected', !siteState.error && Boolean(siteState.url));
   if (state.activeSite !== siteState.id) return;
   $('#siteLocation').textContent = siteState.url || site.url;
-  $('#siteCleanToggle').checked = !site.custom && Boolean(siteState.cleanMode);
-  const cleanToggle = $('#siteCleanToggle').closest('.clean-toggle');
-  cleanToggle?.classList.toggle('applied', Boolean(siteState.cleanApplied));
-  cleanToggle?.classList.toggle('unavailable', Boolean(siteState.cleanUnavailable));
-  if (cleanToggle) {
-    cleanToggle.title = siteState.cleanUnavailable
-      ? '这个登录或跳转页面暂不支持；返回学校网站后会自动应用'
-      : '只改变本机显示，可随时恢复原网页';
-  }
   const back = $('[data-site-action="back"]');
   const forward = $('[data-site-action="forward"]');
   back.disabled = !siteState.canGoBack;
   forward.disabled = !siteState.canGoForward;
-  if (siteState.error) toast(`${site.name}：${siteState.error}`, 'error');
-  if (siteState.cleanUnavailable && !previous?.cleanUnavailable) toast('当前页面不支持简洁显示，已保留原网页');
+  if (siteState.error && siteState.error !== previous?.error) toast(`${window.i18n?.t?.(site.name) || site.name}：${siteState.error}`, 'error');
 }
 
 function nextLesson() {
@@ -301,6 +342,7 @@ function nextLesson() {
       const day = new Date(now);
       day.setDate(now.getDate() + offset);
       if (day.getDay() !== Number(lesson.dayOfWeek)) continue;
+      if (lesson.date && localDateKey(day) !== lesson.date) continue;
       const [hour, minute] = lesson.start.split(':').map(Number);
       day.setHours(hour, minute, 0, 0);
       if (day <= now) continue;
@@ -318,6 +360,39 @@ function formatCountdown(target) {
   return `${Math.round(delta / 86_400_000)} 天后`;
 }
 
+function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
+  const badge = $(badgeSelector);
+  const nav = $(navSelector);
+  if (!badge || !nav) return;
+  const count = Math.max(0, Math.floor(Number(rawCount) || 0));
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.dataset.count = String(count);
+  badge.classList.toggle('hidden', count === 0);
+  nav.setAttribute('aria-label', count ? `${label}，${count} 项待处理` : label);
+}
+
+function updateMailBadge(count) {
+  setNavCountBadge('#navMailCount', '#mailNav', '平和邮箱', count);
+}
+
+function updateVocabularyBadge(payload) {
+  const due = typeof payload === 'number' ? payload : payload?.due ?? payload?.stats?.due ?? payload?.snapshot?.stats?.due;
+  if (!Number.isFinite(Number(due))) return;
+  setNavCountBadge('#vocabularyDueCount', '#vocabularyNav', '背单词', due);
+}
+
+async function refreshVocabularyBadge() {
+  const api = window.ph?.vocabulary;
+  if (!api) return;
+  const request = ++vocabularyBadgeRequest;
+  try {
+    const result = typeof api.dueCount === 'function' ? await api.dueCount() : await api.get('');
+    if (request === vocabularyBadgeRequest) updateVocabularyBadge(result);
+  } catch {
+    // Keep the last known local count when the vocabulary store is temporarily unavailable.
+  }
+}
+
 function renderDashboard() {
   if (!state.data) return;
   updateClock();
@@ -332,7 +407,7 @@ function renderDashboard() {
   $('#nextClassName').textContent = upcoming?.lesson.course || '尚未添加课程';
   $('#nextClassMeta').textContent = upcoming
     ? `${formatCountdown(upcoming.date)} · ${upcoming.lesson.start}${upcoming.lesson.room ? ` · ${upcoming.lesson.room}` : ''}`
-    : '在“计划”中建立课程表';
+    : '在“我的课表”查看学校课程';
 
   const weekSessions = getWeekSessions();
   const weekMinutes = weekSessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
@@ -350,8 +425,7 @@ function renderDashboard() {
       </div>`).join('')
     : '<div class="empty-row">今天没有待处理任务。<br/>给自己留一点从容。</div>';
   const count = openTasks.length;
-  $('#navTaskCount').textContent = String(count);
-  $('#navTaskCount').dataset.count = String(count);
+  setNavCountBadge('#navTaskCount', '#planNav', '计划', count);
   renderCustomSites();
 }
 
@@ -440,9 +514,9 @@ function toggleTask(taskId) {
   renderTasks();
 }
 
-function deleteTask(taskId) {
+async function deleteTask(taskId) {
   const task = state.data.tasks.find((item) => item.id === taskId);
-  if (!task || !confirm(`删除任务“${task.title}”？`)) return;
+  if (!task || !await localizedConfirm(`删除任务“${task.title}”？`)) return;
   state.data.tasks = state.data.tasks.filter((item) => item.id !== taskId);
   $('#taskDialog').close();
   persistData();
@@ -488,6 +562,13 @@ function renderTasks() {
 }
 
 function openLessonDialog(lesson = null) {
+  let notice = $('#lessonDateNotice');
+  if (!notice) {
+    notice = document.createElement('p'); notice.id = 'lessonDateNotice';
+    $('#lessonForm .modal-head').after(notice);
+  }
+  notice.textContent = lesson?.date ? `仅 ${lesson.date} 当天生效；重新同步可更新日期与教学组。` : '每周重复课程';
+  $('#lessonDay').disabled = Boolean(lesson?.date);
   $('#lessonId').value = lesson?.id || '';
   $('#lessonCourse').value = lesson?.course || '';
   $('#lessonDay').value = String(lesson?.dayOfWeek ?? 1);
@@ -527,9 +608,9 @@ async function saveLessonFromDialog(event) {
   toast(current ? '课程已更新' : '课程已添加');
 }
 
-function deleteLesson(lessonId) {
+async function deleteLesson(lessonId) {
   const lesson = state.data.schedule.find((item) => item.id === lessonId);
-  if (!lesson || !confirm(`删除课程“${lesson.course}”？`)) return;
+  if (!lesson || !await localizedConfirm(`删除课程“${lesson.course}”？`)) return;
   state.data.schedule = state.data.schedule.filter((item) => item.id !== lessonId);
   $('#lessonDialog').close();
   persistData();
@@ -539,11 +620,14 @@ function deleteLesson(lessonId) {
 }
 
 function renderSchedule() {
-  if (!state.data) return;
+  if (!state.data || !$('#weekGrid')) return;
   const today = new Date().getDay();
   $('#weekGrid').innerHTML = WEEK_DAYS.map((day) => {
     const lessons = state.data.schedule
-      .filter((lesson) => Number(lesson.dayOfWeek) === day.value)
+      .filter((lesson) => Number(lesson.dayOfWeek) === day.value && (!lesson.date || (() => {
+        const date = new Date(); date.setDate(date.getDate() - (date.getDay() + 6) % 7 + (day.value + 6) % 7);
+        return localDateKey(date) === lesson.date;
+      })()))
       .sort((a, b) => String(a.start).localeCompare(String(b.start)));
     return `<section class="week-day${today === day.value ? ' today' : ''}">
       <div class="week-day-head"><strong>${day.label}</strong><span>${day.short}</span></div>
@@ -634,9 +718,9 @@ function updateCurrentNote(field, value) {
   }
 }
 
-function deleteCurrentNote() {
+async function deleteCurrentNote() {
   const note = state.data.notes.find((item) => item.id === state.selectedNoteId);
-  if (!note || !confirm(`删除笔记“${note.title || '无标题笔记'}”？`)) return;
+  if (!note || !await localizedConfirm(`删除笔记“${note.title || '无标题笔记'}”？`)) return;
   state.data.notes = state.data.notes.filter((item) => item.id !== note.id);
   state.selectedNoteId = filteredNotes()[0]?.id || null;
   persistData();
@@ -766,7 +850,7 @@ function renderDictionary() {
     ${entry.definition ? `<section class="dictionary-definition"><span>英文释义</span><p lang="en">${dictionaryText(entry.definition)}</p></section>` : ''}
     ${entry.exchange?.length ? `<section class="dictionary-forms"><span>词形变化</span><div>${entry.exchange.map((item) => `<button data-dict-word="${escapeHtml(item.word)}"><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.word)}</strong></button>`).join('')}</div></section>` : ''}
     ${frequency.length ? `<div class="dictionary-frequency">${frequency.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
-    <div class="dictionary-actions"><button class="secondary-button" id="dictionaryToNote">${icon('i-note')}保存到笔记</button><span>离线查询 · 不会发送搜索内容</span></div>`;
+    <div class="dictionary-actions"><button class="primary-button" id="dictionaryToVocabulary">${icon('i-plus')}加入词本</button><button class="secondary-button" id="dictionaryToNote">${icon('i-note')}保存到笔记</button><span>离线查询 · 不会发送搜索内容</span></div>`;
 }
 
 function speakDictionaryEntry() {
@@ -923,9 +1007,99 @@ function ensureTimer() {
       running: false,
       endAt: 0,
       startedAt: 0,
+      sessionStarted: false,
+      target: '',
+      goal: '',
     };
   }
-  return state.data.settings.timer;
+  const timer = state.data.settings.timer;
+  if (!Number.isInteger(Number(timer.focusMinutes)) || Number(timer.focusMinutes) < 1 || Number(timer.focusMinutes) > 180) timer.focusMinutes = 25;
+  if (typeof timer.target !== 'string') timer.target = '';
+  if (typeof timer.goal !== 'string') timer.goal = '';
+  if (typeof timer.sessionStarted !== 'boolean') timer.sessionStarted = Boolean(timer.running);
+  return timer;
+}
+
+const FOCUS_ROUTE_TARGETS = [
+  ['vocabulary', '背单词'],
+  ['notes', '笔记'],
+  ['courses', '我的课程'],
+  ['timetable', '我的课表'],
+  ['calendar', '我的日程'],
+  ['dictionary', '离线词典'],
+  ['ib', 'IB 工具'],
+];
+
+function focusTargetInfo(value) {
+  if (!value) return null;
+  if (value.startsWith('route:')) {
+    const route = value.slice(6);
+    const target = FOCUS_ROUTE_TARGETS.find(([id]) => id === route);
+    return target ? { type: 'route', id: target[0], label: target[1] } : null;
+  }
+  if (value.startsWith('site:')) {
+    const id = value.slice(5);
+    const site = customSites().find((item) => item.id === id);
+    return site ? { type: 'site', id: site.id, label: site.name } : null;
+  }
+  return null;
+}
+
+function renderFocusSettings() {
+  const timer = ensureTimer();
+  const select = $('#focusTargetInput');
+  if (!select) return;
+  const routeOptions = FOCUS_ROUTE_TARGETS.map(([id, label]) => `<option value="route:${id}">${escapeHtml(label)}</option>`).join('');
+  const siteOptions = customSites().map((site) => `<option value="site:${escapeHtml(site.id)}">${escapeHtml(site.name)}</option>`).join('');
+  select.innerHTML = `<option value="">不指定目标</option><optgroup label="学习工具">${routeOptions}</optgroup>${siteOptions ? `<optgroup label="我的网页">${siteOptions}</optgroup>` : ''}`;
+  select.value = focusTargetInfo(timer.target) ? timer.target : '';
+  $('#focusGoalInput').value = timer.goal;
+  $('#focusMinutesInput').value = String(timer.nextFocusMinutes || timer.focusMinutes || 25);
+  $('#focusSettingsHint').textContent = timer.running || timer.sessionStarted
+    ? '本轮计时保持不变；新时长会从下一轮开始使用。'
+    : '本轮开始前可设置 1–180 分钟；目标可以留空。';
+}
+
+function openFocusSettings() {
+  renderFocusSettings();
+  $('#focusSettingsDialog').showModal();
+  setTimeout(() => $('#focusMinutesInput').focus(), 30);
+}
+
+function saveFocusSettings(event) {
+  event.preventDefault();
+  const minutes = Number($('#focusMinutesInput').value);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 180) return toast('专注时长须为 1–180 分钟', 'error');
+  const target = $('#focusTargetInput').value;
+  if (target && !focusTargetInfo(target)) return toast('请选择启动器内现有的学习入口', 'error');
+  const goal = $('#focusGoalInput').value.trim();
+  if (goal.length > 120) return toast('本轮目标最多 120 个字符', 'error');
+  const timer = ensureTimer();
+  timer.target = target;
+  timer.goal = goal;
+  if (timer.running || timer.sessionStarted) {
+    timer.nextFocusMinutes = minutes;
+    timer.nextBreakMinutes = timer.breakMinutes;
+    timer.nextMode = 'countdown';
+  } else {
+    timer.mode = 'countdown';
+    timer.phase = 'focus';
+    timer.focusMinutes = minutes;
+    timer.durationMs = minutes * 60_000;
+    timer.remainingMs = timer.durationMs;
+    timer.elapsedMs = 0;
+  }
+  $('#focusSettingsDialog').close();
+  persistData();
+  updateTimerUi();
+  toast(timer.running || timer.sessionStarted ? '目标已更新；新时长将在下一轮生效' : '本轮专注设置已保存');
+}
+
+function openFocusTarget() {
+  const target = focusTargetInfo(ensureTimer().target);
+  if (!target) return;
+  if (target.type === 'route') navigate(target.id);
+  else openSite(target.id);
 }
 
 function timerDisplayMs(timer = ensureTimer()) {
@@ -966,7 +1140,23 @@ function updateTimerUi() {
   $('#focusPhaseLabel').textContent = isBreak ? 'SHORT BREAK' : timer.mode === 'stopwatch' ? 'STOPWATCH' : 'FOCUS SESSION';
   const playIcon = timer.running ? 'i-pause' : 'i-play';
   $('#miniFocusPlay').innerHTML = icon(playIcon);
-  $('#focusPlay').innerHTML = icon(playIcon);
+  $('#focusPlayIcon').innerHTML = icon(playIcon);
+  const playLabel = timer.running ? '暂停' : timer.sessionStarted ? '继续' : '开始';
+  $('#focusPlayLabel').textContent = playLabel;
+  $('#focusPlay').setAttribute('aria-label', playLabel);
+  $('#miniFocusPlay').setAttribute('aria-label', playLabel);
+  $('#miniFocusPlay').classList.toggle('timer-pause-icon', timer.running);
+  $('#focusPlay').classList.toggle('timer-pause-icon', timer.running);
+  const active = Boolean(timer.running || timer.sessionStarted);
+  $('#miniFocusStop')?.classList.toggle('hidden', !active);
+  $('#focusResetLabel').textContent = active ? '结束并重置' : '重置';
+  $('#focusReset').setAttribute('aria-label', active ? '结束本轮并重置，不计入完成记录' : '重置');
+  const target = focusTargetInfo(timer.target);
+  const focusLabel = timer.goal || target?.label || '';
+  $('#focusTargetLabel').textContent = focusLabel ? `本轮目标：${focusLabel}` : '本轮未指定目标';
+  $('#miniFocusTarget').textContent = focusLabel || '设置本轮';
+  $('#focusOpenTarget').classList.toggle('hidden', !target || !timer.sessionStarted);
+  $('#miniFocusTarget').classList.toggle('active', Boolean(target && timer.sessionStarted));
   $$('#focusPresets button').forEach((button) => {
     const active = timer.mode === 'stopwatch'
       ? Number(button.dataset.focus) === 0
@@ -986,6 +1176,7 @@ function toggleTimer() {
     timer.endAt = 0;
   } else {
     timer.running = true;
+    timer.sessionStarted = true;
     if (timer.mode === 'stopwatch') timer.startedAt = Date.now();
     else timer.endAt = Date.now() + Math.max(1_000, Number(timer.remainingMs || timer.durationMs));
   }
@@ -995,21 +1186,45 @@ function toggleTimer() {
 
 function resetTimer() {
   const timer = ensureTimer();
+  const wasActive = Boolean(timer.running || timer.sessionStarted);
   timer.running = false;
   timer.endAt = 0;
   timer.startedAt = 0;
   timer.elapsedMs = 0;
+  timer.sessionStarted = false;
+  applyPendingTimerSettings(timer);
   if (timer.mode === 'countdown') {
     timer.durationMs = (timer.phase === 'break' ? timer.breakMinutes : timer.focusMinutes) * 60_000;
     timer.remainingMs = timer.durationMs;
   }
   persistData();
   updateTimerUi();
+  if (wasActive) toast('本轮已结束，未计入完成记录');
+}
+
+function applyPendingTimerSettings(timer) {
+  if (!Number.isInteger(Number(timer.nextFocusMinutes))) return;
+  timer.focusMinutes = Number(timer.nextFocusMinutes);
+  timer.breakMinutes = Number(timer.nextBreakMinutes || timer.breakMinutes || 5);
+  timer.mode = timer.nextMode === 'stopwatch' ? 'stopwatch' : 'countdown';
+  delete timer.nextFocusMinutes;
+  delete timer.nextBreakMinutes;
+  delete timer.nextMode;
 }
 
 function setTimerPreset(focusMinutes, breakMinutes) {
   const timer = ensureTimer();
+  if (timer.running || timer.sessionStarted) {
+    timer.nextFocusMinutes = focusMinutes || 25;
+    timer.nextBreakMinutes = breakMinutes || 5;
+    timer.nextMode = focusMinutes === 0 ? 'stopwatch' : 'countdown';
+    persistData();
+    updateTimerUi();
+    toast('预设将在下一轮开始时生效');
+    return;
+  }
   timer.running = false;
+  timer.sessionStarted = false;
   timer.phase = 'focus';
   timer.focusMinutes = focusMinutes || 25;
   timer.breakMinutes = breakMinutes || 5;
@@ -1037,6 +1252,8 @@ function recordFocusSession(minutes, completed = true) {
     endedAt: new Date().toISOString(),
     minutes: Math.round(minutes),
     completed,
+    target: ensureTimer().target || '',
+    goal: ensureTimer().goal || '',
   });
   state.data.focusSessions = state.data.focusSessions.slice(0, 500);
 }
@@ -1045,19 +1262,21 @@ async function finishTimerPhase() {
   state.timerFinishing = true;
   const timer = ensureTimer();
   timer.running = false;
+  timer.sessionStarted = false;
   timer.endAt = 0;
   if (timer.phase === 'focus') {
-    recordFocusSession(Number(timer.focusMinutes || 25), true);
+    recordFocusSession(Number(timer.durationMs || 0) / 60_000 || Number(timer.focusMinutes || 25), true);
     timer.phase = 'break';
     timer.durationMs = Number(timer.breakMinutes || 5) * 60_000;
     timer.remainingMs = timer.durationMs;
-    await window.ph.system.notify({ title: '专注完成', body: `完成 ${timer.focusMinutes} 分钟专注，休息一下吧。` });
+    await window.ph.system.notify({ id: state.data.focusSessions[0]?.id, title: '专注完成', body: `${timer.goal ? `${timer.goal}\n` : ''}完成 ${timer.focusMinutes} 分钟专注，休息一下吧。` });
     toast('专注完成，进入休息阶段');
   } else {
+    applyPendingTimerSettings(timer);
     timer.phase = 'focus';
     timer.durationMs = Number(timer.focusMinutes || 25) * 60_000;
     timer.remainingMs = timer.durationMs;
-    await window.ph.system.notify({ title: '休息结束', body: '准备好后，开始下一轮专注。' });
+    await window.ph.system.notify({ id: `break-${Date.now()}`, title: '休息结束', body: '准备好后，开始下一轮专注。' });
     toast('休息结束');
   }
   await persistData(true);
@@ -1070,16 +1289,13 @@ async function finishTimerPhase() {
 function skipTimerPhase() {
   const timer = ensureTimer();
   if (timer.mode === 'stopwatch') {
-    const elapsed = timerDisplayMs(timer);
-    if (elapsed >= 60_000) {
-      recordFocusSession(elapsed / 60_000, false);
-      toast('本次正计时已记录');
-    }
     timer.running = false;
+    timer.sessionStarted = false;
     timer.elapsedMs = 0;
     timer.startedAt = 0;
   } else {
     timer.running = false;
+    timer.sessionStarted = false;
     timer.endAt = 0;
     timer.phase = timer.phase === 'focus' ? 'break' : 'focus';
     timer.durationMs = (timer.phase === 'break' ? timer.breakMinutes : timer.focusMinutes) * 60_000;
@@ -1097,7 +1313,7 @@ function getWeekSessions() {
   const mondayOffset = day === 0 ? -6 : 1 - day;
   start.setDate(start.getDate() + mondayOffset);
   start.setHours(0, 0, 0, 0);
-  return (state.data.focusSessions || []).filter((item) => new Date(item.endedAt).getTime() >= start.getTime());
+  return (state.data.focusSessions || []).filter((item) => item.completed !== false && new Date(item.endedAt).getTime() >= start.getTime());
 }
 
 function renderFocusStats() {
@@ -1129,8 +1345,25 @@ async function loadHardwareProfile() {
 function renderAi() {
   if (!state.data) return;
   const ai = state.data.settings.ai;
-  const enabled = Boolean(ai.enabled && ai.provider !== 'off');
+  const enabled = isAiConfigured(ai);
   const showSetup = !enabled || state.aiEditing;
+  if (showSetup && !state.aiEditConfig) state.aiEditConfig = { ...ai };
+  if (!showSetup) state.aiEditConfig = null;
+  const returnToChat = Boolean(state.aiEditing && isAiConfigured(state.aiEditConfig));
+  const actionContainer = $('.ai-page-actions');
+  let backButton = $('#aiBackNavigation');
+  if (actionContainer && !backButton) {
+    backButton = document.createElement('button');
+    backButton.type = 'button';
+    backButton.id = 'aiBackNavigation';
+    backButton.className = 'secondary-button';
+    backButton.addEventListener('click', leaveAiSetup);
+    actionContainer.prepend(backButton);
+  }
+  if (backButton) {
+    backButton.textContent = returnToChat ? '← 返回对话' : '← 返回首页';
+    backButton.classList.toggle('hidden', !showSetup);
+  }
   $('#aiSetup').classList.toggle('hidden', !showSetup);
   $('#aiChat').classList.toggle('hidden', showSetup);
   $('#aiEditConfig').classList.toggle('hidden', !enabled || showSetup);
@@ -1140,7 +1373,7 @@ function renderAi() {
     if (state.route === 'ai') loadHardwareProfile();
   } else {
     if (!state.aiMessages.length) {
-      state.aiMessages.push({ role: 'assistant', content: '你好。我可以陪你学习；如果你另外开启“AI 操作启动器”，我也能读取你授权的任务、笔记摘要与课程表，并把建议更改交给你确认。' });
+      state.aiMessages.push({ role: 'assistant', content: window.i18n?.locale() === 'en' ? 'Hello. I can help you study. If you enable launcher access, I can read the tasks, note summaries and timetable you authorize, then ask you to confirm suggested changes.' : '你好。我可以陪你学习；如果你另外开启“AI 操作启动器”，我也能读取你授权的任务、笔记摘要与课程表，并把建议更改交给你确认。' });
     }
     renderAiControl();
     renderChat();
@@ -1148,14 +1381,45 @@ function renderAi() {
   $('#aiNavBadge').textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
 }
 
+function isAiConfigured(ai) {
+  if (!ai?.enabled) return false;
+  if (ai.provider === 'local') return Boolean(String(ai.localModel || '').trim());
+  if (ai.provider === 'api') return Boolean(String(ai.apiModel || '').trim());
+  return false;
+}
+
+function beginAiEditing() {
+  cancelAiStream();
+  state.aiEditConfig = { ...state.data.settings.ai };
+  state.aiEditing = true;
+  renderAi();
+}
+
+function leaveAiSetup() {
+  const previousConfig = state.aiEditConfig;
+  const returnToChat = isAiConfigured(previousConfig);
+  if (previousConfig) state.data.settings.ai = { ...previousConfig };
+  state.aiEditConfig = null;
+  state.aiEditing = false;
+  if (returnToChat) {
+    renderAi();
+    setTimeout(() => $('#aiInput')?.focus(), 30);
+    return;
+  }
+  navigate('today');
+  setTimeout(() => $('[data-route="today"]')?.focus(), 30);
+}
+
 function renderAiControl() {
+  window.agentUI?.render();
   const ai = state.data?.settings?.ai || {};
   const enabled = Boolean(ai.launcherControlEnabled && ai.controlConsentVersion);
+  const full = enabled && ai.permissionMode === 'full' && ai.mailReadEnabled === true && ai.mailConsentVersion === 2;
   $('#aiControlToggle').checked = enabled;
   $('#aiControlStatus').textContent = enabled
-    ? ai.provider === 'local'
-      ? '已授权 · 本地模型 · 写入前确认'
-      : '已授权 · API 模式会发送被读取的内容 · 写入前确认'
+    ? full
+      ? ai.provider === 'local' ? '已授权完整权限 · 可按请求读取启动器学习资料 · 写入前确认' : '已授权完整权限 · API 会发送你请求的启动器学习资料 · 写入前确认'
+      : ai.provider === 'local' ? '已授权操作前确认 · 不读取收件箱' : '已授权操作前确认 · API 模式会发送被读取的内容'
     : '关闭时只进行普通对话';
 }
 
@@ -1231,9 +1495,9 @@ function renderAiConfig() {
     const modelHint = state.hardwareLoading
       ? '正在读取这台电脑的配置，检测完成后会自动填入建议模型。'
       : recommendedModel
-      ? `本机推荐：${recommendedModel}。应用限制为 8K 上下文，避免显存被长上下文占满。`
+      ? `本机推荐：${recommendedModel}。较小模型通常准备更快，也更节省内存。`
       : '当前检测结果不建议安装本地模型；如你了解风险，仍可手动填写已安装的模型名称。';
-    panel.innerHTML = `<h3>本地 AI</h3><p>PH Launcher 会按每台电脑的内存、显卡与磁盘空间推荐模型；同学安装时会得到各自的结果。</p>
+    panel.innerHTML = `<h3>本地 AI</h3><p>PH Launcher 会按每台电脑的内存、显卡与磁盘空间推荐模型；同学安装时会得到各自的结果。仅在选择本地 AI 时，启动器会随程序准备模型；选择 API AI 或暂不启用时不会启动本地模型。</p>
       ${hardwareMarkup()}
       ${localDeploymentMarkup(recommendation)}
       <details class="manual-ai-settings">
@@ -1279,6 +1543,7 @@ async function cancelLocalAiDeployment() {
 
 async function configureAi(provider) {
   try {
+    cancelAiStream();
     let config;
     if (provider === 'off') {
       config = { enabled: false, provider: 'off' };
@@ -1303,7 +1568,8 @@ async function configureAi(provider) {
     const saved = await window.ph.ai.configure(config);
     state.data.settings.ai = saved;
     state.aiEditing = false;
-    state.aiMessages = [];
+    state.aiEditConfig = null;
+    await window.agentUI?.loadHistory?.();
     renderAi();
     toast(provider === 'off' ? 'AI 已保持关闭' : 'AI 连接设置已保存');
   } catch (error) {
@@ -1311,21 +1577,41 @@ async function configureAi(provider) {
   }
 }
 
-async function openAiControlDialog() {
+function pendingAiPermissionMode() {
+  return state.aiPendingPermissionMode === 'full' ? 'full' : 'confirm';
+}
+
+function refreshAiControlAcceptance() {
+  const full = pendingAiPermissionMode() === 'full';
+  $('#acceptAiControl').disabled = !$('#aiRiskAccepted').checked || full && !$('#aiMailRiskAccepted').checked;
+}
+
+async function openAiControlDialog(mode = 'confirm') {
+  state.aiPendingPermissionMode = mode === 'full' ? 'full' : 'confirm';
   try {
     state.aiControlInfo = await window.ph.ai.controlInfo();
   } catch {
-    state.aiControlInfo = { consentVersion: 1 };
+    state.aiControlInfo = { consentVersion: 1, mailConsentVersion: 2 };
   }
+  const full = pendingAiPermissionMode() === 'full';
   $('#aiRiskAccepted').checked = false;
-  $('#acceptAiControl').disabled = true;
+  $('#aiMailRiskAccepted').checked = false;
+  $('#aiMailRisk').classList.toggle('hidden', !full);
+  $('#aiMailRiskCheck').classList.toggle('hidden', !full);
+  $('#aiControlDialogTitle').textContent = full ? '允许 AI 使用完整权限' : '允许 AI 操作启动器';
+  $('#aiControlRiskIntro').textContent = full
+    ? state.data.settings.ai.provider === 'api'
+      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
+      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
+    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改。';
+  refreshAiControlAcceptance();
   $('#aiApiRisk').classList.toggle('hidden', state.data.settings.ai.provider !== 'api');
   $('#aiControlDialog').showModal();
 }
 
 async function disableAiControl() {
   try {
-    const saved = await window.ph.ai.configure({ launcherControlEnabled: false });
+    const saved = await window.ph.ai.configure({ permissionMode: 'chat', launcherControlEnabled: false, mailReadEnabled: false });
     state.data.settings.ai = saved;
     renderAiControl();
     toast('AI 启动器操作已关闭');
@@ -1337,17 +1623,26 @@ async function disableAiControl() {
 
 async function acceptAiControl(event) {
   event.preventDefault();
-  if (!$('#aiRiskAccepted').checked) return;
+  const mode = pendingAiPermissionMode();
+  if (!$('#aiRiskAccepted').checked || mode === 'full' && !$('#aiMailRiskAccepted').checked) return;
   try {
-    const saved = await window.ph.ai.configure({
+    const acceptedAt = new Date().toISOString();
+    const control = {
+      permissionMode: mode,
       launcherControlEnabled: true,
       controlConsentVersion: Number(state.aiControlInfo?.consentVersion || 1),
-      controlConsentAcceptedAt: new Date().toISOString(),
-    });
+      controlConsentAcceptedAt: acceptedAt,
+      mailReadEnabled: mode === 'full',
+    };
+    const saved = await window.ph.ai.configure(mode === 'full' ? {
+      ...control,
+      mailConsentVersion: Number(state.aiControlInfo?.mailConsentVersion || 2),
+      mailConsentAcceptedAt: acceptedAt,
+    } : control);
     state.data.settings.ai = saved;
     $('#aiControlDialog').close();
     renderAiControl();
-    toast('AI 启动器操作已开启；写入仍需逐次确认');
+    toast(mode === 'full' ? '完整权限已开启；仅在你请求时读取启动器学习资料，写入仍需确认' : 'AI 启动器操作已开启；写入仍需逐次确认');
   } catch (error) {
     toast(error.message, 'error');
   }
@@ -1357,7 +1652,8 @@ function proposalMarkup(proposal) {
   if (!proposal?.id || !Array.isArray(proposal.groups)) return '';
   const resolved = ['committed', 'canceled'].includes(proposal.status);
   const status = proposal.status === 'committed' ? '已写入' : proposal.status === 'canceled' ? '已取消' : proposal.status === 'working' ? '处理中' : '等待确认';
-  const groups = proposal.groups.map((group) => `<section class="proposal-group"><b>${escapeHtml(group.title)}</b>${(group.items || []).map((item) => `<div class="proposal-item"><strong>${escapeHtml(item.primary)}</strong><span>${escapeHtml(item.secondary)}</span></div>`).join('')}</section>`).join('');
+  const recurrence = (item) => item.repeatWeekdays?.length ? `<small translate="no">${window.i18n?.locale() === 'en' ? 'Weekly: ' : '每周：'}${item.repeatWeekdays.map(day => (window.i18n?.locale() === 'en' ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'] : ['','周一','周二','周三','周四','周五','周六','周日'])[day] || '').join(' / ')}</small>` : '';
+  const groups = proposal.groups.map((group) => `<section class="proposal-group"><b>${escapeHtml(group.title)}</b>${(group.items || []).map((item) => `<div class="proposal-item"><strong>${escapeHtml(item.primary)}</strong><span>${escapeHtml(item.secondary)}${recurrence(item)}</span></div>`).join('')}</section>`).join('');
   return `<section class="ai-proposal-card${resolved ? ' resolved' : ''}" data-proposal-id="${escapeHtml(proposal.id)}">
     <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>只有确认后才会保存到 PH Launcher</span></div><em>${escapeHtml(status)}</em></div>
     <div class="proposal-groups">${groups}</div>
@@ -1367,16 +1663,22 @@ function proposalMarkup(proposal) {
 }
 
 function renderChat() {
+  window.agentUI?.render();
   const messages = state.aiMessages.filter((message) => message.role !== 'system');
   $('#chatMessages').innerHTML = messages.map((message) => {
-    const content = `<div class="chat-bubble">${escapeHtml(message.content)}</div>`;
+    const visibleContent = message.streaming && !message.content ? (window.i18n?.t(state.aiStreamStatus || '正在连接 AI…') || state.aiStreamStatus || '正在连接 AI…') : message.content;
+    const content = `<div class="chat-bubble">${escapeHtml(visibleContent)}</div>`;
     if (message.role === 'assistant' && message.proposal) {
       return `<div class="chat-message assistant"><div class="chat-response">${content}${proposalMarkup(message.proposal)}</div></div>`;
     }
     return `<div class="chat-message ${escapeHtml(message.role)}">${content}</div>`;
-  }).join('') + (state.aiBusy ? '<div class="chat-message assistant"><div class="chat-bubble">正在处理…</div></div>' : '');
+  }).join('') + (state.aiBusy && !messages.some((message) => message.streaming) ? `<div class="chat-message assistant"><div class="chat-bubble">${escapeHtml(state.aiStreamStatus || '正在处理…')}</div></div>` : '');
   $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
-  $('#aiSend').disabled = state.aiBusy;
+  const send = $('#aiSend');
+  send.disabled = state.aiBusy && !state.aiRequestId;
+  send.title = state.aiRequestId ? '停止生成' : '发送';
+  send.setAttribute('aria-label', send.title);
+  send.innerHTML = state.aiRequestId ? '停止' : '<svg><use href="#i-arrow"/></svg>';
 }
 
 function proposalMessage(proposalId) {
@@ -1387,6 +1689,7 @@ function committedSummary(counts = {}) {
   const parts = [];
   if (counts.tasksAdded) parts.push(`${counts.tasksAdded} 个任务`);
   if (counts.notesAdded) parts.push(`${counts.notesAdded} 条笔记`);
+  if (counts.calendarEvents) parts.push(`${counts.calendarEvents} 条日程`);
   if (counts.lessonsAdded) parts.push(`${counts.lessonsAdded} 节课程`);
   if (counts.lessonsUpdated) parts.push(`更新 ${counts.lessonsUpdated} 节课程`);
   if (counts.tasksChanged) parts.push(`${counts.tasksChanged} 个任务状态`);
@@ -1404,6 +1707,7 @@ async function confirmAiProposal(proposalId) {
     message.proposal.status = 'committed';
     if (result.data) state.data = result.data;
     renderAll();
+    if (result.counts?.calendarEvents) await window.calendarUI?.refresh();
     toast(`已写入：${committedSummary(result.counts)}`);
   } catch (error) {
     message.proposal.status = '';
@@ -1428,8 +1732,10 @@ async function previewEduPageTimetable() {
     return;
   }
   if (state.aiBusy) return;
+  window.agentUI?.prepareForSend?.();
   state.aiMessages.push({ role: 'user', content: '请从我当前打开的 EduPage 常规课表生成导入预览。' });
   state.aiBusy = true;
+  window.agentUI?.scheduleSave();
   renderChat();
   try {
     const response = await window.ph.ai.previewEduPage();
@@ -1438,47 +1744,286 @@ async function previewEduPageTimetable() {
     state.aiMessages.push({ role: 'assistant', content: `还不能读取课表：${error.message}\n\n请先打开 EduPage，登录并进入“常规课表”，然后回到这里重试。` });
   } finally {
     state.aiBusy = false;
+    void window.agentUI?.saveNow?.();
     renderChat();
   }
+}
+
+function cancelAiStream() {
+  const requestId = state.aiRequestId;
+  if (!requestId) return;
+  state.aiRequestId = '';
+  state.aiStreamStatus = '';
+  const partial = state.aiMessages.find((message) => message.streaming);
+  if (partial) {
+    partial.content = partial.content || '已停止生成。';
+    delete partial.streaming;
+  }
+  state.aiBusy = false;
+  void window.ph.ai.cancelStream(requestId);
+  void window.agentUI?.saveNow?.();
+  renderChat();
+}
+
+function resizeAiInput() {
+  const input = $('#aiInput');
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 112)}px`;
 }
 
 async function sendAiMessage() {
   const input = $('#aiInput');
   const content = input.value.trim();
-  if (!content || state.aiBusy) return;
-  state.aiMessages.push({ role: 'user', content });
+  if (!content || state.aiBusy || state.aiConfirming || window.aiAttachmentDraft?.busy()) return;
+  const attachments = window.aiAttachmentDraft?.list() || [];
+  const apiAttachments = attachments.length && state.data.settings.ai.provider === 'api';
+  if (apiAttachments) {
+    const signature = () => JSON.stringify([state.data.settings.ai, window.agentUI?.connectionKey?.(), window.agentUI?.currentSession?.()?.id, input.value, window.aiAttachmentDraft?.list().map(item => item.id)]);
+    const before = signature();
+    state.aiConfirming = true;
+    let accepted = false;
+    try { accepted = await window.confirmApiDisclosure?.(); }
+    finally { state.aiConfirming = false; }
+    // Async confirmation must never authorize a different provider, draft,
+    // conversation or attachment set changed while the dialog was open.
+    if (!accepted || state.aiBusy || before !== signature()) return;
+  }
+  const session = window.agentUI?.prepareForSend?.();
+  state.aiMessages.push({ role: 'user', content: content + (attachments.length ? `\n\n📎 ${attachments.map(item => item.name).join(' · ')}` : '') });
   input.value = '';
+  resizeAiInput();
+  const conversation = state.aiMessages;
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const assistantMessage = { role: 'assistant', content: '', streaming: true };
+  conversation.push(assistantMessage);
   state.aiBusy = true;
+  state.aiRequestId = requestId;
+  state.aiStreamStatus = state.aiLocalWarmup.localWarmup === 'warming' ? '正在准备本机模型…' : '正在连接 AI…';
+  window.agentUI?.scheduleSave();
   renderChat();
   const system = {
     role: 'system',
     content: '你是 PH Launcher 的 IB 学习助手。优先用提问、拆解、例子和自测帮助学生真正理解；不要替学生完成需要本人思考或提交的作业。回答简洁、准确，明确不确定性；涉及课程评分标准时提醒核对教师要求和最新 IB 指南。用户要求你整理启动器内容时，使用提供的工具；任何写入都只是待确认方案，不能声称已经保存。',
   };
   try {
-    const history = state.aiMessages.slice(-16).map(({ role, content: messageContent }) => ({ role, content: messageContent }));
-    const response = await window.ph.ai.chat([system, ...history]);
-    if (typeof response === 'string') state.aiMessages.push({ role: 'assistant', content: response || '没有收到有效回复。' });
-    else state.aiMessages.push({ role: 'assistant', content: response?.content || '没有收到有效回复。', proposal: response?.proposal || null });
+    const history = conversation.filter((message) => !message.streaming).slice(-16).map(({ role, content: messageContent }) => ({ role, content: messageContent }));
+    const response = await window.ph.ai.chatStream(requestId, [system, ...history], {
+      useMemories: Boolean(state.aiUseMemories),
+      connectionKey: session?.connectionKey || '',
+      attachmentIds: attachments.map(item => item.id),
+      attachmentApiConsent: Boolean(apiAttachments),
+    });
+    if (state.aiMessages === conversation && state.aiRequestId === requestId) {
+      assistantMessage.content = typeof response === 'string' ? (response || assistantMessage.content || '没有收到有效回复。') : (response?.content || assistantMessage.content || '没有收到有效回复。');
+      assistantMessage.proposal = typeof response === 'string' ? null : (response?.proposal || null);
+      delete assistantMessage.streaming;
+      window.aiAttachmentDraft?.clear();
+    }
   } catch (error) {
-    state.aiMessages.push({ role: 'assistant', content: `连接失败：${error.message}\n\n请检查模型服务或 API 设置。` });
+    if (state.aiMessages === conversation && conversation.includes(assistantMessage)) {
+      assistantMessage.content = /取消|替换|变更/.test(error.message || '')
+        ? (assistantMessage.content || '已停止生成。')
+        : `连接失败：${error.message}\n\n请检查模型服务或 API 设置。`;
+      delete assistantMessage.streaming;
+    }
   } finally {
-    state.aiBusy = false;
-    renderChat();
+    if (state.aiRequestId === requestId) {
+      state.aiBusy = false;
+      state.aiRequestId = '';
+      state.aiStreamStatus = '';
+      void window.agentUI?.saveNow?.();
+      renderChat();
+    }
   }
 }
 
 function renderWebsiteSettings() {
   const descriptions = {
-    mail: '登录页使用轻量显示；是否记住用户名按邮箱原站设置，启动器不保存密码。',
-    managebac: '需要保持登录时，请在登录页勾选“Remember me for 30 days”。',
-    edupage: 'EduPage 会在真正退出浏览器后删除登录 Cookie；保持托盘运行时可继续使用。',
+    mail: '使用本地收件箱阅读、保存附件与写信；账号仅用于连接邮箱。',
+    managebac: '需要保持登录时，可在登录页勾选“Remember me for 30 days”，也可选择账号记忆。',
+    edupage: 'EduPage 可能在真正退出浏览器后删除登录 Cookie；账号记忆可在下次登录页填入信息。',
   };
   $('#websiteSettings').innerHTML = Object.entries(BUILTIN_SITE_META).map(([id, site]) => `<div class="website-setting">
     <div class="site-card-icon ${id === 'mail' ? 'green' : id === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div>
     <div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(descriptions[id])}</small></div>
-    <div class="website-setting-actions"><button class="clear-site-button" data-clear-site="${id}">清除登录数据</button><div class="clean-setting-control"><small>简洁显示</small><label class="switch"><input type="checkbox" data-clean-site="${id}" ${state.data.settings.siteCleanMode[id] ? 'checked' : ''}/><span></span></label></div></div>
+    <div class="website-setting-actions"><button class="clear-site-button" data-clear-site="${id}">清除登录数据</button></div>
   </div>`).join('');
+  renderCredentialSettings();
   renderCustomWebsiteSettings();
+}
+
+function credentialEntry(siteId) {
+  return state.credentialStatus?.sites?.[siteId] || {
+    saved: false,
+    username: '',
+    displayUsername: '',
+    autoFill: false,
+    updatedAt: '',
+  };
+}
+
+function renderCredentialSettings() {
+  const container = $('#credentialSettings');
+  if (!container) return;
+  const status = state.credentialStatus;
+  if (!status) {
+    container.innerHTML = '<div class="empty-row credential-loading">正在检查系统安全存储…</div>';
+    return;
+  }
+  if (!status.supported || status.issue) {
+    const reason = status.issue || status.reason || '当前系统无法安全保存密码';
+    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small></div>`;
+    return;
+  }
+  container.innerHTML = Object.entries(BUILTIN_SITE_META).map(([siteId, site]) => {
+    const credential = credentialEntry(siteId);
+    const statusText = credential.saved
+      ? siteId === 'mail'
+        ? `已加密保存 ${credential.displayUsername || '账号'} · 用于本地收件箱`
+        : `已加密保存 ${credential.displayUsername || '账号'} · ${credential.autoLogin ? '允许自动重新登录' : credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
+      : siteId === 'mail' ? '尚未登录；添加账号后可使用本地收件箱' : '未保存密码；仍可使用网站自己的保持登录';
+    const actions = credential.saved
+      ? siteId === 'mail'
+        ? `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
+        : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
+      : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
+    return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
+  }).join('');
+}
+
+function openCredentialDialog(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  const status = state.credentialStatus;
+  if (!site || !status?.supported || status.issue) {
+    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+  }
+  const credential = credentialEntry(siteId);
+  $('#credentialForm').reset();
+  $('#credentialSiteId').value = siteId;
+  $('#credentialUsername').value = credential.username || '';
+  $('#credentialPassword').required = !credential.saved;
+  $('#credentialPasswordNote').textContent = credential.saved
+    ? '如需保留原密码，请留空；保存后不会显示密码。'
+    : '保存后不会显示密码；如需更新，请重新输入。';
+  const isMail = siteId === 'mail';
+  $('#credentialAutoFill').checked = isMail ? false : credential.saved ? Boolean(credential.autoFill) : true;
+  $('#credentialAutoFillRow').hidden = isMail;
+  $('#credentialAutoLoginRow').hidden = isMail;
+  $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
+  $('#credentialDialogTitle').textContent = '账号登录';
+  $('#credentialPasswordLabel').textContent = isMail ? '密码或客户端授权码' : '密码';
+  $('#credentialIntro').textContent = siteId === 'mail'
+    ? '网易邮箱可能需要先开启 IMAP/SMTP，并使用客户端授权码。密码或授权码会使用当前系统用户密钥加密，只发送到网易固定邮件服务器；邮件内容不会交给 AI。'
+    : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
+  $('#credentialRiskAccepted').checked = false;
+  $('#saveCredentialButton').disabled = true;
+  $('#saveCredentialButton').textContent = '保存并登录';
+  $('#credentialDialog').showModal();
+  setTimeout(() => $('#credentialUsername').focus(), 30);
+}
+
+async function saveCredentialFromDialog(event) {
+  event.preventDefault();
+  if (credentialSubmitInFlight) return;
+  if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
+  const saveButton = $('#saveCredentialButton');
+  const credential = {
+    siteId: $('#credentialSiteId').value,
+    username: $('#credentialUsername').value,
+    password: $('#credentialPassword').value,
+    autoFill: $('#credentialAutoFill').checked,
+    autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
+  };
+  // Clear the editable password field before waiting for IPC. The main process
+  // receives the value through the isolated bridge and never returns it.
+  $('#credentialPassword').value = '';
+  saveButton.disabled = true;
+  credentialSubmitInFlight = true;
+  try {
+    state.credentialStatus = await window.ph.credentials.save(credential);
+    $('#credentialDialog').close();
+    renderCredentialSettings();
+  } catch (error) {
+    toast(`无法保存账号：${error.message}`, 'error');
+    return;
+  } finally {
+    credentialSubmitInFlight = false;
+    if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
+  }
+  if (credential.siteId === 'mail') {
+    try {
+      if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
+      const connected = await window.mailUI.connect();
+      if (connected) toast('已登录并同步最近邮件');
+    } catch (error) {
+      toast(`账号已保存，但无法连接邮箱：${error.message}`, 'error');
+    }
+    return;
+  }
+  try {
+    if (typeof window.schoolUI?.connect !== 'function') throw new Error('学校登录服务尚未准备好');
+    const connected = await window.schoolUI.connect(credential.siteId, { approved: true });
+    if (connected) toast(`${BUILTIN_SITE_META[credential.siteId].name} 已登录并同步`);
+  } catch (error) {
+    toast(`账号已保存，但无法连接 ${BUILTIN_SITE_META[credential.siteId].name}：${error.message}`, 'error');
+  }
+}
+
+async function connectWithSavedCredential(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  if (!site) return;
+  try {
+    if (siteId === 'mail') {
+      if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
+      const connected = await window.mailUI.connect();
+      if (connected) toast('已登录并同步最近邮件');
+      return;
+    }
+    if (typeof window.schoolUI?.connect !== 'function') throw new Error('学校登录服务尚未准备好');
+    const connected = await window.schoolUI.connect(siteId, { approved: true });
+    if (connected) toast(`${site.name} 已登录并同步`);
+  } catch (error) {
+    toast(`无法连接 ${site.name}：${error.message}`, 'error');
+  }
+}
+
+window.openSchoolAccount = openCredentialDialog;
+
+async function removeCredential(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  if (!site || !await localizedConfirm(`删除 ${site.name} 保存的账号和密码？网站登录状态不会受影响。`)) return;
+  try {
+    const result = await window.ph.credentials.remove(siteId);
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    toast(`${site.name} 保存的登录信息已删除`);
+  } catch (error) {
+    toast(`无法删除登录信息：${error.message}`, 'error');
+  }
+}
+
+async function fillCredentialOnce(siteId) {
+  const site = BUILTIN_SITE_META[siteId];
+  if (!site) return;
+  await openSite(siteId);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (state.activeSite !== siteId) return;
+    try {
+      const result = await window.ph.credentials.fill(siteId);
+      if (result.filled) {
+        toast('已填入登录信息；请自行确认并登录');
+        return;
+      }
+      if (result.reason === 'fields-not-empty') return toast('登录栏已有内容，未覆盖；请检查后自行登录');
+      if (['untrusted-page', 'untrusted-form-action', 'not-login-form', 'ambiguous-form'].includes(result.reason)) break;
+    } catch (error) {
+      toast(`无法填入登录信息：${error.message}`, 'error');
+      return;
+    }
+  }
+  toast('当前页面没有可填写的登录栏；请前往对应网站的登录页后重试', 'error');
 }
 
 function renderCustomWebsiteSettings() {
@@ -1548,7 +2093,7 @@ async function saveCustomSiteFromDialog(event) {
 
 async function removeCustomSite(siteId) {
   const site = customSites().find((item) => item.id === siteId);
-  if (!site || !confirm(`删除“${site.name}”并清除它的全部登录数据？`)) return;
+  if (!site || !await localizedConfirm(`删除“${site.name}”并清除它的全部登录数据？`)) return;
   try {
     const result = await window.ph.sites.removeCustom(siteId);
     const wasActive = state.activeSite === siteId;
@@ -1592,6 +2137,7 @@ function renderSettings() {
   $('#studentNameSetting').value = settings.studentName || '';
   $('#openAtLoginSetting').checked = Boolean(settings.openAtLogin);
   $('#minimizeTraySetting').checked = Boolean(settings.minimizeToTray);
+  $('#startupSyncSetting').checked = settings.schoolStartupSync !== false;
   $('#reminderSetting').value = String(settings.defaultReminderMinutes ?? 10);
   $('#encryptionStatus').textContent = state.data.meta?.encrypted
     ? state.data.meta?.platform === 'darwin' ? '本地数据已使用 macOS 钥匙串保护' : '本地数据已使用当前系统用户密钥加密'
@@ -1613,7 +2159,7 @@ async function updateShortcut(action, patch) {
 function commandCatalog() {
   return [
     { id: 'today', label: '打开“今天”', description: '回到首页仪表盘', icon: 'i-home', shortcut: '' },
-    { id: 'mail', label: '打开学校邮箱', description: '校园邮件与通知', icon: 'i-mail', shortcut: 'Ctrl 1' },
+    { id: 'mail', label: '打开平和邮箱', description: '校园邮件与通知', icon: 'i-mail', shortcut: 'Ctrl 1' },
     { id: 'managebac', label: '打开 ManageBac', description: '课程、作业与 IB 进度', icon: 'i-grid', shortcut: 'Ctrl 2' },
     { id: 'edupage', label: '打开 EduPage', description: '课表与校园安排', icon: 'i-calendar', shortcut: 'Ctrl 3' },
     ...customSites().map((site) => ({
@@ -1627,6 +2173,10 @@ function commandCatalog() {
     { id: 'new-note', label: '新建笔记', description: '创建一条本地笔记', icon: 'i-note', shortcut: 'Ctrl Shift N' },
     { id: 'dictionary', label: '打开离线词典', description: '本机英汉释义、音标与词形', icon: 'i-book', shortcut: 'Ctrl D' },
     { id: 'focus', label: '开始或暂停专注', description: '控制当前计时器', icon: 'i-clock', shortcut: 'Ctrl Shift P' },
+    { id: 'timetable', label: '打开我的课表', description: '查看自己的教学组课表', icon: 'i-calendar', shortcut: '' },
+    { id: 'calendar', label: '打开我的日程', description: '管理个人日程', icon: 'i-calendar', shortcut: '' },
+    { id: 'class-timetable', label: '打开班级课表', description: '查看班级全部可见教学组', icon: 'i-grid', shortcut: '' },
+    { id: 'courses', label: '打开我的课程', description: '查看课程、作业与截止信息', icon: 'i-book', shortcut: '' },
     { id: 'plan', label: '打开计划', description: '任务、课程表与专注记录', icon: 'i-calendar', shortcut: '' },
     { id: 'ib', label: '打开 IB 工具', description: '指令词、字数与成绩试算', icon: 'i-flask', shortcut: '' },
     { id: 'ibdocs', label: '打开 IB Docs', description: '非官方资料导航，在系统浏览器中打开', icon: 'i-external', shortcut: '' },
@@ -1655,7 +2205,7 @@ function renderCommandPalette() {
 function executeCommand(commandId) {
   $('#commandDialog').close();
   if (SITE_META[commandId]) return openSite(commandId);
-  if (ROUTE_META[commandId]) return navigate(commandId);
+  if (ROUTE_META[commandId] || ROUTE_ALIASES[commandId]) return navigate(commandId);
   if (commandId === 'new-task') openTaskDialog();
   if (commandId === 'new-note') { navigate('notes'); createNote(); }
   if (commandId === 'focus') toggleTimer();
@@ -1672,13 +2222,14 @@ function openOfficialIbSamples() {
     .catch((error) => toast(`无法打开资源：${error.message}`, 'error'));
 }
 
-function openIbDocsResource() {
-  if (!confirm('IB Docs 是第三方网站，与 IBO 无隶属或背书关系，可能包含受版权保护的资料。仅在学校或权利人明确授权的情况下访问和使用。继续在浏览器中打开吗？')) return;
+async function openIbDocsResource() {
+  if (!await localizedConfirm('IB Docs 是第三方网站，与 IBO 无隶属或背书关系，可能包含受版权保护的资料。仅在学校或权利人明确授权的情况下访问和使用。继续在浏览器中打开吗？')) return;
   return window.ph.system.openUrl('https://ibdocs.re/')
     .catch((error) => toast(`无法打开资源：${error.message}`, 'error'));
 }
 
 function setPlanTab(tab) {
+  if (tab === 'schedule') { navigate('calendar'); return; }
   state.planTab = tab;
   $$('[data-tab-group="plan"] button').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab));
   $$('[data-tab-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.tabPanel === tab));
@@ -1688,6 +2239,8 @@ function setPlanTab(tab) {
 }
 
 function renderAll() {
+  window.i18n?.apply(state.data?.settings?.language);
+  window.appearanceUI?.apply(state.data?.settings?.appearance);
   refreshSiteMeta();
   updateClock();
   renderDashboard();
@@ -1698,11 +2251,75 @@ function renderAll() {
   renderIbTools();
   renderAi();
   renderSettings();
+  window.appearanceUI?.render();
   renderFocusStats();
   updateTimerUi();
 }
 
+function renderOnboarding() {
+  const content = $('#onboardingContent');
+  const dialog = $('#onboardingDialog');
+  if (!content || !dialog) return;
+  const en = window.i18n?.locale?.() === 'en';
+  const accounts = [
+    ['edupage', en ? 'EduPage timetable' : 'EduPage 课表'],
+    ['managebac', 'ManageBac'],
+    ['mail', en ? 'Pinghe Mail' : '平和邮箱'],
+  ];
+  const accountRows = accounts.map(([id, label]) => {
+    const saved = credentialEntry(id).saved;
+    return `<button type="button" data-onboarding-account="${id}"><span><strong>${label}</strong><small>${saved ? (en ? 'Configured' : '已配置') : (en ? 'Set up account' : '去设置账号')}</small></span><span>${saved ? '✓' : '→'}</span></button>`;
+  }).join('');
+  const steps = en ? [
+    { title: 'Connect your school services', copy: 'Set up EduPage, ManageBac and Pinghe Mail. Passwords are encrypted locally and each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">You can change these accounts later in Settings → Websites.</p>` },
+    { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
+    { title: 'Try Wellbeing (optional)', copy: 'Xinlv is embedded as a launcher module for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
+  ] : [
+    { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会在本机加密保存，也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
+    { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
+    { title: '试试心理模块（可选）', copy: '心履已作为启动器中的独立模块嵌入，登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心理</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心理”打开。</p>' },
+  ];
+  const step = steps[Math.max(0, Math.min(state.onboardingStep, steps.length - 1))];
+  content.innerHTML = `<h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
+  $('#onboardingBack').hidden = state.onboardingStep === 0;
+  $('#onboardingNext').textContent = state.onboardingStep === steps.length - 1 ? (en ? 'Finish' : '完成') : (en ? 'Next' : '下一步');
+}
+
+function finishOnboarding() {
+  state.onboardingPending = false;
+  if (state.data) {
+    state.data.settings.onboardingCompleted = true;
+    void persistData(true);
+  }
+  $('#onboardingDialog')?.close();
+}
+
+function openOnboarding(step = 0) {
+  if (!state.data || state.data.settings.onboardingCompleted === true) return;
+  state.onboardingPending = false;
+  state.onboardingStep = Math.max(0, Math.min(2, Number(step) || 0));
+  renderOnboarding();
+  const dialog = $('#onboardingDialog');
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function openOnboardingDestination(action) {
+  state.onboardingPending = true;
+  $('#onboardingDialog')?.close();
+  action();
+}
+
 function handleBodyClick(event) {
+  const onboardingAccount = event.target.closest('[data-onboarding-account]');
+  if (onboardingAccount) { openCredentialDialog(onboardingAccount.dataset.onboardingAccount); return; }
+  if (event.target.closest('#onboardingAiSettings')) { openOnboardingDestination(() => navigate('ai')); return; }
+  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => openSite('psychology')); return; }
+  if (event.target.closest('#onboardingNext')) {
+    if (state.onboardingStep >= 2) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
+    return;
+  }
+  if (event.target.closest('#onboardingBack')) { state.onboardingStep = Math.max(0, state.onboardingStep - 1); renderOnboarding(); return; }
+  if (event.target.closest('#onboardingSkip, #onboardingClose')) { finishOnboarding(); return; }
   const routeTarget = event.target.closest('[data-route]');
   if (routeTarget) {
     navigate(routeTarget.dataset.route);
@@ -1716,7 +2333,7 @@ function handleBodyClick(event) {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (action === 'quick-task') openTaskDialog();
   if (action === 'new-note') createNote();
-  if (action === 'add-lesson') openLessonDialog();
+  if (action === 'add-lesson') navigate('calendar');
   if (action === 'open-focus') { navigate('plan'); setPlanTab('focus'); }
   if (action === 'add-custom-site') openCustomSiteDialog();
 
@@ -1872,20 +2489,23 @@ function bindEvents() {
   });
 
   $('#miniFocusPlay').addEventListener('click', toggleTimer);
+  $('#miniFocusManage').addEventListener('click', openFocusSettings);
+  $('#miniFocusStop').addEventListener('click', resetTimer);
   $('#focusPlay').addEventListener('click', toggleTimer);
   $('#focusReset').addEventListener('click', resetTimer);
-  $('#focusSkip').addEventListener('click', skipTimerPhase);
+  $('#focusConfigure').addEventListener('click', openFocusSettings);
+  $('#focusSettingsForm').addEventListener('submit', saveFocusSettings);
+  $('#focusOpenTarget').addEventListener('click', openFocusTarget);
+  $('#miniFocusTarget').addEventListener('click', () => {
+    const timer = ensureTimer();
+    if (timer.sessionStarted && focusTargetInfo(timer.target)) openFocusTarget();
+    else openFocusSettings();
+  });
   $('#focusPresets').addEventListener('click', (event) => {
     const button = event.target.closest('[data-focus]');
     if (button) setTimerPreset(Number(button.dataset.focus), Number(button.dataset.break));
   });
 
-  $('#siteCleanToggle').addEventListener('change', async (event) => {
-    if (!state.activeSite || SITE_META[state.activeSite]?.custom) return;
-    state.data.settings.siteCleanMode[state.activeSite] = event.target.checked;
-    await window.ph.sites.setClean(state.activeSite, event.target.checked);
-    persistData();
-  });
   $('#siteMenuButton').addEventListener('click', (event) => {
     event.stopPropagation();
     $('#sitePopover').classList.toggle('hidden');
@@ -1896,13 +2516,16 @@ function bindEvents() {
   });
   $('#siteClearAction').addEventListener('click', async () => {
     if (!state.activeSite) return;
+    const targetSite = state.activeSite;
     const name = SITE_META[state.activeSite]?.name;
     if (!name) return;
-    if (!confirm(`清除 ${name} 的登录状态、Cookie 与缓存？`)) return;
+    const includesSavedPassword = Boolean(BUILTIN_SITE_META[state.activeSite]);
+    if (!await localizedConfirm(`清除 ${name} 的登录状态、Cookie、缓存${includesSavedPassword ? '与已保存密码' : ''}？`)) return;
     try {
-      await window.ph.sites.clearData(state.activeSite);
+      const result = await window.ph.sites.clearData(targetSite);
       $('#sitePopover').classList.add('hidden');
-      toast(`${name} 的登录数据已清除`);
+      if (result?.credentialError) return toast('网页登录状态已清除，但保存密码删除失败。请在账号记忆设置中检查，暂未重新打开网站。', 'error');
+      toast(result?.credentialRemoved ? `${name} 的登录数据和保存密码已清除` : `${name} 的登录数据已清除`);
     } catch (error) {
       toast(`无法清除登录数据：${error.message}`, 'error');
     }
@@ -1919,27 +2542,42 @@ function bindEvents() {
     if (event.key === 'Enter') { event.preventDefault(); const item = state.commandItems[state.commandIndex]; if (item) executeCommand(item.id); }
   });
 
-  $('#aiSend').addEventListener('click', sendAiMessage);
-  $('#aiInput').addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) sendAiMessage(); });
-  $$('.prompt-chips button[data-prompt]').forEach((button) => button.addEventListener('click', () => { $('#aiInput').value = button.dataset.prompt || ''; $('#aiInput').focus(); }));
-  $('[data-ai-action="edupage"]').addEventListener('click', previewEduPageTimetable);
+  $('#aiSend').addEventListener('click', () => {
+    if (state.aiRequestId) cancelAiStream();
+    else sendAiMessage();
+  });
+  $('#aiInput').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendAiMessage(); } });
+  $('#aiInput').addEventListener('input', resizeAiInput);
+  $$('.prompt-chips button[data-prompt]').forEach((button) => button.addEventListener('click', () => {
+    $('#aiInput').value = button.dataset.prompt || ''; $('#aiInput').focus();
+    button.closest('details')?.removeAttribute('open');
+    resizeAiInput();
+    const ai = state.data?.settings?.ai || {};
+    const mailReadEnabled = ai.permissionMode === 'full' && ai.mailReadEnabled === true && ai.mailConsentVersion === 2 && ai.launcherControlEnabled;
+    if (button.dataset.requiresMailRead === 'true' && !mailReadEnabled) toast('请先选择“完整权限”并同意收件箱读取，再发送这个请求。');
+  }));
+  $('[data-ai-action="edupage"]')?.addEventListener('click', previewEduPageTimetable);
   $('#aiControlToggle').addEventListener('change', (event) => {
+    const mode = event.target.dataset.agentMode || 'confirm';
+    delete event.target.dataset.agentMode;
     if (event.target.checked) {
       event.target.checked = false;
-      openAiControlDialog();
+      openAiControlDialog(mode);
     } else {
       disableAiControl();
     }
   });
-  $('#aiRiskAccepted').addEventListener('change', (event) => { $('#acceptAiControl').disabled = !event.target.checked; });
+  $('#aiRiskAccepted').addEventListener('change', refreshAiControlAcceptance);
+  $('#aiMailRiskAccepted').addEventListener('change', refreshAiControlAcceptance);
   $('#aiControlForm').addEventListener('submit', acceptAiControl);
+  $('#aiControlDialog').addEventListener('close', () => { state.aiPendingPermissionMode = ''; renderAiControl(); });
   $('#chatMessages').addEventListener('click', (event) => {
     const confirmId = event.target.closest('[data-confirm-proposal]')?.dataset.confirmProposal;
     const cancelId = event.target.closest('[data-cancel-proposal]')?.dataset.cancelProposal;
     if (confirmId) confirmAiProposal(confirmId);
     if (cancelId) cancelAiProposal(cancelId);
   });
-  $('#aiEditConfig').addEventListener('click', () => { state.aiEditing = true; renderAi(); });
+  $('#aiEditConfig').addEventListener('click', beginAiEditing);
   $('#aiConfigPanel').addEventListener('click', async (event) => {
     if (event.target.closest('#saveAiOff')) configureAi('off');
     if (event.target.closest('#saveLocalAi')) configureAi('local');
@@ -1963,29 +2601,45 @@ function bindEvents() {
       toast('模型命令已复制');
     }
     if (event.target.closest('#clearApiKey')) {
+      cancelAiStream();
       const saved = await window.ph.ai.configure({ clearApiKey: true, enabled: false });
       state.data.settings.ai = saved;
+      await window.agentUI?.loadHistory?.();
       renderAiConfig();
       toast('API Key 已删除');
     }
   });
 
   $('#studentNameSetting').addEventListener('input', (event) => { state.data.settings.studentName = event.target.value; updateClock(); persistData(); });
+  $('#startupSyncSetting').addEventListener('change', (event) => { state.data.settings.schoolStartupSync = event.target.checked; persistData(true); });
   $('#openAtLoginSetting').addEventListener('change', (event) => { state.data.settings.openAtLogin = event.target.checked; persistData(true); });
   $('#minimizeTraySetting').addEventListener('change', (event) => { state.data.settings.minimizeToTray = event.target.checked; persistData(true); });
   $('#reminderSetting').addEventListener('change', (event) => { state.data.settings.defaultReminderMinutes = Number(event.target.value); persistData(); });
-  $('#websiteSettings').addEventListener('change', async (event) => {
-    const siteId = event.target.dataset.cleanSite;
-    if (!siteId) return;
-    state.data.settings.siteCleanMode[siteId] = event.target.checked;
-    await window.ph.sites.setClean(siteId, event.target.checked);
-    persistData();
-  });
   $('#websiteSettings').addEventListener('click', async (event) => {
     const siteId = event.target.closest('[data-clear-site]')?.dataset.clearSite;
-    if (!siteId || !confirm(`清除 ${SITE_META[siteId].name} 的全部登录数据？`)) return;
-    await window.ph.sites.clearData(siteId);
-    toast(`${SITE_META[siteId].name} 的登录数据已清除`);
+    if (!siteId || !await localizedConfirm(`清除 ${SITE_META[siteId].name} 的登录状态、Cookie、缓存与已保存密码？`)) return;
+    const result = await window.ph.sites.clearData(siteId);
+    if (result?.credentialError) return toast('网页登录状态已清除，但保存密码删除失败。请在账号记忆设置中检查。', 'error');
+    toast(result?.credentialRemoved ? `${SITE_META[siteId].name} 的登录数据和保存密码已清除` : `${SITE_META[siteId].name} 的登录数据已清除`);
+  });
+  $('#credentialSettings').addEventListener('click', (event) => {
+    const editId = event.target.closest('[data-edit-credential]')?.dataset.editCredential;
+    const removeId = event.target.closest('[data-remove-credential]')?.dataset.removeCredential;
+    const fillId = event.target.closest('[data-fill-credential]')?.dataset.fillCredential;
+    const connectId = event.target.closest('[data-connect-credential]')?.dataset.connectCredential;
+    if (editId) return openCredentialDialog(editId);
+    if (removeId) return removeCredential(removeId);
+    if (fillId) return fillCredentialOnce(fillId);
+    if (connectId) return connectWithSavedCredential(connectId);
+  });
+  $('#credentialRiskAccepted').addEventListener('change', (event) => {
+    $('#saveCredentialButton').disabled = !event.target.checked;
+  });
+  $('#credentialForm').addEventListener('submit', saveCredentialFromDialog);
+  $('#credentialDialog').addEventListener('close', () => {
+    $('#credentialPassword').value = '';
+    $('#credentialRiskAccepted').checked = false;
+    $('#saveCredentialButton').disabled = true;
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
@@ -2001,7 +2655,7 @@ function bindEvents() {
     if (removeId) return removeCustomSite(removeId);
     if (clearId) {
       const site = customSites().find((item) => item.id === clearId);
-      if (!site || !confirm(`清除“${site.name}”的登录状态、Cookie 与缓存？`)) return;
+      if (!site || !await localizedConfirm(`清除“${site.name}”的登录状态、Cookie 与缓存？`)) return;
       try {
         await window.ph.sites.clearData(clearId);
         toast(`${site.name} 的登录数据已清除`);
@@ -2021,7 +2675,7 @@ function bindEvents() {
     if (result.ok) toast('备份已导出；API Key 未包含在备份中');
   });
   $('#importData').addEventListener('click', async () => {
-    if (!confirm('恢复备份会替换当前笔记、任务、课程表和设置，继续吗？')) return;
+    if (!await localizedConfirm('恢复备份会替换当前笔记、任务、课程表和设置，继续吗？')) return;
     try {
       const result = await window.ph.data.import();
       if (result.ok) { state.data = result.data; state.selectedNoteId = null; renderAll(); toast('备份已恢复'); }
@@ -2032,7 +2686,7 @@ function bindEvents() {
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
     if (mod && event.key.toLowerCase() === 'k') { event.preventDefault(); openCommandPalette(); }
-    if (mod && !event.shiftKey && event.key === '1') { event.preventDefault(); openSite('mail'); }
+    if (mod && !event.shiftKey && event.key === '1') { event.preventDefault(); navigate('mail'); }
     if (mod && !event.shiftKey && event.key === '2') { event.preventDefault(); openSite('managebac'); }
     if (mod && !event.shiftKey && event.key === '3') { event.preventDefault(); openSite('edupage'); }
     if (mod && !event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); navigate('dictionary'); }
@@ -2046,17 +2700,40 @@ function bindEvents() {
 }
 
 async function init() {
+  window.addEventListener('ph:language-changed', () => { if (state.data) renderChat(); if ($('#onboardingDialog')?.open) renderOnboarding(); });
   bindEvents();
+  if (window.PHAiAttachments && $('#aiAttachments')) window.aiAttachmentDraft = window.PHAiAttachments.mount({ root: $('#aiAttachments'),
+    pick: () => window.ph.aiAttachments.pick(), remove: id => window.ph.aiAttachments.remove(id) });
+  window.agentUI?.mount();
+  const appearanceHost = document.createElement('div');
+  appearanceHost.id = 'appearanceSettings';
+  $('[data-settings-panel="general"]').append(appearanceHost);
+  const collaborationCredit = document.createElement('p');
+  collaborationCredit.className = 'disclaimer';
+  collaborationCredit.textContent = '合作整合：PH Launcher（XKRyan）× Hello Pinghe! Launcher（huaziqian40-bot）。学校学习面板结合两个学生项目的设计与接口经验。';
+  $('[data-settings-panel="about"]').append(collaborationCredit);
+  window.vocabularyUI?.mount();
+  window.schoolUI?.mount();
+  window.calendarUI?.mount();
+  window.mailUI?.mount();
+  window.mailUI?.onUnreadChange?.((count) => updateMailBadge(state.route === 'mail' ? 0 : count));
+  $('#dictionaryResult').addEventListener('click', (event) => {
+    if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
+  });
   try {
-    const [appVersion, data, deployment, ibCommandCatalog] = await Promise.all([
+    const [appVersion, data, deployment, ibCommandCatalog, credentialStatus] = await Promise.all([
       window.ph.system.version(),
       window.ph.data.get(),
       window.ph.ai.deploymentState(),
       window.ph.ib.commandCatalog(),
+      window.ph.credentials.status(),
     ]);
     state.data = data;
+    window.i18n?.mount(data.settings.language);
+    window.i18n?.settings();
     state.aiDeployment = deployment;
     state.ibCommandCatalog = ibCommandCatalog;
+    state.credentialStatus = credentialStatus;
     $('#appVersion').textContent = `Version ${appVersion}`;
     const platform = state.data.meta?.platform || 'win32';
     document.body.classList.add(`platform-${platform}`);
@@ -2072,15 +2749,25 @@ async function init() {
     if (!Array.isArray(state.data.settings.customSites)) state.data.settings.customSites = [];
     refreshSiteMeta();
     ensureTimer();
+    void refreshVocabularyBadge();
     state.selectedNoteId = [...state.data.notes].sort(noteSort)[0]?.id || null;
     renderAll();
+    void window.agentUI?.loadHistory?.();
     navigate('today');
+    void window.mailUI?.open?.();
+    if (state.data.settings.onboardingCompleted !== true) setTimeout(() => openOnboarding(), 350);
     setPlanTab('tasks');
     state.shortcutResults = await window.ph.shortcuts.register();
   } catch (error) {
     toast(`启动失败：${error.message}`, 'error');
   }
   window.ph.sites.onState(handleSiteState);
+  window.ph.credentials.onChanged((credentialStatus) => {
+    state.credentialStatus = credentialStatus;
+    if (state.route === 'settings') renderCredentialSettings();
+    if ($('#onboardingDialog')?.open) renderOnboarding();
+  });
+  window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
   window.ph.shortcuts.onAction((action) => {
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
@@ -2112,10 +2799,24 @@ async function init() {
       if (deployment.stage === 'canceled') toast('本地 AI 部署已取消');
     }
   });
+  window.ph.ai.onStatus((status) => {
+    state.aiLocalWarmup = status || { localWarmup: 'idle', detail: '' };
+    if (state.route === 'ai' && !state.aiEditing) renderChat();
+  });
+  window.ph.ai.status().then((status) => { state.aiLocalWarmup = status || state.aiLocalWarmup; }).catch(() => {});
+  window.ph.ai.onStream((event) => {
+    const requestId = event?.requestId;
+    if (!requestId || requestId !== state.aiRequestId) return;
+    const message = state.aiMessages.find((item) => item.streaming);
+    if (!message) return;
+    if (event.type === 'status') state.aiStreamStatus = String(event.status || '正在生成…');
+    if (event.type === 'delta') message.content += String(event.delta || '');
+    renderChat();
+  });
   window.ph.ai.onCommand((command) => {
     if (command?.type === 'navigate') {
       if (SITE_META[command.target]) openSite(command.target);
-      else if (ROUTE_META[command.target]) navigate(command.target);
+      else if (ROUTE_META[command.target] || ROUTE_ALIASES[command.target]) navigate(command.target);
       else if (command.target === 'ibdocs') openIbDocsResource();
     }
     if (command?.type === 'focus') {
@@ -2130,10 +2831,17 @@ async function init() {
     refreshSiteMeta();
     if (state.activeSite && !SITE_META[state.activeSite]) navigate('today');
     else renderAll();
+    if ($('#onboardingDialog')?.open) renderOnboarding();
   });
-  setInterval(updateClock, 60_000);
+  window.ph.vocabulary?.onChanged?.((payload) => updateVocabularyBadge(payload));
+  window.ph.school.onPlanImported((schedule) => {
+    state.data.schedule = schedule;
+    renderSchedule(); renderDashboard();
+  });
+  setInterval(() => { updateClock(); refreshVocabularyBadge(); void window.mailUI?.open?.(); }, 60_000);
   setInterval(updateTimerUi, 500);
   document.body.dataset.initialized = 'true';
+  if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
 }
 
 document.addEventListener('DOMContentLoaded', init);

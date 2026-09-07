@@ -1,0 +1,72 @@
+.mini-focus-target {
+  display: block;
+  width: 100%;
+  margin: 0 0 7px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, .72);
+  background: transparent;
+  font-size: .75rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-focus-target.active { color: var(--gold-100); }
+.mini-focus-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0; }
+.mini-focus-actions button { padding:5px 0; color:rgba(255,255,255,.84); background:none; font-size:.8rem; line-height:1.4; }
+.mini-focus-actions #miniFocusStop { padding:5px 10px; border:1px solid rgba(255,255,255,.3); border-radius:8px; }
+
+.focus-session-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(100%, 520px);
+  margin: -10px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--ivory-50);
+}
+
+.focus-session-target > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-session-target > div { display: flex; align-items: center; gap: 6px; }
+.focus-controls { gap: 10px; }
+.focus-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 128px; }
+.focus-action svg { width: 18px; height: 18px; }
+.focus-action b { font: inherit; }
+
+.timer-pause-icon svg,
+.timer-pause-icon #focusPlayIcon svg {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.focus-settings-dialog label small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-3);
+  font-size: .75rem;
+}
+
+.focus-settings-hint {
+  margin: 12px 0 0;
+  color: var(--ink-2);
+  font-size: .8125rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .focus-session-target { align-items: flex-start; flex-direction: column; }
+  .focus-controls { flex-wrap: wrap; justify-content: center; }
+}
