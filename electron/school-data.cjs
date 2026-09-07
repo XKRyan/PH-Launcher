@@ -474,7 +474,16 @@ class SchoolDataClient {
       }
       await this.pause(120);
     }
-    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: [...tasks.values()].slice(0, 1000), warnings: warnings.slice(0, 30) };
+    // Filter tasks: show only 14 days ago to 1 year ahead.
+    const now = Date.now();
+    const cutoff = now - 14 * 86400000;
+    const futureLimit = now + 365 * 86400000;
+    const filteredTasks = [...tasks.values()].filter((task) => {
+      if (!task.dueAt) return true;
+      const ts = Date.parse(task.dueAt);
+      return ts >= cutoff && ts <= futureLimit;
+    });
+    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), warnings: warnings.slice(0, 30) };
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
@@ -524,7 +533,7 @@ class SchoolDataClient {
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
     return { kind, ...parseCoreOverview(await this.request('managebac', path), kind), url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
   }
-  async getDeadlines({ views = ['upcoming', 'overdue'] } = {}) {
+  async getDeadlines({ views = ['upcoming', 'overdue'], daysBefore = 14, daysAhead = 365 } = {}) {
     const items = []; const seen = new Set(); const warnings = [];
     for (const view of views) {
       const path = `/student/tasks_and_deadlines?view=${view}`;
@@ -540,7 +549,14 @@ class SchoolDataClient {
       await this.pause(120);
     }
     items.sort((a, b) => (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity));
-    return { items: items.slice(0, 60), warnings, fetchedAt: this.now().toISOString() };
+    const ageCutoff = Date.now() - daysBefore * 86400000;
+    const futureLimit = Date.now() + daysAhead * 86400000;
+    const filtered = items.filter((item) => {
+      if (!item.dueAt) return true;
+      const ts = Date.parse(item.dueAt);
+      return ts >= ageCutoff && ts <= futureLimit;
+    });
+    return { items: filtered.slice(0, 60), warnings, fetchedAt: this.now().toISOString() };
   }
   async syncEduPage({ weekStart } = {}) {
     if (!validDate(weekStart)) fail('INVALID_DATE', '请选择正确的课表日期');

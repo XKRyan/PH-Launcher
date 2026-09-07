@@ -2736,6 +2736,7 @@ async function init() {
   setInterval(() => { updateClock(); refreshVocabularyBadge(); }, 60_000);
   setInterval(updateTimerUi, 500);
   document.body.dataset.initialized = 'true';
+  document.body.classList.add('loaded');
   if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
 }
 

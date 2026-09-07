@@ -2945,7 +2945,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     ...(applicationIcon ? { icon: applicationIcon } : {}),
-    show: IS_CAPTURE || CAPTURE_SITE ? true : !IS_HEADLESS,
+    show: !IS_HEADLESS,
     backgroundColor: theme.paper,
     title: 'PH Launcher',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
