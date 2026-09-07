@@ -110,7 +110,9 @@ const isDebugMode = process.env.PH_LAUNCHER_DEBUG === '1' || process.argv.includ
 function debugLog(stage, info = '') {
   if (!isDebugMode) return;
   try {
-    const logPath = path.join(process.env.APPDATA || process.env.TEMP || '.', 'PH-Launcher-debug.log');
+    let logDir = process.env.APPDATA || process.env.TEMP || '.';
+    try { if (app && app.isReady && app.getPath) logDir = app.getPath('userData'); } catch {}
+    const logPath = path.join(logDir, 'debug.log');
     fs.appendFileSync(logPath, `${new Date().toISOString()} [${stage}] ${info}\n`);
   } catch {}
 }

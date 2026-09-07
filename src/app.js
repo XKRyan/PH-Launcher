@@ -242,7 +242,7 @@ function navigate(route) {
   state.activeSite = null;
   window.ph.sites.hide();
   const pageRoute = ROUTE_META[route].page || route;
-  const transitionFn = () => {
+  const applyRoute = () => {
     $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === pageRoute));
     $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === route));
     $('#siteToolbar').classList.add('hidden');
@@ -276,11 +276,7 @@ function navigate(route) {
     if (route === 'settings') renderSettings();
     $('#content').scrollTop = 0;
   };
-  if (document.startViewTransition) {
-    document.startViewTransition(transitionFn);
-  } else {
-    transitionFn();
-  }
+  applyRoute();
 }
 
 async function openSite(siteId) {
