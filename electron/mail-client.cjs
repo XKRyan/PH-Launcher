@@ -318,12 +318,16 @@ class SchoolMailClient {
       fail('CREDENTIAL_UNAVAILABLE', '无法读取邮箱凭据');
     }
     const username = typeof value?.username === 'string' ? value.username.trim().toLowerCase() : '';
+    const authcode = typeof value?.authcode === 'string' ? value.authcode.trim() : '';
     const password = typeof value?.password === 'string' ? value.password : '';
-    if (!isValidEmail(username) || !password || /[\r\n\u0000]/.test(username)) {
+    // NetEase Coremail IMAP/SMTP requires the client authcode (客户端授权码);
+    // the web password is only a fallback for tenants that still allow it.
+    const secret = authcode || password;
+    if (!isValidEmail(username) || !secret || /[\r\n\u0000]/.test(username)) {
       fail('LOGIN_REQUIRED', '请先配置有效的学校邮箱和客户端授权码');
     }
-    const key = createHash('sha256').update(username).update('\0').update(password).digest('hex');
-    return { username, password, key };
+    const key = createHash('sha256').update(username).update('\0').update(secret).digest('hex');
+    return { username, password: secret, authcode, key };
   }
 
   _closeClient(client) {

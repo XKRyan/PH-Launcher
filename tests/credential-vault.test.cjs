@@ -75,7 +75,7 @@ test('credentials are encrypted at rest, reload correctly, and never appear in r
   assert.equal(result.sites.mail.updatedAt, '2026-09-06T08:00:00.000Z');
   assert.equal(Object.hasOwn(result.sites.mail, 'password'), false);
   const reopened = new CredentialVault(config);
-  assert.deepEqual(reopened.getForFill('mail'), { username: first.username, password: first.password });
+  assert.deepEqual(reopened.getForFill('mail'), { username: first.username, password: first.password, authcode: '' });
   assert.deepEqual(fs.readdirSync(directory), ['credentials']);
 });
 
@@ -107,9 +107,32 @@ test('explicitly disabled autofill still allows manual fill and password-preserv
   const { vault, config } = fixture(t);
   vault.saveCredential({ ...first, autoFill: false });
   assert.equal(vault.getForFill('mail'), null);
-  assert.deepEqual(vault.getForFill('mail', { allowDisabled: true }), { username: first.username, password: first.password });
+  assert.deepEqual(vault.getForFill('mail', { allowDisabled: true }), { username: first.username, password: first.password, authcode: '' });
   vault.saveCredential({ siteId: 'mail', username: 'new-account', password: '', autoFill: false });
-  assert.deepEqual(new CredentialVault(config).getForFill('mail', { allowDisabled: true }), { username: 'new-account', password: first.password });
+  assert.deepEqual(new CredentialVault(config).getForFill('mail', { allowDisabled: true }), { username: 'new-account', password: first.password, authcode: '' });
+});
+
+test('mail credentials accept authcode with password fallback and keep both secrets', (t) => {
+  const { vault, config } = fixture(t);
+  // Authcode-only save is valid (recommended path for NetEase IMAP/SMTP).
+  vault.saveCredential({ siteId: 'mail', username: 'student@example.test', authcode: 'fixture-authcode-1', password: '', autoFill: false });
+  assert.deepEqual(
+    vault.getForFill('mail', { allowDisabled: true }),
+    { username: 'student@example.test', password: '', authcode: 'fixture-authcode-1' },
+  );
+  // Later saving a web password keeps the existing authcode untouched.
+  vault.saveCredential({ siteId: 'mail', username: 'student@example.test', password: 'fixture-web-password', autoFill: false });
+  assert.deepEqual(
+    new CredentialVault(config).getForFill('mail', { allowDisabled: true }),
+    { username: 'student@example.test', password: 'fixture-web-password', authcode: 'fixture-authcode-1' },
+  );
+  // School sites never store an authcode.
+  vault.saveCredential({ siteId: 'managebac', username: 'student@example.test', password: 'fixture-mb-secret', autoFill: false });
+  assert.equal(vault.getForFill('managebac', { allowDisabled: true }).authcode, undefined);
+  // Either secret alone must satisfy validation; a brand-new account with
+  // both fields empty is rejected (existing accounts keep their old secret).
+  vault.removeCredential('mail');
+  assert.throws(() => vault.saveCredential({ siteId: 'mail', username: 'fresh@example.test', password: '', authcode: '' }), /请填写客户端授权码/);
 });
 
 test('deleting one credential leaves other sites intact and survives reopening', (t) => {

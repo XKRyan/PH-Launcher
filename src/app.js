@@ -1866,9 +1866,17 @@ function openCredentialDialog(siteId) {
   $('#credentialAutoLoginRow').hidden = isMail;
   $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
   $('#credentialDialogTitle').textContent = '账号登录';
-  $('#credentialPasswordLabel').textContent = isMail ? '密码或客户端授权码' : '密码';
+  if ($('#credentialAuthcodeRow')) $('#credentialAuthcodeRow').hidden = !isMail;
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
+  $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
+  $('#credentialPassword').required = !credential.saved && !isMail;
+  $('#credentialPasswordNote').textContent = isMail
+    ? 'IMAP/SMTP 收发信必须使用客户端授权码；网页密码仅在邮箱仍允许普通登录时作为回退。两项至少填一项。'
+    : credential.saved
+      ? '如需保留原密码，请留空；保存后不会显示密码。'
+      : '保存后不会显示密码；如需更新，请重新输入。';
   $('#credentialIntro').textContent = siteId === 'mail'
-    ? '网易邮箱可能需要先开启 IMAP/SMTP，并使用客户端授权码。密码或授权码会使用当前系统用户密钥加密，只发送到网易固定邮件服务器；邮件内容不会交给 AI。'
+    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，使用当前系统用户密钥加密保存；邮件内容不会交给 AI。'
     : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
@@ -1882,16 +1890,22 @@ async function saveCredentialFromDialog(event) {
   if (credentialSubmitInFlight) return;
   if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
   const saveButton = $('#saveCredentialButton');
+  const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
   const credential = {
     siteId: $('#credentialSiteId').value,
     username: $('#credentialUsername').value,
     password: $('#credentialPassword').value,
+    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '') : '',
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };
+  if (isMailSubmit && !credential.password && !credential.authcode) {
+    return toast('客户端授权码与网页密码至少填一项（推荐使用授权码）', 'error');
+  }
   // Clear the editable password field before waiting for IPC. The main process
   // receives the value through the isolated bridge and never returns it.
   $('#credentialPassword').value = '';
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
   saveButton.disabled = true;
   credentialSubmitInFlight = true;
   try {
