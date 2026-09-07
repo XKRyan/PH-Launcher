@@ -1,0 +1,14 @@
+.ai-attachments-list { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; flex-basis:100%; max-height:100px; overflow-y:auto; }
+.ai-attachments-list:empty { display:none; }
+.ai-attachment { display: inline-flex; align-items: center; gap: .28rem; max-width: 100%; padding: .3rem .48rem; border-radius: .5rem; background: var(--paper-2, #eef2f5); font-size: .82rem; }
+.ai-attachment b { color: var(--accent, #315a7d); font-weight: 650; }
+.ai-attachment button { border: 0; background: transparent; font: inherit; cursor: pointer; }
+.ai-attachment-add { margin:0; }
+.ai-attachment img { object-fit: cover; border-radius: .4rem; }
+#aiAttachments { display:contents; }
+#aiAttachments .ai-attachment-add { padding:6px 10px; min-height:34px; font-size:.875rem; }
+.ai-attachment-help { color:var(--ink-2); font-size:.875rem; }
+.ai-attachment-help summary { cursor:pointer; padding:4px 0; }
+.ai-attachment-help[open] { flex-basis:100%; }
+.ai-attachment-help p { margin:6px 0 2px; line-height:1.5; }
+.ai-attachment { overflow-wrap:anywhere; }

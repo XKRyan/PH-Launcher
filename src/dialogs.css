@@ -1,0 +1,71 @@
+/* Shared spacing for application dialogs; native system pickers stay native. */
+:root { --dialog-inset:clamp(22px,2.4vw,30px); --dialog-gap:18px; }
+.api-confirm-dialog { color:var(--ink); background:var(--white); border:1px solid var(--border); box-shadow:var(--shadow-sm); cursor:default; -webkit-app-region:no-drag; }
+.api-confirm-dialog::backdrop { cursor:default; }
+.api-confirm-dialog p { color:var(--ink-2); font-size:1rem; line-height:1.7; overflow-wrap:anywhere; }
+:is(.modal,.vocab-dialog,.cal-dialog,.command-palette) {
+  max-width:calc(100vw - 48px);
+  max-height:calc(100dvh - 48px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  border-radius:22px;
+}
+.modal:not(.school-dialog),.vocab-dialog { padding:var(--dialog-inset); scrollbar-gutter:stable; }
+.modal:not(.school-dialog) { width:min(600px,calc(100vw - 48px)); }
+.modal > form { padding:0; min-width:0; }
+:is(.modal-head,.vocab-dialog-head,.cal-dialog-head) { align-items:center; gap:18px; margin-bottom:24px; }
+:is(.modal-head,.vocab-dialog-head,.cal-dialog-head) > :not(button) { min-width:0; }
+:is(.modal-head,.vocab-dialog-head,.cal-dialog-head) h3 { margin:0; line-height:1.4; overflow-wrap:anywhere; }
+:is(.modal-head,.vocab-dialog-head,.cal-dialog-head) > button,.mail-close-compose {
+  display:grid; place-items:center; flex:0 0 2rem;
+  width:2rem; height:2rem; min-width:2rem; min-height:2rem;
+  padding:0; line-height:1; border-radius:50%;
+  font-family:"Segoe UI",sans-serif; font-size:1.3rem;
+  color:var(--ink-2); background:var(--ivory-200);
+}
+:is(.modal-actions,.vocab-dialog-actions,.cal-form-actions) {
+  flex-wrap:wrap; gap:12px; margin-top:24px; padding-top:18px; border-top:1px solid var(--border);
+}
+.modal-actions.split > div { flex-wrap:wrap; justify-content:flex-end; gap:12px; margin-left:auto; }
+:is(.modal,.vocab-dialog,.cal-dialog) :is(.primary-button,.secondary-button,.ghost-button) { min-height:44px; height:auto; white-space:normal; }
+.modal .form-grid,.vocab-field-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.modal .form-grid > * { min-width:0; }
+.modal :is(input,select,textarea) { max-width:100%; }
+
+/* School dialogs have no form wrapper. Each of the three zones owns its inset. */
+.school-dialog { width:min(760px,calc(100vw - 48px)); padding:0; overflow:hidden; }
+.school-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+.school-dialog > .modal-head { margin:0; padding:var(--dialog-inset); padding-bottom:20px; }
+.school-dialog-content { min-height:0; max-height:none; overflow-y:auto; scrollbar-gutter:stable; padding:4px var(--dialog-inset) 24px; }
+.school-dialog-content > :first-child { margin-top:0; }
+.school-dialog-content > :last-child { margin-bottom:0; }
+.school-dialog-footer { margin:0; padding:18px var(--dialog-inset) var(--dialog-inset); gap:12px; background:var(--ivory-50); }
+.school-dialog-content button { scroll-margin-block:12px; }
+
+.cal-dialog { padding:0; }
+.cal-dialog-head { margin:0; padding:var(--dialog-inset); }
+.cal-day-agenda,.cal-event-form { padding:24px var(--dialog-inset); min-width:0; }
+.cal-event-form label > span,.cal-form-error { font-size:.85rem; }
+.cal-event-form :is(input:not([type=checkbox]),textarea,select) { font-size:.95rem; }
+.cal-form-actions { align-items:center; }
+/* A transform animation on an ancestor would anchor this fixed panel to the page. */
+#mailPage { animation:none; }
+.mail-compose { padding:var(--dialog-inset); max-height:calc(100dvh - 48px); }
+.mail-compose .mail-compose-head { gap:18px; margin-bottom:24px; }
+.mail-compose-actions { flex-wrap:wrap; gap:12px; margin-top:12px; padding-top:18px; border-top:1px solid var(--border); }
+.mail-compose label { font-size:.85rem; }
+.command-search { height:auto; min-height:68px; padding:18px 22px; }
+.command-search input { min-width:0; }
+.command-list { padding:10px 14px; }
+.command-list button { height:auto; min-height:56px; padding:10px 12px; }
+.command-list button > div { min-width:0; gap:3px; line-height:1.45; }
+.command-list button > svg { flex-shrink:0; }
+.command-list button kbd { flex-shrink:0; }
+.command-hint { padding:14px 22px; flex-wrap:wrap; }
+@media(max-width:1100px) {
+  .cal-dialog-layout { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); }
+}
+@media(max-width:640px) {
+  :root { --dialog-inset:20px; }
+  .modal .form-grid,.vocab-field-grid,.cal-dialog-layout { grid-template-columns:1fr; }
+}

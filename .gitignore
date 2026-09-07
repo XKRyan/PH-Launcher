@@ -23,6 +23,12 @@ assets/dictionary/ecdict-building-*.db
 .env.*
 !.env.example
 ph-launcher.secure
+ph-launcher.credentials*
+ph-launcher.ai-history*
+.integration-reference/
+.remote-audit-*/
+.diagnostics/
+Mac发布/
 *.unreadable-*
 *.log
 .DS_Store

@@ -1,6 +1,6 @@
-# PH Launcher {{VERSION}} macOS Universal 未签名测试版
+# PH Launcher {{VERSION}} macOS Universal
 
-这是供自愿测试者体验的 **pre-release（预发布版本）**，不是面向所有同学的正式 Mac 版。
+这是 PH Launcher {{VERSION}} 的 Mac 体验包。功能与同版本 Windows 版同步，但尚未取得 Apple 开发者身份签名及公证；首次打开需要你手动确认。
 
 ## 下载哪个文件
 
@@ -14,7 +14,9 @@ DMG 与 ZIP 内是同一个 Universal 应用，可在 Apple 芯片和 Intel Mac 
 
 本测试包只有用于启动兼容性的 **ad-hoc 临时签名**，没有 Developer ID 开发者身份签名，也没有经过 Apple 公证。macOS 无法确认开发者身份，也无法像正式公证版一样确认文件发布后是否被改动。运行未经 Developer ID 签名和公证的软件可能损害电脑或泄露隐私。
 
-只应从 `https://github.com/XKRyan/PH-Launcher` 的预发布页面下载，并核对同一页面中的 SHA-256 清单。SHA-256 只能发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。对来源或校验结果有疑问时，请不要打开。
+升级这种测试包后，macOS 可能再次询问是否允许 PH Launcher 访问自己的钥匙串加密项。先核实应用来源，再决定是否授权；不要删除钥匙串项目或关闭系统安全功能，否则可能无法读取已有的加密数据。[加密存储与签名说明](https://www.electronjs.org/docs/latest/api/safe-storage)
+
+请使用 [PH Launcher 官方项目](https://github.com/XKRyan/PH-Launcher) 提供的对应版本构建文件，或开发者直接分享的原始安装包，并核对随包提供的 SHA-256 清单。SHA-256 只能发现文件不一致，不能替代 Developer ID 签名或 Apple 公证。对来源或校验结果有疑问时，请不要打开。
 
 ## 第一次打开
 
@@ -32,7 +34,8 @@ https://support.apple.com/zh-cn/guide/mac-help/-mh40616/mac
 
 - 首次安装、重新打开和覆盖升级。
 - 学校邮箱、ManageBac、EduPage 的登录保持。
-- 简洁显示、离线词典、课程提醒、计划和快捷键。
+- 背单词与语境填空、离线词典、课程及日程提醒、计划和快捷键。
+- AI 对话在退出后重新打开时的保存，以及邮箱内容整理为日程前的确认。
 - Apple 芯片电脑上的本地 AI 推荐与一键部署；Intel Mac 建议优先测试 API AI。
 
 反馈问题时，请提供 Mac 型号、macOS 版本、使用 DMG 还是 ZIP，以及可复现步骤。请勿提交密码、Cookie、API Key、课程隐私数据或截图中的个人信息。
