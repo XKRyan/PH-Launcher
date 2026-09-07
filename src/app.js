@@ -242,38 +242,45 @@ function navigate(route) {
   state.activeSite = null;
   window.ph.sites.hide();
   const pageRoute = ROUTE_META[route].page || route;
-  $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === pageRoute));
-  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === route));
-  $('#siteToolbar').classList.add('hidden');
-  $('#internalTopActions').classList.remove('hidden');
-  setTopbar(ROUTE_META[route].title, ROUTE_META[route].eyebrow);
-  $('#sitePopover').classList.add('hidden');
-  if (route === 'today') renderDashboard();
-  if (route === 'plan') {
-    renderTasks();
-    renderSchedule();
-    renderFocusStats();
+  const transitionFn = () => {
+    $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === pageRoute));
+    $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === route));
+    $('#siteToolbar').classList.add('hidden');
+    $('#internalTopActions').classList.remove('hidden');
+    setTopbar(ROUTE_META[route].title, ROUTE_META[route].eyebrow);
+    $('#sitePopover').classList.add('hidden');
+    if (route === 'today') renderDashboard();
+    if (route === 'plan') {
+      renderTasks();
+      renderSchedule();
+      renderFocusStats();
+    }
+    if (route === 'notes') renderNotes();
+    if (route === 'vocabulary') {
+      window.vocabularyUI?.refresh();
+      refreshVocabularyBadge();
+    }
+    if (SCHOOL_WORKSPACE_ROUTES.has(route)) {
+      if (typeof window.schoolUI?.open === 'function') window.schoolUI.open(route);
+      else window.schoolUI?.refresh();
+    }
+    if (route === 'calendar') window.calendarUI?.refresh();
+    if (route === 'mail') window.mailUI?.open();
+    if (route === 'dictionary') {
+      renderDictionary();
+      loadDictionaryInfo();
+      setTimeout(() => $('#dictionarySearch')?.focus(), 30);
+    }
+    if (route === 'ib') renderIbTools();
+    if (route === 'ai') renderAi();
+    if (route === 'settings') renderSettings();
+    $('#content').scrollTop = 0;
+  };
+  if (document.startViewTransition) {
+    document.startViewTransition(transitionFn);
+  } else {
+    transitionFn();
   }
-  if (route === 'notes') renderNotes();
-  if (route === 'vocabulary') {
-    window.vocabularyUI?.refresh();
-    refreshVocabularyBadge();
-  }
-  if (SCHOOL_WORKSPACE_ROUTES.has(route)) {
-    if (typeof window.schoolUI?.open === 'function') window.schoolUI.open(route);
-    else window.schoolUI?.refresh();
-  }
-  if (route === 'calendar') window.calendarUI?.refresh();
-  if (route === 'mail') window.mailUI?.open();
-  if (route === 'dictionary') {
-    renderDictionary();
-    loadDictionaryInfo();
-    setTimeout(() => $('#dictionarySearch')?.focus(), 30);
-  }
-  if (route === 'ib') renderIbTools();
-  if (route === 'ai') renderAi();
-  if (route === 'settings') renderSettings();
-  $('#content').scrollTop = 0;
 }
 
 async function openSite(siteId) {

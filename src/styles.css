@@ -247,6 +247,15 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .page { display: none; width: min(100%, 1500px); min-height: 100%; margin: 0 auto; padding: 36px 40px 54px; animation: pageIn .22s ease both; }
 .page.active { display: block; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .page { contain: layout style; backface-visibility: hidden; }
+  .page.active { animation: pageIn .18s cubic-bezier(.22,.61,.36,1) both; }
+}
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .18s; }
+::view-transition-old(root) { animation-name: fade-out; }
+::view-transition-new(root) { animation-name: fade-in; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
 .section-kicker { display: block; color: var(--green-700); font-size: 0.8125rem; font-weight: 800; letter-spacing: .16em; }
 .hero-row, .page-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; }
 .hero-row { margin-bottom: 25px; }

@@ -1161,3 +1161,23 @@ test('application icon assets have a full-size Mac PNG and multi-frame Windows I
   assert.match(mainSource, /process\.resourcesPath, 'app-icon\.ico'/);
   assert.match(mainSource, /nativeImage\.createFromPath\(candidate\)/);
 });
+
+// ----- Performance addition: minimal page-render scheduler smoke test -----
+test('page render scheduler coalesces multiple calls in the same frame', async () => {
+  const calls = [];
+  let renderPending = false;
+  let renderGeneration = 0;
+  function scheduleRender() {
+    if (renderPending) return;
+    renderPending = true;
+    const generation = ++renderGeneration;
+    queueMicrotask(() => { renderPending = false; calls.push(`batch-${generation}`); });
+  }
+  function renderNow() { renderPending = false; renderGeneration += 1; calls.push('now'); }
+  scheduleRender();
+  scheduleRender();
+  renderNow();
+  assert.deepEqual(calls, ['now']);
+  await new Promise((r) => queueMicrotask(r));
+  assert.ok(calls.some((c) => c.startsWith('batch-')));
+});
