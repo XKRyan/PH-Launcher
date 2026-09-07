@@ -106,6 +106,15 @@ const IS_CAPTURE = process.argv.includes('--capture-ui');
 const IS_SELF_TEST = process.argv.includes('--self-test');
 const CAPTURE_SITE = process.argv.find((arg) => arg.startsWith('--capture-site='))?.split('=')[1] || '';
 const IS_HEADLESS = IS_SMOKE_TEST || IS_CAPTURE || IS_SELF_TEST || Boolean(CAPTURE_SITE);
+const isDebugMode = process.env.PH_LAUNCHER_DEBUG === '1' || process.argv.includes('--debug-log');
+function debugLog(stage, info = '') {
+  if (!isDebugMode) return;
+  try {
+    const logPath = path.join(process.env.APPDATA || process.env.TEMP || '.', 'PH-Launcher-debug.log');
+    fs.appendFileSync(logPath, `${new Date().toISOString()} [${stage}] ${info}\n`);
+  } catch {}
+}
+if (isDebugMode) debugLog('process-start', `packed=${!!app.isPackaged} argv=${process.argv.join(' ')}`);
 const CAPTURE_ROUTE = process.argv.find((arg) => arg.startsWith('--capture-route='))?.split('=')[1] || 'today';
 const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-variant='))?.split('=')[1] || '';
 let headlessUserData = '';
@@ -2974,7 +2983,11 @@ function createWindow() {
     mainWindow = null;
   });
   mainWindow.webContents.on('did-fail-load', (_event, code, description, _validatedUrl, isMainFrame) => {
+    if (isDebugMode) debugLog('did-fail-load', `${code} ${description} url=${_validatedUrl} mainFrame=${isMainFrame}`);
     if (IS_SELF_TEST && isMainFrame) failSelfTest(new Error(`main renderer load failed (${code}): ${description || 'unknown'}`));
+  });
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (isDebugMode) debugLog('renderer-console', `[level=${level}] ${message.slice(0, 500)} (${sourceId}:${line})`);
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     if (IS_SELF_TEST) failSelfTest(new Error(`main renderer crashed: ${details?.reason || 'unknown'}`));
@@ -3018,10 +3031,12 @@ if (!gotLock) {
 
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.whenReady().then(() => {
+  debugLog('app-ready');
   selfTestStage('app-ready');
   armSelfTestTimeout();
   secureStore = new SecureStore(path.join(app.getPath('userData'), 'ph-launcher.secure'));
   secureStore.load();
+  debugLog('store-ready', `userData=${app.getPath('userData')} encrypted=${safeStorage.isEncryptionAvailable()}`);
   selfTestStage('store-ready');
   credentialVault = new CredentialVault({
     filePath: path.join(app.getPath('userData'), 'ph-launcher.credentials'),
@@ -3070,6 +3085,7 @@ app.whenReady().then(() => {
   configureApplicationMenu();
   registerIpc();
   createWindow();
+  debugLog('createWindow-done');
   if (!IS_HEADLESS) {
     reminderWindows = createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow: () => mainWindow,
       getAppearance: () => secureStore.data.settings.appearance, getLanguage: () => secureStore.data.settings.language,
