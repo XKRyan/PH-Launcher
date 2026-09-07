@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { SUBJECTS, normalizeSubjectId } = require('./ib-command-terms.cjs');
 const { normalizeCustomSites } = require('./custom-sites.cjs');
+const { isCalendarDate, isCalendarTime, upsertCalendarEvent } = require('./calendar.cjs');
 
 const SUBJECT_SELECTION_HELP = SUBJECTS
   .filter((subject) => !['common', 'all'].includes(subject.id))
@@ -10,6 +11,7 @@ const SUBJECT_SELECTION_HELP = SUBJECTS
 const MAX_TASKS_PER_ACTION = 24;
 const MAX_LESSONS_PER_ACTION = 100;
 const MAX_NOTES_PER_ACTION = 8;
+const MAX_CALENDAR_EVENTS_PER_ACTION = 12;
 const PROPOSAL_TTL_MS = 10 * 60_000;
 
 const AI_TOOLS = [
@@ -164,6 +166,35 @@ const AI_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'create_calendar_events',
+      description: '根据用户明确提供或已授权读取的内容，提出添加日程事件的待确认清单。不会立即写入；日期必须包含明确年份并使用 YYYY-MM-DD，时间按内容原文填写，不猜年份、日期或时区。',
+      parameters: {
+        type: 'object',
+        properties: {
+          events: {
+            type: 'array', minItems: 1, maxItems: MAX_CALENDAR_EVENTS_PER_ACTION,
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', minLength: 1, maxLength: 120 },
+                date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: '内容中明确给出的完整日期；不确定年份或日期时不要创建事件。' },
+                start: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
+                end: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
+                notes: { type: 'string', maxLength: 4000 },
+                repeatWeekdays: { type:'array', maxItems:7, uniqueItems:true, items:{type:'integer',minimum:1,maximum:7}, description:'Weekly recurrence from date; 1=Monday, ... 7=Sunday. Empty means once.' },
+                reminderMinutes: { anyOf: [{ type: 'null' }, { type: 'integer', enum: [0, 5, 10, 15, 30, 60] }] },
+              },
+              required: ['title', 'date', 'start', 'end'], additionalProperties: false,
+            },
+          },
+        },
+        required: ['events'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'upsert_schedule',
       description: '提出向常规周课程表合并课程的方案。不会删除原课程，也不会立即写入，必须由用户确认。',
       parameters: {
@@ -257,7 +288,53 @@ const AI_TOOLS = [
   },
 ];
 
-const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'upsert_schedule', 'set_task_status']);
+// These are never added unless the user has separately enabled full mode and
+// the current request explicitly concerns mail. They are read-only.
+const AI_MAIL_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_mail',
+      description: '读取或按关键词检索学校邮箱 INBOX 中最多 20 封邮件的最小头部。查找旧邮件时先用简短关键词查询主题或正文并分页，再仅对相关结果调用 read_mail；不要检索全校或猜测联系人。',
+      parameters: {
+        type: 'object',
+        properties: {
+          unread: { type: 'boolean' },
+          query: { type: 'string', maxLength: 80, description: '可选；用于检索邮件主题或正文的简短关键词。' },
+          cursor: { type: 'integer', minimum: 0, maximum: 100000 },
+          limit: { type: 'integer', minimum: 1, maximum: 20 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_mail',
+      description: '读取一封已列出的学校邮箱邮件。敏感账号通知不会返回正文、链接或附件。',
+      parameters: {
+        type: 'object',
+        properties: { uid: { type: 'string', pattern: '^[1-9]\\d{0,9}$' } },
+        required: ['uid'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_mail_contacts',
+      description: '从当前邮箱已见联系人中搜索最多 10 个姓名和地址；不能发送邮件。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', maxLength: 80 }, limit: { type: 'integer', minimum: 1, maximum: 10 } },
+        additionalProperties: false,
+      },
+    },
+  },
+];
+
+const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'create_calendar_events', 'upsert_schedule', 'set_task_status']);
 const COMMAND_TOOLS = new Set(['open_launcher_page', 'open_custom_site', 'control_focus_timer']);
 
 function cleanText(value, maxLength, fallback = '') {
@@ -319,6 +396,34 @@ function sanitizeNotes(rawNotes) {
   });
 }
 
+function sanitizeCalendarEvents(rawEvents) {
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0 || rawEvents.length > MAX_CALENDAR_EVENTS_PER_ACTION) {
+    throw new Error(`每次只能添加 1–${MAX_CALENDAR_EVENTS_PER_ACTION} 条日程`);
+  }
+  const seen = new Set();
+  const events = [];
+  for (const event of rawEvents) {
+    const title = typeof event?.title === 'string' ? event.title.trim() : '';
+    if (!title || title.length > 120 || /[\u0000\r\n]/.test(title)) throw new Error('日程标题无效');
+    const date = event?.date;
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !isCalendarDate(date)) throw new Error('日程必须使用明确的 YYYY-MM-DD 日期');
+    const start = event?.start; const end = event?.end;
+    if (!isCalendarTime(start) || !isCalendarTime(end) || end <= start) throw new Error(`${title} 的起止时间无效`);
+    const notes = event?.notes === undefined ? '' : event.notes;
+    if (typeof notes !== 'string' || notes.length > 4000 || notes.includes('\u0000')) throw new Error('日程备注无效');
+    const reminderMinutes = event?.reminderMinutes === undefined ? null : event.reminderMinutes;
+    if (reminderMinutes !== null && ![0, 5, 10, 15, 30, 60].includes(reminderMinutes)) throw new Error('日程提醒时间无效');
+    const clean = { title, date, start, end, notes: notes.replaceAll('\r\n', '\n'), reminderMinutes };
+    if (event.repeatWeekdays !== undefined) {
+      if (!Array.isArray(event.repeatWeekdays) || event.repeatWeekdays.length > 7 || event.repeatWeekdays.some(day => !Number.isInteger(day) || day < 1 || day > 7)) throw new Error('每周重复日期无效');
+      if (event.repeatWeekdays.length) clean.repeatWeekdays = [...new Set(event.repeatWeekdays)].sort();
+    }
+    const key = calendarEventKey(clean);
+    if (!seen.has(key)) { seen.add(key); events.push(clean); }
+  }
+  return events;
+}
+
 function sanitizeLessons(rawLessons, source = 'ai') {
   if (!Array.isArray(rawLessons) || rawLessons.length === 0 || rawLessons.length > MAX_LESSONS_PER_ACTION) {
     throw new Error(`每次只能合并 1–${MAX_LESSONS_PER_ACTION} 节课`);
@@ -358,6 +463,7 @@ function sanitizeToolArguments(name, input, data = {}) {
   const args = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   if (name === 'create_tasks') return { tasks: sanitizeTasks(args.tasks) };
   if (name === 'create_notes') return { notes: sanitizeNotes(args.notes) };
+  if (name === 'create_calendar_events') return { events: sanitizeCalendarEvents(args.events) };
   if (name === 'upsert_schedule') return { lessons: sanitizeLessons(args.lessons, args.source) };
   if (name === 'set_task_status') {
     const taskId = cleanText(args.taskId, 80);
@@ -416,11 +522,16 @@ function lessonKey(lesson) {
   ].join('|');
 }
 
+function calendarEventKey(event) {
+  return [cleanText(event?.title, 120).toLocaleLowerCase('zh-CN'), String(event?.date || ''), String(event?.start || ''), [...(event?.repeatWeekdays || [])].sort().join(',')].join('|');
+}
+
 function relevantDataHash(data) {
   const payload = JSON.stringify({
     notes: data?.notes || [],
     tasks: data?.tasks || [],
     schedule: data?.schedule || [],
+    calendarEvents: data?.calendarEvents || [],
   });
   return crypto.createHash('sha256').update(payload).digest('hex');
 }
@@ -429,6 +540,7 @@ function createAction(name, args, data) {
   const sanitized = sanitizeToolArguments(name, args, data);
   if (name === 'create_tasks') return { type: name, tasks: sanitized.tasks };
   if (name === 'create_notes') return { type: name, notes: sanitized.notes };
+  if (name === 'create_calendar_events') return { type: name, events: sanitized.events };
   if (name === 'upsert_schedule') return { type: name, lessons: sanitized.lessons };
   if (name === 'set_task_status') return { type: name, ...sanitized };
   throw new Error('该操作不能加入写入清单');
@@ -463,6 +575,17 @@ function actionPreview(action) {
       })),
     };
   }
+  if (action.type === 'create_calendar_events') {
+    return {
+      type: 'calendar-events',
+      title: `添加 ${action.events.length} 条日程`,
+      items: action.events.map((event) => ({
+        primary: event.title,
+        secondary: `${event.date} ${event.start}–${event.end}${event.reminderMinutes === null ? '' : ` · 提前 ${event.reminderMinutes} 分钟提醒`}`,
+        repeatWeekdays: event.repeatWeekdays || [],
+      })),
+    };
+  }
   if (action.type === 'set_task_status') {
     return {
       type: 'task-status',
@@ -478,8 +601,9 @@ function applyActions(data, actions, now = new Date()) {
   if (!Array.isArray(next.tasks)) next.tasks = [];
   if (!Array.isArray(next.notes)) next.notes = [];
   if (!Array.isArray(next.schedule)) next.schedule = [];
+  if (!Array.isArray(next.calendarEvents)) next.calendarEvents = [];
   const timestamp = now.toISOString();
-  const counts = { tasksAdded: 0, notesAdded: 0, lessonsAdded: 0, lessonsUpdated: 0, unchanged: 0, tasksChanged: 0 };
+  const counts = { tasksAdded: 0, notesAdded: 0, calendarEvents: 0, lessonsAdded: 0, lessonsUpdated: 0, unchanged: 0, tasksChanged: 0 };
 
   for (const action of actions) {
     if (action.type === 'create_tasks') {
@@ -513,6 +637,15 @@ function applyActions(data, actions, now = new Date()) {
           source: 'ai',
         });
         counts.notesAdded += 1;
+      }
+    } else if (action.type === 'create_calendar_events') {
+      for (const event of action.events) {
+        if (next.calendarEvents.some((item) => calendarEventKey(item) === calendarEventKey(event))) {
+          counts.unchanged += 1;
+          continue;
+        }
+        next.calendarEvents = upsertCalendarEvent(next.calendarEvents, event);
+        counts.calendarEvents += 1;
       }
     } else if (action.type === 'upsert_schedule') {
       for (const lesson of action.lessons) {
@@ -621,18 +754,20 @@ class PendingActionStore {
 function toolKind(name) {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (COMMAND_TOOLS.has(name)) return 'command';
-  if (AI_TOOLS.some((tool) => tool.function.name === name)) return 'read';
+  if ([...AI_TOOLS, ...AI_MAIL_TOOLS].some((tool) => tool.function.name === name)) return 'read';
   return 'unknown';
 }
 
 module.exports = {
   AI_TOOLS,
+  AI_MAIL_TOOLS,
   PendingActionStore,
   applyActions,
   createAction,
   lessonKey,
   relevantDataHash,
   sanitizeLessons,
+  sanitizeCalendarEvents,
   sanitizeToolArguments,
   toolKind,
 };
