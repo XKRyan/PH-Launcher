@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 const {
   SchoolDataClient, readUrl, safeSourceUrl, parseManageBacCourses,
-  parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail,
+  parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail,
   parseManageBacDiscussions, parseDiscussionDetail,
   parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows,
 } = require('../electron/school-data.cjs');
@@ -324,4 +324,78 @@ test('school UI shows login-expired errors instead of treating a failed sync as 
   harness.click('[data-school-action="sync"]'); harness.click('[data-school-action="consent"]'); await settleUi();
   assert.match(harness.document.querySelector('[role="alert"]').textContent, /登录已过期/);
   assert.ok(harness.document.querySelector('[data-school-action="account"]'));
+});
+
+// --- Tasks & Deadlines aggregate page (plain-text line algorithm) ---
+
+const ddlPage = (rows) => `<html><body><main>${rows.map((row) => `<div>${row}</div>`).join('')}</main></body></html>`;
+
+test('readUrl allows tasks_and_deadlines only with a known view parameter', () => {
+  for (const view of ['upcoming', 'past', 'overdue']) {
+    assert.equal(readUrl('managebac', `/student/tasks_and_deadlines?view=${view}`), `https://shph.managebac.cn/student/tasks_and_deadlines?view=${view}`);
+  }
+  for (const bad of ['/student/tasks_and_deadlines', '/student/tasks_and_deadlines?view=secret', '/student/tasks_and_deadlines?view=upcoming&page=2', '/student/tasks_and_deadlines?view=upcoming&x=1']) {
+    assert.throws(() => readUrl('managebac', bad), { code: 'URL_NOT_ALLOWED' });
+  }
+  assert.throws(() => readUrl('managebac', '/student/tasks_and_deadlines?view=upcoming', 'POST'), { code: 'URL_NOT_ALLOWED' });
+});
+
+test('parseManageBacDeadlines: title/due/course/status lines with year inference and pseudo-title filtering', () => {
+  const reference = new Date(2026, 8, 15, 10, 0); // Sep 15 2026 local
+  const html = ddlPage([
+    'Upcoming', 'Sep 12, 11:59 PM', // pseudo title (section header) must be dropped
+    'Osmosis Lab Report', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending',
+    'Physics Problem Set', 'Sep 18, 8:00 AM', 'Physics SL', 'Submitted',
+    'Privacy', 'Sep 20, 11:59 PM', // footer pseudo title
+    'Spring Review', 'Jun 1, 11:59 PM', 'History HL', 'Pending', // month < current -> next year
+  ]);
+  const parsed = parseManageBacDeadlines(html, { category: 'upcoming', sourceUrl: 'https://shph.managebac.cn/student/tasks_and_deadlines?view=upcoming', reference });
+  assert.equal(parsed.recognized, true);
+  assert.equal(parsed.items.length, 3);
+  const [first, second, third] = parsed.items;
+  assert.equal(first.title, 'Osmosis Lab Report');
+  assert.equal(first.course, 'Biology HL');
+  assert.equal(first.status, 'Pending');
+  assert.equal(first.dueText, 'Sep 12, 11:59 PM');
+  assert.equal(first.dueAt, new Date(2026, 8, 12, 23, 59).toISOString());
+  assert.equal(second.title, 'Physics Problem Set');
+  assert.equal(second.status, 'Submitted');
+  assert.equal(second.dueAt, new Date(2026, 8, 18, 8, 0).toISOString());
+  assert.equal(third.title, 'Spring Review');
+  assert.equal(third.dueAt, new Date(2027, 5, 1, 23, 59).toISOString()); // next year inferred
+});
+
+test('parseManageBacDeadlines: overdue view resolves earlier years', () => {
+  const reference = new Date(2026, 8, 15, 10, 0);
+  const html = ddlPage(['Old Assignment', 'May 1, 11:59 PM', 'Biology HL', 'Overdue']);
+  const parsed = parseManageBacDeadlines(html, { category: 'overdue', reference });
+  assert.equal(parsed.items.length, 1);
+  assert.equal(parsed.items[0].dueAt, new Date(2026, 4, 1, 23, 59).toISOString());
+  assert.equal(parsed.items[0].course, 'Biology HL');
+});
+
+test('SchoolDataClient.getDeadlines merges views, dedupes and sorts by due time', async () => {
+  const upcoming = ddlPage([
+    'Later Task', 'Sep 21, 8:00 AM', 'Mathematics AA HL', 'Pending',
+    'Shared Task', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending',
+  ]);
+  const overdue = ddlPage([
+    'Shared Task', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending', // duplicate across views
+    'Earlier Missing', 'Sep 10, 11:59 PM', 'Physics SL', 'Missing',
+  ]);
+  const client = new SchoolDataClient({
+    fetch: async (site, url) => {
+      assert.equal(site, 'managebac');
+      if (url.includes('view=upcoming')) return response(upcoming);
+      if (url.includes('view=overdue')) return response(overdue);
+      throw new Error(`unexpected url ${url}`);
+    },
+    now: () => new Date(2026, 8, 15, 10, 0),
+    pause: async () => {},
+  });
+  const result = await client.getDeadlines();
+  assert.deepEqual(result.items.map((item) => item.title), ['Earlier Missing', 'Shared Task', 'Later Task']);
+  const shared = result.items.find((item) => item.title === 'Shared Task');
+  assert.equal(shared.category, 'upcoming'); // first occurrence wins
+  assert.ok(result.warnings.length === 0);
 });

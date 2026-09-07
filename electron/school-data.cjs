@@ -31,6 +31,7 @@ function readUrl(site, raw, method = 'GET') {
   const params = url.searchParams;
   if (site === 'managebac' && method === 'GET') {
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
+    if (path === '/student/tasks_and_deadlines' && [...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
     if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
@@ -173,6 +174,77 @@ function discussionAttachments(node, courseId, discussionId, limit = 8) {
   }
   return [...items.values()].slice(0, limit);
 }
+// Tasks & Deadlines page is a plain-text flow: each due line ("Sep 12, 11:59 PM")
+// follows its title, and the following lines carry the course name and status.
+// The page has no year information; the year is inferred from the reference date
+// (upcoming: earliest year >= today; other views: latest year <= today) and the
+// raw due text is always preserved so users can verify against the site.
+const MB_MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+const DDL_DUE_LINE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2}),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
+const DDL_STATUS_LINE = /^(Pending|Submitted|Late|Missing|Overdue|Not Submitted|Not Assessed Yet|Complete|Completed|Returned|Excused)$/i;
+const DDL_PSEUDO_TITLE = /^(?:Upcoming|Past|Overdue|Show More|Guides|Privacy)\b|^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),/i;
+
+function parseDueLineValue(line, reference, category) {
+  const match = String(line).trim().match(DDL_DUE_LINE);
+  if (!match) return null;
+  const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+  const day = parseInt(match[2], 10);
+  let hour = parseInt(match[3], 10) % 12;
+  const minute = parseInt(match[4], 10);
+  if (match[5].toUpperCase() === 'PM') hour += 12;
+  const year = reference.getFullYear();
+  let dt = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (dt.getDate() !== day || dt.getMonth() !== month - 1) return null;
+  const refStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+  const dtStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime();
+  if (category === 'upcoming' && dtStart < refStart && month < reference.getMonth() + 1) dt = new Date(year + 1, month - 1, day, hour, minute, 0, 0);
+  else if (category !== 'upcoming' && dt.getTime() > reference.getTime() + 45 * 86400000) dt = new Date(year - 1, month - 1, day, hour, minute, 0, 0);
+  return dt;
+}
+
+// Each text node becomes one line - the equivalent of BeautifulSoup's
+// get_text('\n') used by the upstream implementation.
+function collectTextLines(node, out) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      const value = child.nodeValue.replace(/\u00a0/g, ' ').trim();
+      if (value) out.push(value);
+    } else if (child.nodeType === 1) {
+      if (String(child.localName || '').toLowerCase() === 'br') { out.push(''); continue; }
+      collectTextLines(child, out);
+    }
+  }
+}
+
+function parseManageBacDeadlines(html, { category = 'upcoming', sourceUrl = '', reference = new Date() } = {}) {
+  const doc = htmlDocument(html);
+  const lines = [];
+  collectTextLines(doc.body || doc.documentElement, lines);
+  const dueDates = lines.map((line) => parseDueLineValue(line, reference, category));
+  const dueIndexes = dueDates.map((dt, index) => (dt ? index : -1)).filter((index) => index >= 0);
+  const items = [];
+  for (const [position, dueIndex] of dueIndexes.entries()) {
+    const title = dueIndex >= 1 ? lines[dueIndex - 1] : '';
+    const dueAt = dueDates[dueIndex];
+    if (!title || !dueAt) continue;
+    if (DDL_PSEUDO_TITLE.test(title)) continue;
+    const nextDue = position + 1 < dueIndexes.length ? dueIndexes[position + 1] : lines.length;
+    const block = lines.slice(dueIndex + 1, nextDue);
+    const course = block.length && !DDL_STATUS_LINE.test(block[0]) ? block[0] : '';
+    const status = block.find((line) => DDL_STATUS_LINE.test(line)) || '';
+    items.push({
+      title: title.slice(0, 200),
+      course: course.slice(0, 120),
+      dueAt: dueAt.toISOString(),
+      dueText: lines[dueIndex],
+      status,
+      category,
+      sourceUrl,
+    });
+  }
+  return { items, recognized: dueIndexes.length > 0 };
+}
+
 function parseManageBacDiscussions(html, courseId) {
   const cid = validatedId(courseId);
   const doc = htmlDocument(html); const discussions = [];
@@ -452,6 +524,24 @@ class SchoolDataClient {
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
     return { kind, ...parseCoreOverview(await this.request('managebac', path), kind), url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
   }
+  async getDeadlines({ views = ['upcoming', 'overdue'] } = {}) {
+    const items = []; const seen = new Set(); const warnings = [];
+    for (const view of views) {
+      const path = `/student/tasks_and_deadlines?view=${view}`;
+      const html = await this.request('managebac', path);
+      const parsed = parseManageBacDeadlines(html, { category: view, sourceUrl: `${ORIGINS.managebac}${path}`, reference: this.now() });
+      if (!parsed.recognized) warnings.push(`未从 ${view} 栏目识别到截止日期，请在原网页核对`);
+      for (const item of parsed.items) {
+        const key = `${item.title.toLowerCase()}|${item.course}|${item.dueText}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(item);
+      }
+      await this.pause(120);
+    }
+    items.sort((a, b) => (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity));
+    return { items: items.slice(0, 60), warnings, fetchedAt: this.now().toISOString() };
+  }
   async syncEduPage({ weekStart } = {}) {
     if (!validDate(weekStart)) fail('INVALID_DATE', '请选择正确的课表日期');
     const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -487,4 +577,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
