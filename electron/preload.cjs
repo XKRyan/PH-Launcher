@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('ph', {
     list: (options) => ipcRenderer.invoke('mail:list', options),
     read: (uid) => ipcRenderer.invoke('mail:read', uid),
     contacts: () => ipcRenderer.invoke('mail:contacts'),
+    harvestContacts: (options) => ipcRenderer.invoke('mail:harvestContacts', options),
     download: (input) => ipcRenderer.invoke('mail:download', input),
     openLink: (input) => ipcRenderer.invoke('mail:openLink', input),
     send: (draft) => ipcRenderer.invoke('mail:send', draft),

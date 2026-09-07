@@ -89,13 +89,21 @@ class FakeImap {
   }
 
   async getMailboxLock(path, options) {
-    assert.equal(path, 'INBOX');
     this.lockOptions.push(options);
+    this.state.lockPaths.push(path);
+    this.state.currentFolder = path;
     return { release: () => { this.state.releaseCalls += 1; } };
   }
 
+  async *list() {
+    for (const entry of this.state.listMailboxes || []) yield entry;
+  }
+
   async search(query, options) {
-    this.state.searchCalls.push({ query, options });
+    this.state.searchCalls.push({ query, options, folder: this.state.currentFolder || null });
+    if (this.state.searchResults && this.state.currentFolder in this.state.searchResults) {
+      return this.state.searchResults[this.state.currentFolder];
+    }
     return this.state.uids;
   }
 
@@ -107,10 +115,11 @@ class FakeImap {
 
   async fetchOne(uid, query, options) {
     this.fetchOneCalls.push({ uid, query, options });
+    const message = this.state.messages.find((entry) => String(entry.uid) === String(uid));
     const source = this.state.sources.get(String(uid));
-    if (!source) return false;
-    const size = this.state.reportedSizes.get(String(uid)) ?? source.length;
-    return { uid: Number(uid), size, source };
+    if (!source && !message) return false;
+    const size = this.state.reportedSizes.get(String(uid)) ?? source?.length ?? 0;
+    return { uid: Number(uid), size, source, envelope: message?.envelope || null };
   }
 }
 
@@ -119,8 +128,16 @@ function createHarness(overrides = {}) {
   const state = {
     connectCalls: 0,
     releaseCalls: 0,
+    lockPaths: [],
+    currentFolder: null,
     searchCalls: [],
+    searchResults: null,
     fetchAllCalls: [],
+    listMailboxes: [
+      { path: 'INBOX', name: 'INBOX', specialUse: '' },
+      { path: '&XfJT0ZAB-', name: '已发送', specialUse: '\\Sent' },
+      { path: '&g0l6P3ux-', name: '草稿箱', specialUse: '\\Drafts' },
+    ],
     uids: [101, 102],
     messages: [
       {
@@ -220,7 +237,7 @@ test('list is bounded, sanitized, newest-first, and uses TLS/read-only IMAP', as
   assert.equal(state.fetchAllCalls[0].query.bodyStructure, true);
   assert.equal(result.items[1].subject, 'Subject Injected');
   assert.deepEqual(result.items[1].from, [{ name: 'Teacher Name', address: 'teacher@shphschool.com' }]);
-  assert.deepEqual(state.searchCalls[0], { query: { all: true }, options: { uid: true } });
+  assert.deepEqual(state.searchCalls[0], { query: { all: true }, options: { uid: true }, folder: 'INBOX' });
   assert.equal(state.imaps[0].lockOptions[0].readOnly, true);
   assert.equal(state.imaps[0].options.host, IMAP_HOST);
   assert.equal(state.imaps[0].options.port, IMAP_PORT);
@@ -479,4 +496,54 @@ test('known Coremail authorization errors are actionable without exposing server
     assert.doesNotMatch(error.message, /student@|secret-code|ERR\.ILLEGAL/);
     return true;
   });
+});
+
+test('harvestContacts scans INBOX and sent folders, dedupes and filters addresses', async () => {
+  const { client, state } = createHarness({
+    state: {
+      searchResults: { 'INBOX': [101, 102], '&XfJT0ZAB-': [201] },
+      messages: [
+        {
+          uid: 101,
+          envelope: {
+            from: [{ name: 'Teacher', address: 'TEACHER@shphschool.com' }],
+            to: [{ name: 'Student', address: 'student@shphschool.com' }],
+            cc: [{ name: 'Helper', address: 'helper@example.org' }],
+          },
+        },
+        {
+          uid: 102,
+          envelope: {
+            from: [{ name: 'Updates', address: 'no-reply@example.org' }],
+            to: [{ name: 'Student', address: 'student@shphschool.com' }],
+            cc: [],
+          },
+        },
+        {
+          uid: 201,
+          envelope: {
+            from: [{ name: 'Student', address: 'student@shphschool.com' }],
+            to: [{ name: 'Teacher', address: 'teacher@shphschool.com' }],
+            cc: [],
+          },
+        },
+      ],
+    },
+  });
+  const result = await client.harvestContacts({ perFolder: 400 });
+  assert.equal(result.folders, 2);
+  assert.equal(result.scanned.length, 2);
+  assert.deepEqual(
+    result.scanned.map((entry) => entry.mailbox),
+    ['INBOX', '&XfJT0ZAB-'],
+  );
+  const addresses = result.contacts.map((entry) => entry.address);
+  assert.ok(addresses.includes('teacher@shphschool.com'));
+  assert.ok(addresses.includes('helper@example.org'));
+  assert.ok(!addresses.includes('student@shphschool.com'), 'own address is excluded');
+  assert.ok(!addresses.some((entry) => /no-reply/.test(entry)), 'system addresses are excluded');
+  const teacher = result.contacts.find((entry) => entry.address === 'teacher@shphschool.com');
+  assert.equal(teacher.count, 2, 'counted once from inbox From and once from sent To');
+  // Drafts folder is outside the scan scope.
+  assert.ok(!state.lockPaths.includes('&g0l6P3ux-'));
 });

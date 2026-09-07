@@ -599,6 +599,66 @@ class SchoolMailClient {
       .map((entry) => ({ name: entry.name, address: entry.address }));
   }
 
+  // Proactive contact harvest: scan INBOX + sent folders (message headers
+  // only, never bodies) and feed every message into the same _harvest
+  // bookkeeping the passive read-time collection uses, so deduplication,
+  // own-address and system-address filtering stay in one place.
+  async harvestContacts({ perFolder = 400, maxFolders = 4 } = {}) {
+    if (!Number.isInteger(perFolder) || perFolder < 1 || perFolder > 1000) fail('INVALID_ARGUMENT', '每文件夹收割数量无效');
+    if (!Number.isInteger(maxFolders) || maxFolders < 1 || maxFolders > 6) fail('INVALID_ARGUMENT', '收割文件夹数量无效');
+    const context = await this._imapSession();
+    this._assertCurrent(context);
+    const client = context.client;
+    // INBOX plus sent folders; Coremail names sent folders in modified UTF-7
+    // (e.g. &XfJT0ZAB- = 已发送) which imapflow decodes for us.
+    const folders = [];
+    for await (const info of client.list()) {
+      if (!info?.path) continue;
+      const specialUse = String(info.specialUse || (Array.isArray(info.specialUse) ? info.specialUse.join(' ') : ''));
+      const decodedName = String(info.name || '');
+      const isSent = specialUse.includes('Sent') || /sent|已发送/i.test(decodedName);
+      if (info.path === 'INBOX' || isSent) folders.push(info.path);
+      if (folders.length >= maxFolders) break;
+    }
+    const scanned = [];
+    for (const mailboxPath of folders) {
+      let lock;
+      try {
+        lock = await client.getMailboxLock(mailboxPath, { readOnly: true });
+        this._assertCurrent(context);
+        const uids = (await client.search({ all: true }, { uid: true })) || [];
+        const recent = uids.slice(-perFolder);
+        for (const uid of recent) {
+          const message = await client.fetchOne(uid, { envelope: true }, { uid: true });
+          const envelope = message?.envelope;
+          if (!envelope) continue;
+          const fields = [];
+          for (const key of ['from', 'to', 'cc']) {
+            const list = Array.isArray(envelope[key]) ? envelope[key] : [];
+            for (const entry of list) {
+              if (entry?.address) fields.push({ name: entry.name || '', address: entry.address });
+            }
+          }
+          this._harvest(`${mailboxPath}:${uid}`, fields, context);
+        }
+        scanned.push({ mailbox: mailboxPath, messages: recent.length });
+      } catch (error) {
+        if (error instanceof MailClientError) throw error;
+        scanned.push({ mailbox: mailboxPath, error: String(error.message || error).slice(0, 100) });
+      } finally {
+        try { lock?.release(); } catch { /* no-op */ }
+      }
+    }
+    return {
+      scanned,
+      folders: folders.length,
+      contacts: [...this._contacts.values()]
+        .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address))
+        .slice(0, 300)
+        .map((entry) => ({ name: entry.name, address: entry.address, count: entry.count })),
+    };
+  }
+
   _normalizeDraft(draft) {
     if (!draft || typeof draft !== 'object' || Array.isArray(draft)) fail('INVALID_DRAFT', '邮件草稿格式不正确');
     const recipients = dedupeRecipientFields({

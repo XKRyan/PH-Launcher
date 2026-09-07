@@ -2104,7 +2104,7 @@ function registerIpc() {
     openExternal: (url) => shell.openExternal(url),
     getLanguage: () => secureStore.data.settings.language,
   });
-  for (const name of ['status', 'list', 'read', 'contacts', 'download', 'send', 'openLink']) {
+  for (const name of ['status', 'list', 'read', 'contacts', 'harvestContacts', 'download', 'send', 'openLink']) {
     ipcMain.handle(`mail:${name}`, async (event, input) => {
       assertMainRenderer(event);
       return mailbox[name](input);

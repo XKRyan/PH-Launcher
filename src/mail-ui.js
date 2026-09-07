@@ -2,7 +2,7 @@
   'use strict';
 
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const mail = { root: null, items: [], contacts: [], selected: null, detail: null, filter: 'all', busy: false, readBusy: false, sending: false, openingLink: false, pending: null, epoch: 0, readRequest: 0, error: '', detailError: '', notice: '', compose: false, composeError: '', draft: {}, needsLogin: false, fetchedAt: 0 };
+  const mail = { root: null, items: [], contacts: [], selected: null, detail: null, filter: 'all', busy: false, harvesting: false, readBusy: false, sending: false, openingLink: false, pending: null, epoch: 0, readRequest: 0, error: '', detailError: '', notice: '', compose: false, composeError: '', draft: {}, needsLogin: false, fetchedAt: 0 };
   const api = () => window.ph?.mail;
   const safeError = (error, fallback) => String(error?.message || error || fallback).replace(/^Error invoking remote method '[^']+':\s*/i, '').replace(/^(?:Error|MailClientError):\s*/i, '').trim() || fallback;
   const address = (person) => Array.isArray(person) ? person.map(address).filter(Boolean).join(', ') : typeof person === 'string' ? person : person ? [person.name, person.address].filter(Boolean).join(person.name && person.address ? ' <' : '') + (person.name && person.address ? '>' : '') : '';
@@ -35,7 +35,7 @@
           ? '<div class="mail-empty"><p>正在打开邮件…</p></div>'
           : '<div class="mail-empty"><h3>选择一封邮件</h3><p>邮件将以纯文本显示，不加载外部图片。</p></div>';
     const compose = mail.compose ? `<section class="mail-compose"><div class="mail-compose-head"><div><span class="section-kicker">NEW MESSAGE</span><h3>写信</h3></div><button type="button" class="mail-close-compose" data-mail-compose-close aria-label="关闭写信">×</button></div><form data-mail-compose-form><label><span>收件人</span><input name="to" type="text" required maxlength="2000" list="mailContacts" autocomplete="off" placeholder="输入邮箱地址" value="${esc(mail.draft.to)}"/></label><label><span>抄送（可选）</span><input name="cc" type="text" maxlength="2000" list="mailContacts" autocomplete="off" placeholder="多个地址用逗号分隔" value="${esc(mail.draft.cc)}"/></label><label><span>主题</span><input name="subject" type="text" required maxlength="500" placeholder="邮件主题" value="${esc(mail.draft.subject)}"/></label><label><span>正文</span><textarea name="text" rows="10" required maxlength="200000" placeholder="写下想说的话…">${esc(mail.draft.text)}</textarea></label><p class="mail-form-error" role="alert">${esc(mail.composeError)}</p><div class="mail-compose-actions"><span>发送前会由系统再次确认。</span><button class="primary-button" type="submit"${mail.sending ? ' disabled' : ''}>${mail.sending ? '正在发送…' : '发送邮件'}</button></div></form></section>` : '';
-    mail.root.innerHTML = `<header class="mail-page-head"><div><span class="section-kicker">SCHOOL MAIL</span><h2>平和邮箱</h2><p>最近 100 封邮件 · 只显示纯文本，不加载外部图片。</p></div><div class="mail-head-actions">${mail.needsLogin ? '<button type="button" class="primary-button" data-mail-login>账号登录</button>' : `<button type="button" class="secondary-button" data-mail-login>更换登录</button><button type="button" class="secondary-button" data-mail-refresh${mail.busy ? ' disabled' : ''}>${mail.busy ? '正在同步…' : '刷新'}</button><button type="button" class="primary-button" data-mail-compose>写信</button>`}</div></header><p class="mail-status${mail.error ? ' error' : ''}" role="status">${esc(statusLine())}</p><div class="mail-layout"><aside class="mail-list-pane"><div class="mail-filter" role="group" aria-label="邮件筛选"><button type="button" data-mail-filter="all" class="${mail.filter === 'all' ? 'active' : ''}">全部 <span>${mail.items.length}</span></button><button type="button" data-mail-filter="unread" class="${mail.filter === 'unread' ? 'active' : ''}">未读 <span>${mail.items.filter((item) => item.unread).length}</span></button></div><p class="mail-contact-note">联系人来自当前账号已读取的邮件头，不是全校通讯录。</p><div class="mail-list">${list}</div></aside><main class="mail-read-pane">${detail}</main></div>${compose}<datalist id="mailContacts">${mail.contacts.map((contact) => `<option value="${esc(contact.address)}">${esc(contact.name || contact.address)}</option>`).join('')}</datalist>`;
+    mail.root.innerHTML = `<header class="mail-page-head"><div><span class="section-kicker">SCHOOL MAIL</span><h2>平和邮箱</h2><p>最近 100 封邮件 · 只显示纯文本，不加载外部图片。</p></div><div class="mail-head-actions">${mail.needsLogin ? '<button type="button" class="primary-button" data-mail-login>账号登录</button>' : `<button type="button" class="secondary-button" data-mail-login>更换登录</button><button type="button" class="secondary-button" data-mail-refresh${mail.busy ? ' disabled' : ''}>${mail.busy ? '正在同步…' : '刷新'}</button><button type="button" class="secondary-button" data-mail-harvest${mail.harvesting ? ' disabled' : ''}>${mail.harvesting ? '正在收割…' : '收割联系人'}</button><button type="button" class="primary-button" data-mail-compose>写信</button>`}</div></header><p class="mail-status${mail.error ? ' error' : ''}" role="status">${esc(statusLine())}</p><div class="mail-layout"><aside class="mail-list-pane"><div class="mail-filter" role="group" aria-label="邮件筛选"><button type="button" data-mail-filter="all" class="${mail.filter === 'all' ? 'active' : ''}">全部 <span>${mail.items.length}</span></button><button type="button" data-mail-filter="unread" class="${mail.filter === 'unread' ? 'active' : ''}">未读 <span>${mail.items.filter((item) => item.unread).length}</span></button></div><p class="mail-contact-note">联系人来自已读取的邮件头与收割扫描（收件箱+已发送），不是全校通讯录。</p><div class="mail-list">${list}</div></aside><main class="mail-read-pane">${detail}</main></div>${compose}<datalist id="mailContacts">${mail.contacts.map((contact) => `<option value="${esc(contact.address)}">${esc(contact.name || contact.address)}</option>`).join('')}</datalist>`;
   }
 
   function formatBytes(value) {
@@ -85,6 +85,31 @@
     })();
     mail.pending = { epoch, promise: task };
     return task;
+  }
+
+  // Proactive contact harvest: scans recent INBOX/sent headers (never bodies)
+  // through the main-process client and refreshes the local contact list.
+  async function harvestContacts() {
+    if (mail.harvesting) return;
+    const epoch = mail.epoch;
+    mail.harvesting = true; mail.error = ''; render();
+    try {
+      if (!api()?.harvestContacts) throw new Error('邮箱服务尚未准备好');
+      const result = await api().harvestContacts();
+      if (epoch !== mail.epoch) return;
+      const fresh = api().contacts ? await api().contacts() : [];
+      if (epoch !== mail.epoch) return;
+      mail.contacts = Array.isArray(fresh) ? fresh : [];
+      const folders = Number(result?.folders) || 0;
+      mail.notice = folders
+        ? `联系人收割完成：扫描 ${folders} 个文件夹，现有 ${mail.contacts.length} 个联系人。`
+        : '联系人收割完成。';
+    } catch (error) {
+      if (epoch !== mail.epoch) return;
+      mail.error = safeError(error, '联系人收割失败，请稍后重试');
+    } finally {
+      if (epoch === mail.epoch) { mail.harvesting = false; render(); }
+    }
   }
 
   async function openMessage(uid) {
@@ -165,6 +190,7 @@
     const filter = event.target.closest('[data-mail-filter]');
     if (filter) { mail.filter = filter.dataset.mailFilter; render(); return; }
     if (event.target.closest('[data-mail-refresh]')) return refresh();
+    if (event.target.closest('[data-mail-harvest]')) return harvestContacts();
     if (event.target.closest('[data-mail-login]')) return window.openSchoolAccount?.('mail');
     if (event.target.closest('[data-mail-compose]')) { mail.compose = true; mail.draft = {}; mail.composeError = ''; render(); return; }
     if (event.target.closest('[data-mail-compose-close]')) { mail.compose = false; mail.draft = {}; mail.composeError = ''; render(); }
