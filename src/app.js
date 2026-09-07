@@ -1923,11 +1923,17 @@ async function saveCredentialFromDialog(event) {
     if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
   }
   if (credential.siteId === 'mail') {
+    const statusEl = $('#credentialConnectStatus');
+    if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在测试 IMAP 连接…'; }
     try {
       if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
       const connected = await window.mailUI.connect();
+      if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = connected ? 'IMAP 连接成功，收件箱同步完成' : '连接已建立'; }
       if (connected) toast('已登录并同步最近邮件');
+      if (typeof setTimeout === 'function') setTimeout(() => { if (statusEl) statusEl.hidden = true; $('#credentialDialog')?.close(); renderCredentialSettings(); }, 1500);
+      else { if (statusEl) statusEl.hidden = true; $('#credentialDialog')?.close(); renderCredentialSettings(); }
     } catch (error) {
+      if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `连接失败：${error.message}`; }
       toast(`账号已保存，但无法连接邮箱：${error.message}`, 'error');
     }
     return;
@@ -2738,6 +2744,10 @@ async function init() {
   document.body.dataset.initialized = 'true';
   document.body.classList.add('loaded');
   if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
+  // Splash progress bars are pure CSS animations; the skip button forces
+  // the splash away immediately when a platform connection times out.
+  const skipButton = $('#splashSkip');
+  if (skipButton) skipButton.addEventListener('click', () => document.body.classList.add('loaded'));
 }
 
 document.addEventListener('DOMContentLoaded', init);

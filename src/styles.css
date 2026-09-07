@@ -48,16 +48,35 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 /* Splash screen */
 .splash-screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; background:var(--ivory-100); z-index:9999; }
 .splash-logo { opacity:0; transform:scale(.92); animation:splashIn .5s ease-out .15s both; }
-.splash-hint { color:var(--ink-3); font-size:.875rem; opacity:0; animation:splashIn .5s ease-out .3s both; }
-.splash-progress { width:220px; height:4px; background:rgba(0,0,0,.08); border-radius:999px; overflow:hidden; opacity:0; animation:splashIn .5s ease-out .4s both; }
-.splash-progress-bar { width:30%; height:100%; border-radius:999px; background:var(--green-800); animation:splashProgress 2s ease-in-out infinite; }
-@keyframes splashIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
-@keyframes splashProgress { 0%{transform:translateX(-100%)} 50%{transform:translateX(300%)} 100%{transform:translateX(-100%)} }
+.splash-bars { display:flex; flex-direction:column; gap:12px; width:280px; }
+.splash-bar-row { display:flex; align-items:center; gap:12px; }
+.splash-bar-label { width:110px; text-align:right; color:var(--ink-2); font-size:.8125rem; }
+.splash-bar { flex:1; height:5px; background:rgba(0,0,0,.08); border-radius:999px; overflow:hidden; position:relative; }
+.splash-bar-fill { width:0%; height:100%; background:var(--green-800); border-radius:999px; transition:width .5s ease; }
+.splash-bar-fill[data-bar="school"] { animation:splashFill 1.2s ease-out .2s both; }
+.splash-bar-fill[data-bar="mail"] { animation:splashFill 1.2s ease-out .8s both; }
+.splash-bar-fill[data-bar="preload"] { animation:splashFill 1.2s ease-out 1.4s both; }
+@keyframes splashFill { from { width:0% } to { width:100% } }
+.splash-hint { color:var(--ink-3); font-size:.875rem; }
+.splash-skip { position:absolute; bottom:36px; color:var(--ink-3); font-size:.8125rem; background:none; border:none; cursor:pointer; opacity:.7; }
+.splash-skip:hover { opacity:1; text-decoration:underline; }
 body.loaded .splash-screen { opacity:0; transition:opacity .3s ease-out; pointer-events:none; }
 body.loaded .app-shell { opacity:1; }
 .app-shell { opacity:0; transition:opacity .25s ease-in; }
 
 .credential-setting { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid var(--border); }
+.credential-connect-status { padding:8px 12px; border-radius:8px; font-size:.8125rem; margin-top:10px; }
+.credential-connect-status.ok { background:rgba(46,160,67,.12); color:#1a7f37; }
+.credential-connect-status.error { background:rgba(154,52,18,.10); color:#9a3412; }
+.credential-connect-status.testing { background:rgba(31,90,70,.08); color:var(--ink-2); }
+
+/* Mail HTML preview and collapsible recipients */
+.mail-view-toggle { display:flex; gap:4px; }
+.mail-view-toggle button { padding:5px 12px; border-radius:8px; font-size:.8125rem; background:rgba(0,0,0,.05); border:none; cursor:pointer; }
+.mail-view-toggle button.active { background:var(--green-800); color:#fff; }
+.mail-preview-frame { width:100%; min-height:360px; max-height:70vh; border:1px solid var(--border); border-radius:10px; background:#fff; }
+.mail-recipients-collapsed .mail-recipient-extra { display:none; }
+.mail-recipient-toggle { background:none; border:none; color:var(--green-800); cursor:pointer; font-size:.8125rem; padding:4px 0; text-decoration:underline; }
 .credential-setting > div:nth-child(2) { flex:1; min-width:0; }
 .credential-setting strong, .credential-setting small { display:block; }
 .credential-setting small { margin-top:4px; color:var(--ink-2); overflow-wrap:anywhere; }
