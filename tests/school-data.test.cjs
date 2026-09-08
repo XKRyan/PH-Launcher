@@ -432,3 +432,22 @@ test('syncManageBac filters tasks older than 14 days even with text-only due dat
   assert.ok(titles.includes('Far Future Task'), 'future within a year is kept');
   assert.ok(!titles.includes('Ancient Task'), 'older than 14 days is filtered out');
 });
+
+test('tasks view hides DDL older than 14 days even from stale cached snapshots', async () => {
+  const old = new Date(Date.now() - 40 * 86400000).toISOString();
+  const recent = new Date(Date.now() - 2 * 86400000).toISOString();
+  const upcoming = new Date(Date.now() + 5 * 86400000).toISOString();
+  const snapshot = { edupage: null, managebac: { fetchedAt: fixedNow().toISOString(), courses: [{ id: '21', name: 'Biology HL', grade: null }], tasks: [
+    { id: 't1', title: 'Ancient Homework', course: 'Biology HL', dueAt: old, dueText: 'Aug 9, 11:59 PM' },
+    { id: 't2', title: 'Recent Past Homework', course: 'Biology HL', dueAt: recent, dueText: 'Sep 13, 11:59 PM' },
+    { id: 't3', title: 'Upcoming Homework', course: 'Biology HL', dueAt: upcoming, dueText: 'Sep 20, 11:59 PM' },
+  ], warnings: [] }, preferences: {} };
+  const harness = schoolUiHarness(snapshot);
+  harness.context.window.schoolUI.mount(); await settleUi();
+  harness.context.window.schoolUI.open('courses'); await settleUi();
+  harness.click('[data-course-tab="tasks"]'); await settleUi();
+  const page = harness.document.querySelector('#schoolPage').textContent;
+  assert.match(page, /Recent Past Homework/);
+  assert.match(page, /Upcoming Homework/);
+  assert.doesNotMatch(page, /Ancient Homework/, 'DDL older than 14 days must not render');
+});

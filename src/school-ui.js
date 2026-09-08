@@ -182,7 +182,15 @@
     if (!data) return syncSummary('managebac') + noData('不错过下一项作业', '从 ManageBac 同步作业、截止时间与提交状态。隐藏作业仅影响本地列表。', 'managebac');
     const hidden = new Set(prefs().hiddenTasks || []);
     const query = state.query.toLocaleLowerCase();
-    const items = data.tasks.filter((task) => (state.showHidden ? hidden.has(task.id) : !hidden.has(task.id)) && `${task.title} ${task.course}`.toLocaleLowerCase().includes(query));
+    // Rendering-side guard: even if a cached snapshot still carries old
+    // entries, only tasks due within the last 14 days (or ahead) are shown.
+    const cutoff = Date.now() - 14 * 86400000;
+    const futureLimit = Date.now() + 365 * 86400000;
+    const items = data.tasks.filter((task) => (state.showHidden ? hidden.has(task.id) : !hidden.has(task.id)) && `${task.title} ${task.course}`.toLocaleLowerCase().includes(query)).filter((task) => {
+      if (!task.dueAt) return true;
+      const ts = Date.parse(task.dueAt);
+      return Number.isFinite(ts) ? ts >= cutoff && ts <= futureLimit : true;
+    });
     items.sort((a, b) => state.taskSort === 'name' ? a.title.localeCompare(b.title, 'zh-CN') : (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity) || a.title.localeCompare(b.title, 'zh-CN'));
     return `${syncSummary('managebac')}<div class="school-section-head"><div><span class="section-kicker">TASKS & DEADLINES</span><h2>${state.showHidden ? '已隐藏' : '课程作业'} <small>${items.length}</small></h2></div><button type="button" class="school-text-button" data-school-action="toggle-hidden">${state.showHidden ? '返回作业列表' : `查看已隐藏 (${data.tasks.filter((task) => hidden.has(task.id)).length})`}</button></div><div class="school-task-filters"><input type="search" value="${esc(state.query)}" data-school-field="query" placeholder="搜索作业或课程" aria-label="搜索作业或课程"/><select data-school-field="task-sort" aria-label="作业排序"><option value="due" ${state.taskSort === 'due' ? 'selected' : ''}>明确截止时间优先</option><option value="name" ${state.taskSort === 'name' ? 'selected' : ''}>作业名称</option></select></div><div class="school-task-list">${taskRows(items) || '<div class="school-empty"><h3>这里暂时没有作业</h3><p>试试其他关键词，或在原网页核对最新安排。</p></div>'}</div><p class="school-footnote">没有完整日期的作业保留原文，不擅自推断年份。点击作业查看详情。隐藏或恢复不会修改学校网站。</p>`;
   }

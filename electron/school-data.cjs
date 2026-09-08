@@ -110,10 +110,39 @@ function exactDueDate(node) {
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return '';
 }
-function parseManageBacTasks(html, course = {}) {
+function parseManageBacTasks(html, course = {}, { reference = new Date() } = {}) {
   const doc = htmlDocument(html);
   const tasks = new Map();
   const cards = doc.querySelectorAll('.fusion-card-item.short-assignment, [data-task-id]');
+  // Hello! Pinghe mechanism: the date badge gives month/day, the due-date
+  // line gives the time, and the past-due badge picks the year direction.
+  // This resolves a concrete date for nearly every card, which is what the
+  // 14-day filter needs to actually work.
+  const inferDue = (card, pastDue, dueText) => {
+    const exact = exactDueDate(card);
+    if (exact) return exact;
+    const monthTxt = text(card, '.date-badge .month', 12) || text(card, '.date-badge', 12);
+    const dayTxt = text(card, '.date-badge .day', 4) || '';
+    const month = MB_MONTHS[String(monthTxt).slice(0, 3).toUpperCase()];
+    const day = /^\d+$/.test(String(dayTxt)) ? parseInt(dayTxt, 10) : NaN;
+    if (!month || !Number.isInteger(day)) return '';
+    const timeMatch = String(dueText || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    let hour = timeMatch ? parseInt(timeMatch[1], 10) % 12 : 23;
+    const minute = timeMatch ? parseInt(timeMatch[2], 10) : 59;
+    if (timeMatch && timeMatch[3].toUpperCase() === 'PM') hour += 12;
+    const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+    const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+      .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+      .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+    if (!candidates.length) return '';
+    const sorted = candidates.sort((a, b) => a - b);
+    if (pastDue) {
+      const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+      return (older.length ? older[older.length - 1] : sorted[sorted.length - 1]).toISOString();
+    }
+    const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+    return (newer.length ? newer[0] : sorted[sorted.length - 1]).toISOString();
+  };
   for (const card of cards) {
     const link = card.querySelector('.title a[href], h3 a[href], h4 a[href], a[href*="/core_tasks/"]');
     const url = safeSourceUrl('managebac', link?.getAttribute('href'));
@@ -122,12 +151,14 @@ function parseManageBacTasks(html, course = {}) {
     const title = text(link, null, 200);
     if (!title) continue;
     const id = `managebac:${ids[1]}:${ids[2]}`;
+    const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160);
+    const pastDue = Boolean(card.querySelector('.past-due'));
     tasks.set(id, {
       id, title, courseId: ids[1], course: clean(course.name, 160), url,
-      dueText: text(card, '.due-date', 160) || text(card, '.date-badge', 160),
-      dueAt: exactDueDate(card), status: text(card, '.badge-label', 80),
+      dueText,
+      dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge-label', 80),
       score: text(card, '.assessment.task-score', 80),
-      pastDue: Boolean(card.querySelector('.past-due')),
+      pastDue,
     });
   }
   return { tasks: [...tasks.values()].slice(0, 500), recognized: cards.length > 0 || /No (?:tasks|assignments|records)|暂无作业/i.test(doc.documentElement?.textContent || '') };
