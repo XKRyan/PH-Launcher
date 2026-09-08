@@ -809,6 +809,7 @@ body.loaded .app-shell { opacity: 1; }
 .modal-head > button { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); background: transparent; font-size: 1.3125rem; font-weight: 300; }
 .modal-head > button:hover { background: rgba(24,35,30,.06); }
 .modal label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 13px; }
+.modal label[hidden] { display: none !important; }
 .modal label > span { color: var(--ink-2); font-size: 0.8125rem; font-weight: 700; }
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 39px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; outline: 0; background: #fff; font-size: 0.9375rem; }
 .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: rgba(31,90,70,.36); box-shadow: 0 0 0 3px rgba(31,90,70,.06); }

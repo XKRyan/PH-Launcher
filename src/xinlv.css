@@ -205,17 +205,109 @@
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.08); }
 }
+@keyframes xinlvGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(42, 114, 90, 0); }
+  50%      { box-shadow: 0 0 0 6px rgba(42, 114, 90, .12); }
+}
+@keyframes xinlvShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 
-.xinlv-mood-option   { transition: border-color .16s ease, background .16s ease, transform .18s ease; }
+.xinlv-hero { transition: box-shadow .25s ease; }
+.xinlv-hero:hover { box-shadow: 0 8px 32px rgba(16, 45, 37, .18); }
+
+.xinlv-tab {
+  transition: background .2s ease, border-color .2s ease, transform .18s ease, box-shadow .2s ease;
+}
+.xinlv-tab:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+.xinlv-tab.active { transition: background .2s ease, border-color .2s ease, transform .18s ease; }
+
+.xinlv-card {
+  transition: box-shadow .22s ease, border-color .22s ease;
+}
+.xinlv-card:hover { box-shadow: var(--shadow-sm); border-color: rgba(31, 90, 70, .15); }
+
+.xinlv-mood-option {
+  transition: border-color .16s ease, background .16s ease, transform .18s ease, box-shadow .16s ease;
+}
+.xinlv-mood-option:hover { transform: scale(1.04); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 .xinlv-mood-option:active { transform: scale(.95); }
 .xinlv-mood-option.active i { animation: xinlvPulse .4s ease; }
-.xinlv-metric        { transition: transform .18s ease, box-shadow .18s ease; }
-.xinlv-metric:hover  { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-.xinlv-suggest-chip  { transition: transform .15s ease, background .15s ease; }
-.xinlv-suggest-chip:hover { transform: scale(1.05); }
-.xinlv-tip           { transition: border-color .2s ease, box-shadow .2s ease; }
-.xinlv-tip:hover     { border-color: rgba(31, 90, 70, .28); box-shadow: var(--shadow-sm); }
-.xinlv-bubble        { transition: opacity .15s ease; }
+.xinlv-mood-option.active { box-shadow: 0 0 0 3px color-mix(in srgb, var(--mood) 18%, transparent); }
+
+.xinlv-mood-chip {
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.xinlv-mood-chip:hover { transform: scale(1.05); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+
+.xinlv-intensity-option {
+  transition: background .16s ease, border-color .16s ease, transform .15s ease;
+}
+.xinlv-intensity-option:hover { transform: translateY(-1px); }
+.xinlv-intensity-option:active { transform: scale(.95); }
+
+.xinlv-metric {
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.xinlv-metric:hover { transform: translateY(-3px); box-shadow: var(--shadow-sm); }
+
+.xinlv-suggest-chip {
+  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.xinlv-suggest-chip:hover { transform: scale(1.06); box-shadow: 0 2px 6px rgba(0,0,0,.06); }
+
+.xinlv-tip {
+  transition: border-color .2s ease, box-shadow .2s ease, transform .18s ease;
+}
+.xinlv-tip:hover { border-color: rgba(31, 90, 70, .28); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+
+.xinlv-song-list button {
+  transition: border-color .16s ease, background .16s ease, transform .15s ease;
+}
+.xinlv-song-list button:hover { transform: translateX(3px); }
+
+.xinlv-entry-actions button {
+  transition: border-color .15s ease, color .15s ease, transform .12s ease;
+}
+.xinlv-entry-actions button:hover { transform: scale(1.06); }
+
+.xinlv-primary-button {
+  transition: background .18s ease, transform .15s ease, box-shadow .18s ease;
+}
+.xinlv-primary-button:hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(31, 90, 70, .18); }
+.xinlv-primary-button:active { transform: scale(.97); }
+
+.xinlv-secondary-button {
+  transition: background .16s ease, border-color .16s ease, transform .12s ease;
+}
+.xinlv-secondary-button:hover { transform: translateY(-1px); }
+
+.xinlv-bubble {
+  transition: opacity .2s ease, transform .2s ease;
+}
+
+.xinlv-status {
+  transition: background .2s ease, opacity .2s ease;
+}
+
+.xinlv-login-copy { transition: transform .2s ease, box-shadow .2s ease; }
+.xinlv-login-copy:hover { box-shadow: var(--shadow-sm); }
+.xinlv-login-form { transition: box-shadow .2s ease; }
+.xinlv-login-form:focus-within { box-shadow: 0 0 0 2px rgba(42, 114, 90, .15); }
+
+.xinlv-entry {
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.xinlv-entry:hover { border-color: rgba(31, 90, 70, .2); box-shadow: 0 1px 4px rgba(0,0,0,.04); }
+
+.xinlv-day-list {
+  transition: border-color .2s ease;
+}
+
+.xinlv-crisis {
+  animation: xinlvGlow 2s ease-in-out infinite;
+}
 
 @media (max-width: 900px) {
   .xinlv-login { grid-template-columns: minmax(0, 1fr); }
