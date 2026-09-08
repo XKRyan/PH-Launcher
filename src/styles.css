@@ -244,12 +244,11 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .clean-toggle.unavailable b::after { content: " · 当前页不可用"; color: var(--wine-700); font-size: 0.75rem; font-weight: 700; }
 
 .content { grid-column: 2; min-width: 0; min-height: 0; overflow: auto; scroll-behavior: smooth; }
-.page { display: none; width: min(100%, 1500px); min-height: 100%; margin: 0 auto; padding: 36px 40px 54px; animation: pageIn .22s ease both; }
+.page { display: none; width: min(100%, 1500px); min-height: 100%; margin: 0 auto; padding: 36px 40px 54px; }
 .page.active { display: block; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: no-preference) {
   .page { contain: layout style; backface-visibility: hidden; }
-  .page.active { animation: pageIn .18s cubic-bezier(.22,.61,.36,1) both; }
 }
 
 /* Startup splash: logo + per-platform progress bars */
@@ -398,7 +397,7 @@ body.loaded .app-shell { opacity: 1; }
 .segmented-tabs button { min-width: 84px; height: 32px; padding: 0 14px; border-radius: 9px; color: var(--ink-2); background: transparent; font-size: 0.9375rem; font-weight: 700; }
 .segmented-tabs button.active { color: var(--green-800); background: #fff; box-shadow: 0 2px 8px rgba(31,90,70,.09); }
 .tab-panel { display: none; }
-.tab-panel.active { display: block; animation: pageIn .2s ease; }
+.tab-panel.active { display: block; }
 .task-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .search-field { display: flex; align-items: center; gap: 8px; height: 39px; padding: 0 11px; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.7); }
 .search-field:focus-within { border-color: rgba(31,90,70,.33); box-shadow: 0 0 0 3px rgba(31,90,70,.06); }
@@ -730,7 +729,7 @@ body.loaded .app-shell { opacity: 1; }
 .settings-sections-nav button.active { color: var(--green-800); background: #fff; font-weight: 700; box-shadow: 0 3px 12px rgba(31,90,70,.07); }
 .settings-content { min-width: 0; padding: 27px 30px; }
 .settings-section { display: none; max-width: 780px; }
-.settings-section.active { display: block; animation: pageIn .2s ease; }
+.settings-section.active { display: block; }
 .settings-section > h3 { margin: 0 0 18px; font-size: 1.25rem; }
 .setting-intro { margin: -11px 0 17px; color: var(--ink-3); font-size: 0.875rem; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 67px; border-bottom: 1px solid var(--border); }

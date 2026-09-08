@@ -201,41 +201,21 @@
 
 /* ------------------------------------------------------------------ animations */
 
-@keyframes xinlvFadeUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes xinlvScaleIn {
-  from { opacity: 0; transform: scale(.92); }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes xinlvSlideRight {
-  from { opacity: 0; transform: translateX(-10px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
 @keyframes xinlvPulse {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.08); }
 }
 
-.xinlv-hero          { animation: xinlvFadeUp .35s ease both; }
-.xinlv-tabs          { animation: xinlvFadeUp .35s ease .06s both; }
-.xinlv-card          { animation: xinlvFadeUp .32s ease .1s both; }
-.xinlv-login-copy    { animation: xinlvSlideRight .3s ease .08s both; }
-.xinlv-login-form    { animation: xinlvFadeUp .32s ease .12s both; }
 .xinlv-mood-option   { transition: border-color .16s ease, background .16s ease, transform .18s ease; }
 .xinlv-mood-option:active { transform: scale(.95); }
 .xinlv-mood-option.active i { animation: xinlvPulse .4s ease; }
-.xinlv-entry         { animation: xinlvFadeUp .25s ease both; }
-.xinlv-bubble        { animation: xinlvScaleIn .22s ease both; }
-.xinlv-bubble.user   { animation: xinlvSlideRight .22s ease both; }
-.xinlv-crisis        { animation: xinlvFadeUp .3s ease both; }
 .xinlv-metric        { transition: transform .18s ease, box-shadow .18s ease; }
 .xinlv-metric:hover  { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
 .xinlv-suggest-chip  { transition: transform .15s ease, background .15s ease; }
 .xinlv-suggest-chip:hover { transform: scale(1.05); }
 .xinlv-tip           { transition: border-color .2s ease, box-shadow .2s ease; }
 .xinlv-tip:hover     { border-color: rgba(31, 90, 70, .28); box-shadow: var(--shadow-sm); }
+.xinlv-bubble        { transition: opacity .15s ease; }
 
 @media (max-width: 900px) {
   .xinlv-login { grid-template-columns: minmax(0, 1fr); }
