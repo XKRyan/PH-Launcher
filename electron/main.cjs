@@ -3016,11 +3016,17 @@ function createWindow() {
       });
     }
   });
-  // Bypass the Chromium cache for bundled app files: after an update the
-  // renderer must always load the freshly packaged sources, never stale JS.
-  mainWindow.webContents.session.clearCache().catch(() => {})
+  // Bypass Chromium caches for bundled app files: after an update the
+  // renderer must always load the freshly packaged sources. clearCache()
+  // clears the HTTP cache; clearCodeCache() clears the V8 code cache that
+  // otherwise keeps executing stale bytecode of the previous build.
+  const appSession = mainWindow.webContents.session;
+  Promise.all([
+    appSession.clearCache(),
+    typeof appSession.clearCodeCache === 'function' ? appSession.clearCodeCache() : Promise.resolve(),
+  ]).catch(() => {})
     .finally(() => {
-      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'), { query: { v: app.getVersion() } });
+      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
     });
 }
 
