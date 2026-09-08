@@ -399,3 +399,36 @@ test('SchoolDataClient.getDeadlines merges views, dedupes and sorts by due time'
   assert.equal(shared.category, 'upcoming'); // first occurrence wins
   assert.ok(result.warnings.length === 0);
 });
+
+test('syncManageBac filters tasks older than 14 days even with text-only due dates', async () => {
+  const coursesPage = '<ul id=\"f-menu\"><li class=\"f-menu-submenu-item\"><a href=\"/student/classes/101\"><span class=\"f-menu-submenu-link-title\">Biology HL</span></a></li></ul>';
+  const unitsPage = '<div class=\"sidebar-items-list\"><div class=\"cell\">a</div><div class=\"cell\">b</div><div class=\"cell\">c</div><div class=\"cell\">Overall\n90\n(A)</div></div>';
+  const card = (title, dueText, pastDue) => [
+    '<div class=\"fusion-card-item short-assignment\">',
+    '<div class=\"date-badge' + (pastDue ? ' past-due' : '') + '\"><span class=\"month\">' + dueText.split(' ')[0] + '</span><span class=\"day\">' + dueText.split(' ')[1].replace(',', '') + '</span></div>',
+    '<div class=\"h4 title\"><a href=\"/student/classes/101/core_tasks/9' + title.length + '\">' + title + '</a></div>',
+    '<span class=\"due-date\">Due ' + dueText + '</span>',
+    '</div>',
+  ].join('');
+  const tasksPage = [
+    card('Recent Task', 'Sep 12, 11:59 PM', false),
+    card('Ancient Task', 'Jan 5, 11:59 PM', true),
+    card('Far Future Task', 'Jun 1, 11:59 PM', false),
+    '<div>No classes found</div>',
+  ].join('');
+  const client = new SchoolDataClient({
+    fetch: async (site, url) => {
+      if (url.includes('/student/classes/my')) return response(coursesPage);
+      if (url.includes('/units')) return response(unitsPage);
+      if (url.includes('/core_tasks')) return response(tasksPage);
+      throw new Error('unexpected ' + url);
+    },
+    now: () => new Date(2026, 8, 15, 10, 0),
+    pause: async () => {},
+  });
+  const result = await client.syncManageBac();
+  const titles = result.tasks.map((task) => task.title);
+  assert.ok(titles.includes('Recent Task'), 'within 14 days is kept');
+  assert.ok(titles.includes('Far Future Task'), 'future within a year is kept');
+  assert.ok(!titles.includes('Ancient Task'), 'older than 14 days is filtered out');
+});

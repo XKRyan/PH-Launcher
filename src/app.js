@@ -2035,6 +2035,7 @@ async function openCustomSiteDialog(site = null) {
   $('#customSiteName').value = site?.name || '';
   $('#customSiteUrl').value = site?.url || '';
   $('#customSiteColor').value = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  document.querySelectorAll('#customSiteColorSwatches input[name="customSiteColorRadio"]').forEach((radio) => { radio.checked = radio.value === $('#customSiteColor').value; });
   $('#customSiteShortcut').value = site?.shortcut || '';
   $('#customSiteShortcutEnabled').checked = Boolean(site?.shortcutEnabled);
   $('#customSiteDialogTitle').textContent = site ? '编辑网页' : '添加网页';
@@ -2592,6 +2593,9 @@ function bindEvents() {
     } catch (error) { toast(`恢复失败：${error.message}`, 'error'); }
   });
   $('#showData').addEventListener('click', () => window.ph.system.showData());
+  document.querySelectorAll('#customSiteColorSwatches input[name="customSiteColorRadio"]').forEach((radio) => {
+    radio.addEventListener('change', () => { $('#customSiteColor').value = radio.value; });
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;

@@ -483,17 +483,39 @@ class SchoolDataClient {
     }
     // Filter tasks: show only 14 days ago to 1 year ahead. Task cards carry
     // month/day text without a year, so when dueAt is absent we resolve the
-    // date from dueText (same parser as the deadlines page) using the card's
-    // own past-due badge to pick the year direction.
+    // date from dueText (handles "Due Sep 12, 11:59 PM", "Sep 12" and
+    // date-badge forms) using the card's past-due badge for year direction.
     const reference = this.now();
     const cutoff = reference.getTime() - 14 * 86400000;
     const futureLimit = reference.getTime() + 365 * 86400000;
-    const filteredTasks = [...tasks.values()].filter((task) => {
+    const resolveTaskDue = (task) => {
       if (task.dueAt) {
         const ts = Date.parse(task.dueAt);
-        return Number.isFinite(ts) ? ts >= cutoff && ts <= futureLimit : true;
+        return Number.isFinite(ts) ? new Date(ts) : null;
       }
-      const resolved = parseDueLineValue(String(task.dueText || ''), reference, task.pastDue ? 'past' : 'upcoming');
+      const raw = String(task.dueText || '').replace(/^due\s*[:\-]?\s*/i, '').trim();
+      const match = raw.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:,?\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i);
+      if (!match) return null;
+      const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+      const day = parseInt(match[2], 10);
+      let hour = match[3] ? parseInt(match[3], 10) % 12 : 23;
+      const minute = match[4] ? parseInt(match[4], 10) : 59;
+      if (match[5] && match[5].toUpperCase() === 'PM') hour += 12;
+      const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+      const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+        .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+        .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+      if (!candidates.length) return null;
+      const sorted = candidates.sort((a, b) => a - b);
+      if (task.pastDue) {
+        const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+        return older.length ? older[older.length - 1] : sorted[sorted.length - 1];
+      }
+      const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+      return newer.length ? newer[0] : sorted[0];
+    };
+    const filteredTasks = [...tasks.values()].filter((task) => {
+      const resolved = resolveTaskDue(task);
       if (!resolved) return true; // unparseable: keep, never silently drop work
       const ts = resolved.getTime();
       return ts >= cutoff && ts <= futureLimit;

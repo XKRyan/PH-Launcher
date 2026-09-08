@@ -52,16 +52,17 @@
 .mail-attachments button:hover { background:var(--green-50); border-color:var(--green-200); }
 .mail-attachments span { overflow-wrap:anywhere; }
 .mail-attachments small { flex:0 0 auto; color:var(--green-800); font-size:.72rem; }
-.mail-compose { position:fixed; z-index:20; right:26px; bottom:22px; width:min(540px, calc(100vw - 42px)); padding:20px; border:1px solid var(--border); border-radius:17px; background:var(--white); box-shadow:0 20px 55px #18231e33; }
+.mail-compose { position:fixed; z-index:60; inset:72px 0 0 248px; width:auto; max-height:none; border:0; border-radius:0; background:var(--ivory-50); box-shadow:0 -18px 50px rgba(11,35,27,.18); padding:28px 36px 24px; overflow:auto; display:flex; flex-direction:column; animation: composeIn .22s cubic-bezier(.22,.61,.36,1) both; }
+@keyframes composeIn { from { opacity:0; transform: translate3d(0, 14px, 0); } to { opacity:1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .mail-compose { animation: none; } }
 .mail-compose-head { margin-bottom:16px; }
 .mail-compose-head h3 { margin:3px 0 0; font-size:1.16rem; }
 .mail-close-compose { display:grid; place-items:center; width:32px; height:32px; border-radius:9px; color:var(--ink-3); background:transparent; font-size:1.35rem; }
 .mail-close-compose:hover { background:var(--ivory-100); color:var(--ink-1); }
-.mail-compose { max-height:calc(100vh - 44px); overflow:auto; }
-.mail-compose form { display:grid; gap:11px; }
+.mail-compose form { display:grid; gap:11px; flex:1; align-content:start; }
 .mail-compose label { display:grid; gap:6px; color:var(--ink-2); font-size:.76rem; font-weight:650; }
 .mail-compose input, .mail-compose textarea { width:100%; padding:10px 11px; border:1px solid var(--border); border-radius:10px; background:var(--ivory-50); color:var(--ink-1); font:inherit; font-size:.85rem; }
-.mail-compose textarea { resize:vertical; line-height:1.6; }
+.mail-compose textarea { resize:vertical; line-height:1.6; min-height:220px; }
 .mail-compose input:focus, .mail-compose textarea:focus { outline:2px solid color-mix(in srgb,var(--green-700) 27%,transparent); border-color:var(--green-600); background:var(--white); }
 .mail-form-error { min-height:18px; margin:0; font-size:.75rem; line-height:1.5; }
 .mail-compose-actions { margin-top:2px; }
@@ -74,5 +75,5 @@
   .mail-empty { min-height:250px; }
   .mail-message { padding:22px; }
   .mail-attachments button { align-items:flex-start; flex-direction:column; }
-  .mail-compose { right:12px; bottom:12px; width:calc(100vw - 24px); max-height:calc(100vh - 24px); overflow:auto; }
+  .mail-compose { inset:0; padding:20px; }
 }
