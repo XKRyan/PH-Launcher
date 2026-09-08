@@ -3057,10 +3057,15 @@ async function runSelfTest() {
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'mail';
     navigate('psychology');
     await window.xinlvUI?.open?.();
+    // Exercise the real bridge: a missing xinlv:* handler or preload entry
+    // would leave the page rendered but unusable.
+    const xinlvBridge = await window.ph.xinlv.status().then((status) => typeof status?.configured === 'boolean').catch(() => false)
+      && await window.ph.xinlv.list({}).then((entries) => Array.isArray(entries)).catch(() => false);
     const nativeXinlvRendered = document.querySelector('#xinlvPage h2')?.textContent === '心履'
       && Boolean(document.querySelector('#xinlvPage [data-xinlv-login-form]'))
       && !document.querySelector('#xinlvPage iframe, #xinlvPage webview')
-      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'psychology';
+      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'psychology'
+      && xinlvBridge;
     const customCreated = await window.ph.sites.saveCustom({
       name: '自检网页',
       url: 'https://example.com/',
