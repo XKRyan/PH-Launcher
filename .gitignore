@@ -36,3 +36,7 @@ Thumbs.db
 _diag*/
 _diag.cjs
 _core_backup.cjs
+
+_verify-data/
+_verify.cjs
+_verify-render.cjs
