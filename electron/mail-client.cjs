@@ -436,11 +436,11 @@ class SchoolMailClient {
     this._closeClient(client);
   }
 
-  async _withInbox(work) {
+  async _withInbox(work, { readOnly = true } = {}) {
     const context = await this._imapSession();
     let lock;
     try {
-      lock = await context.client.getMailboxLock('INBOX', { readOnly: true, description: 'PH Launcher native mail' });
+      lock = await context.client.getMailboxLock('INBOX', { readOnly, description: 'PH Launcher native mail' });
       this._assertCurrent(context);
       const result = await work(context.client, context);
       this._assertCurrent(context);
@@ -514,7 +514,7 @@ class SchoolMailClient {
     });
   }
 
-  async _parsedMessage(uid) {
+  async _parsedMessage(uid, { markSeen = false } = {}) {
     const normalizedUid = String(uid ?? '');
     if (!/^[1-9]\d{0,9}$/.test(normalizedUid)) fail('INVALID_ARGUMENT', '邮件 id 不合法');
     return this._withInbox(async (client, context) => {
@@ -535,12 +535,18 @@ class SchoolMailClient {
         fail('PARSE_FAILED', '邮件内容无法解析');
       }
       this._assertCurrent(context);
+      if (markSeen && message.flags instanceof Set && !message.flags.has('\\Seen')) {
+        // Opening a mail marks it read server-side (best effort); the
+        // renderer also flips its local list entry so the dot disappears
+        // immediately without waiting for the next sync.
+        try { await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true }); } catch { /* best-effort */ }
+      }
       return { parsed: parsed || {}, context, uid: normalizedUid };
-    });
+    }, { readOnly: !markSeen });
   }
 
   async read(uid) {
-    const { parsed, context, uid: normalizedUid } = await this._parsedMessage(uid);
+    const { parsed, context, uid: normalizedUid } = await this._parsedMessage(uid, { markSeen: true });
     const from = uniqueAddresses(parsed.from);
     const to = uniqueAddresses(parsed.to);
     const cc = uniqueAddresses(parsed.cc);

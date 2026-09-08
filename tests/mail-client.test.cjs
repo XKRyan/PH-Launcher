@@ -119,7 +119,12 @@ class FakeImap {
     const source = this.state.sources.get(String(uid));
     if (!source && !message) return false;
     const size = this.state.reportedSizes.get(String(uid)) ?? source?.length ?? 0;
-    return { uid: Number(uid), size, source, envelope: message?.envelope || null };
+    return { uid: Number(uid), size, source, envelope: message?.envelope || null, flags: message?.flags || new Set() };
+  }
+
+  async messageFlagsAdd(range, flags, options) {
+    this.state.messageFlagsAddCalls.push({ range, flags, options });
+    return true;
   }
 }
 
@@ -133,6 +138,7 @@ function createHarness(overrides = {}) {
     searchCalls: [],
     searchResults: null,
     fetchAllCalls: [],
+    messageFlagsAddCalls: [],
     listMailboxes: [
       { path: 'INBOX', name: 'INBOX', specialUse: '' },
       { path: '&XfJT0ZAB-', name: '已发送', specialUse: '\\Sent' },
@@ -268,8 +274,8 @@ test('read parses local MIME, does not mark seen, and returns bounded Buffer att
   assert.ok(Buffer.isBuffer(content));
   assert.deepEqual(content, attachmentBytes);
   assert.equal(state.imaps[0].fetchOneCalls[0].query.source.maxLength, MAX_RAW_MESSAGE_BYTES + 1);
-  assert.ok(state.imaps[0].lockOptions.every((entry) => entry.readOnly === true));
-  assert.equal(typeof state.imaps[0].messageFlagsAdd, 'undefined');
+  assert.equal(state.imaps[0].lockOptions[0].readOnly, false, 'read opens the mailbox read-write so \\Seen can be stored');
+  assert.deepEqual(state.imaps[0].state.messageFlagsAddCalls.map((entry) => entry.flags), [['\\Seen']], 'opening a mail stores \\Seen server-side');
 });
 
 test('HTML-only messages become inert text without remote resources or scripts', async () => {

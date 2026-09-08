@@ -2,7 +2,7 @@
   'use strict';
 
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const mail = { root: null, items: [], contacts: [], selected: null, detail: null, filter: 'all', busy: false, harvesting: false, readBusy: false, sending: false, openingLink: false, pending: null, epoch: 0, readRequest: 0, error: '', detailError: '', notice: '', compose: false, composeError: '', draft: {}, needsLogin: false, fetchedAt: 0 };
+  const mail = { root: null, items: [], contacts: [], selected: null, detail: null, filter: 'all', busy: false, harvesting: false, recipientsExpanded: false, readBusy: false, sending: false, openingLink: false, pending: null, epoch: 0, readRequest: 0, error: '', detailError: '', notice: '', compose: false, composeError: '', draft: {}, needsLogin: false, fetchedAt: 0 };
   const api = () => window.ph?.mail;
   const safeError = (error, fallback) => String(error?.message || error || fallback).replace(/^Error invoking remote method '[^']+':\s*/i, '').replace(/^(?:Error|MailClientError):\s*/i, '').trim() || fallback;
   const address = (person) => Array.isArray(person) ? person.map(address).filter(Boolean).join(', ') : typeof person === 'string' ? person : person ? [person.name, person.address].filter(Boolean).join(person.name && person.address ? ' <' : '') + (person.name && person.address ? '>' : '') : '';
@@ -31,16 +31,32 @@
       ? `<div class="mail-empty"><h3>暂时无法打开这封邮件</h3><p role="alert">${esc(mail.detailError)}</p></div>`
       : read
         ? (() => {
-          const recipients = address(read.to || '') + (read.cc ? `, ${address(read.cc)}` : '');
-          const recipientCount = (recipients.match(/@/g) || []).length;
+          // Recipients render as individual chips; when there are more than
+          // five, the overflow collapses and a toggle reveals them.
+          const toList = Array.isArray(read.to) ? read.to : [];
+          const ccList = Array.isArray(read.cc) ? read.cc : [];
+          const allRecipients = [
+            ...toList.map((entry) => ({ ...entry, kind: '收件人' })),
+            ...ccList.map((entry) => ({ ...entry, kind: '抄送' })),
+          ];
+          const recipientCount = allRecipients.length;
           const collapseRecipients = recipientCount > 5;
+          const chips = allRecipients.map((entry, index) => {
+            const hidden = collapseRecipients && index >= 5 && !mail.recipientsExpanded;
+            const label = index === 0 ? '收件人' : (entry.kind === '抄送' && allRecipients[index - 1].kind !== '抄送' ? '抄送' : '');
+            return `<div class="mail-recipient-row${hidden ? ' mail-recipient-extra' : ''}"><dt>${label}</dt><dd>${esc(address(entry) || '')}</dd></div>`;
+          }).join('');
+          const toggleButton = collapseRecipients
+            ? `<button type="button" class="mail-recipient-toggle" data-mail-recipient-toggle>${mail.recipientsExpanded ? '收起收件人' : `展开全部 ${recipientCount} 个收件人`}</button>`
+            : '';
+          const recipientSection = `<dl><div><dt>发件人</dt><dd>${esc(address(read.from) || '未知发件人')}</dd></div>${chips}<div><dt>时间</dt><dd>${esc(dateLabel(read.date))}</dd></div></dl>${toggleButton}`;
           // HTML emails render automatically in a sandboxed iframe; plain
           // text is only used when no HTML part exists.
           const htmlAvail = Boolean(read.html && read.html.trim());
           const bodyHtml = htmlAvail
             ? `<iframe class="mail-preview-frame" sandbox="allow-same-origin" srcdoc="${esc(read.html)}"></iframe>`
             : `<pre class="mail-text">${esc(read.text || '（这封邮件没有可显示的纯文本内容。）')}</pre>`;
-          return `<article class="mail-message"><header><h3>${esc(read.subject || '(无主题)')}</h3><dl><div><dt>发件人</dt><dd>${esc(address(read.from) || '未知发件人')}</dd></div><div class="mail-recipients-row${collapseRecipients ? ' mail-recipients-collapsed' : ''}"><dt>收件人</dt><dd>${esc(address(read.to) || '未提供')}</dd></div>${read.cc ? `<div class="mail-recipients-row${collapseRecipients ? ' mail-recipients-collapsed' : ''}"><dt>抄送</dt><dd>${esc(address(read.cc))}</dd></div>` : ''}<div><dt>时间</dt><dd>${esc(dateLabel(read.date))}</dd></div></dl>${collapseRecipients ? `<button type="button" class="mail-recipient-toggle" data-mail-recipient-toggle>展开 ${recipientCount} 个收件人</button>` : ''}</header>${read.attachments?.length ? `<section class="mail-attachments"><h4>附件（${read.attachments.length}）</h4>${read.attachments.map((file) => `<button type="button" data-mail-download="${esc(file.id)}" data-mail-uid="${esc(read.uid)}"><span>${esc(file.name || '未命名附件')}</span><small>${esc(formatBytes(file.size))} · 保存附件</small></button>`).join('')}</section>` : ''}${linkPanel(read)}${bodyHtml}</article>`;
+          return `<article class="mail-message"><header><h3>${esc(read.subject || '(无主题)')}</h3>${recipientSection}</header>${read.attachments?.length ? `<section class="mail-attachments"><h4>附件（${read.attachments.length}）</h4>${read.attachments.map((file) => `<button type="button" data-mail-download="${esc(file.id)}" data-mail-uid="${esc(read.uid)}"><span>${esc(file.name || '未命名附件')}</span><small>${esc(formatBytes(file.size))} · 保存附件</small></button>`).join('')}</section>` : ''}${linkPanel(read)}${bodyHtml}</article>`;
         })()
         : selected && mail.readBusy
           ? '<div class="mail-empty"><p>正在打开邮件…</p></div>'
@@ -133,8 +149,12 @@
       if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;
       if (!detail || detail.uid !== uid) throw new Error('邮件内容不可用');
       mail.detail = detail;
-      // Reading is a server-side PEEK. Keep unread flags consistent with the
-      // mailbox instead of pretending the message was marked as read.
+      // The main process marked the message \Seen server-side; flip the
+      // local list entry immediately so the bold text and dot disappear
+      // without waiting for the next sync.
+      mail.recipientsExpanded = false;
+      const listItem = mail.items.find((entry) => String(entry.uid) === String(uid));
+      if (listItem && listItem.unread) { listItem.unread = false; render(); }
     } catch (error) {
       if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;
       mail.detailError = safeError(error, '无法读取这封邮件');
@@ -203,16 +223,7 @@
     if (event.target.closest('[data-mail-refresh]')) return refresh();
     if (event.target.closest('[data-mail-harvest]')) return harvestContacts();
     const recipientToggle = event.target.closest('[data-mail-recipient-toggle]');
-    if (recipientToggle) {
-      const article = recipientToggle.closest('.mail-message');
-      if (!article) return;
-      const rows = article.querySelectorAll('.mail-recipients-row');
-      const collapsed = article.classList.toggle('mail-recipients-collapsed');
-      rows.forEach((row) => row.classList.toggle('mail-recipients-collapsed', collapsed));
-      const match = recipientToggle.textContent.match(/\d+/);
-      recipientToggle.textContent = collapsed ? `展开 ${match ? match[0] : ''} 个收件人` : '收起收件人';
-      return;
-    }
+    if (recipientToggle) { mail.recipientsExpanded = !mail.recipientsExpanded; render(); return; }
     if (event.target.closest('[data-mail-login]')) return window.openSchoolAccount?.('mail');
     if (event.target.closest('[data-mail-compose]')) { mail.compose = true; mail.draft = {}; mail.composeError = ''; render(); return; }
     if (event.target.closest('[data-mail-compose-close]')) { mail.compose = false; mail.draft = {}; mail.composeError = ''; render(); }

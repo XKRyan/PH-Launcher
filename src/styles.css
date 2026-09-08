@@ -75,7 +75,7 @@ body.loaded .app-shell { opacity:1; }
 .mail-view-toggle button { padding:5px 12px; border-radius:8px; font-size:.8125rem; background:rgba(0,0,0,.05); border:none; cursor:pointer; }
 .mail-view-toggle button.active { background:var(--green-800); color:#fff; }
 .mail-preview-frame { width:100%; min-height:360px; max-height:70vh; border:1px solid var(--border); border-radius:10px; background:#fff; }
-.mail-recipients-collapsed .mail-recipient-extra { display:none; }
+.mail-recipient-row.mail-recipient-extra { display: none; }
 .mail-recipient-toggle { background:none; border:none; color:var(--green-800); cursor:pointer; font-size:.8125rem; padding:4px 0; text-decoration:underline; }
 
 /* Mail page entry animations */

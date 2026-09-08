@@ -396,7 +396,14 @@ function eduRows(dates, identity, requestedDates) {
       const cancelled = Boolean(item.removed) || ['absent', ''].includes(item.type);
       const id = `edupage:${digest(`${identity.accountKey}|${date}|${start}|${end}|${groupKey}|${room}`)}`;
       lessons.push({ id, date, start, end, course, teacher, room, groups, groupKey, cancelled, period: /^\d+$/.test(String(item.uniperiod)) ? Number(item.uniperiod) : null });
-      options.set(groupKey, { key: groupKey, course, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · ') });
+      const timeLabel = `${date.slice(5)} ${start}–${end}`;
+      const existingOption = options.get(groupKey);
+      if (!existingOption) {
+        options.set(groupKey, { key: groupKey, course, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · '), rooms: room ? [room] : [], times: [timeLabel] });
+      } else {
+        if (room && !existingOption.rooms.includes(room)) existingOption.rooms.push(room);
+        if (!existingOption.times.includes(timeLabel)) { existingOption.times.push(timeLabel); existingOption.times.sort(); }
+      }
     }
   }
   return { lessons: [...new Map(lessons.map((item) => [item.id, item])).values()].sort((a, b) => `${a.date}${a.start}${a.course}`.localeCompare(`${b.date}${b.start}${b.course}`)), options: [...options.values()], skipped };
@@ -474,13 +481,21 @@ class SchoolDataClient {
       }
       await this.pause(120);
     }
-    // Filter tasks: show only 14 days ago to 1 year ahead.
-    const now = Date.now();
-    const cutoff = now - 14 * 86400000;
-    const futureLimit = now + 365 * 86400000;
+    // Filter tasks: show only 14 days ago to 1 year ahead. Task cards carry
+    // month/day text without a year, so when dueAt is absent we resolve the
+    // date from dueText (same parser as the deadlines page) using the card's
+    // own past-due badge to pick the year direction.
+    const reference = this.now();
+    const cutoff = reference.getTime() - 14 * 86400000;
+    const futureLimit = reference.getTime() + 365 * 86400000;
     const filteredTasks = [...tasks.values()].filter((task) => {
-      if (!task.dueAt) return true;
-      const ts = Date.parse(task.dueAt);
+      if (task.dueAt) {
+        const ts = Date.parse(task.dueAt);
+        return Number.isFinite(ts) ? ts >= cutoff && ts <= futureLimit : true;
+      }
+      const resolved = parseDueLineValue(String(task.dueText || ''), reference, task.pastDue ? 'past' : 'upcoming');
+      if (!resolved) return true; // unparseable: keep, never silently drop work
+      const ts = resolved.getTime();
       return ts >= cutoff && ts <= futureLimit;
     });
     return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), warnings: warnings.slice(0, 30) };
