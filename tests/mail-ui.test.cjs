@@ -15,7 +15,7 @@ function harness({ saved = true, sendResult = { ok: true } } = {}) {
     status: async () => { calls.status += 1; return { saved }; },
     list: async (options) => { calls.list.push(options); return { items: [{ uid: 'one', subject: '<img src=x>', from: { name: '学校通知', address: 'notice@example.test' }, date: '2026-09-06T08:00:00Z', unread: true }, { uid: 'two', subject: '普通邮件', from: { address: 'teacher@example.test' }, date: '2026-09-05T08:00:00Z', unread: false }] }; },
     contacts: async () => { calls.contacts += 1; return [{ name: '李老师', address: 'teacher@example.test' }]; },
-    read: async (uid) => { calls.read.push(uid); return { uid, subject: '<b>纯文本</b>', from: { name: '学校通知', address: 'notice@example.test' }, to: { address: 'student@example.test' }, date: '2026-09-06T08:00:00Z', text: '正文 <img src=x>', attachments: [{ id: 'a1', name: '安排.pdf', size: 2048 }] }; },
+    read: async (uid) => { calls.read.push(uid); return { uid, subject: '<b>纯文本</b>', from: { name: '学校通知', address: 'notice@example.test' }, to: [{ name: 'Student', address: 'student@example.test' }], date: '2026-09-06T08:00:00Z', text: '正文 <img src=x>', attachments: [{ id: 'a1', name: '安排.pdf', size: 2048 }] }; },
     download: async (input) => { calls.download.push(input); return { ok: true, canceled: false }; },
     send: async (input) => { calls.send.push(input); return sendResult; },
   } };
@@ -39,7 +39,9 @@ test('mail UI lists a bounded inbox, safely renders plain text, and saves attach
   assert.deepEqual(ui.calls.read, ['one']);
   assert.match(ui.document.querySelector('.mail-text').textContent, /正文 <img src=x>/);
   assert.ok(ui.document.querySelector('.mail-message').innerHTML.indexOf('mail-attachments') < ui.document.querySelector('.mail-message').innerHTML.indexOf('mail-text'), 'attachments appear before long message body');
-  assert.ok(ui.document.querySelector('[data-mail-open="one"]').classList.contains('unread'), 'read-only PEEK must not pretend to change server unread flags');
+  assert.equal(ui.document.querySelector('[data-mail-open="one"]').classList.contains('unread'), false, 'opening a mail flips its list entry to read immediately');
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-row').length, 1, 'recipients render as per-address rows');
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-extra').length, 0, 'fewer than six recipients stay expanded');
   click(ui.window, ui.document.querySelector('[data-mail-download="a1"]'));
   await settle();
   assert.equal(ui.calls.download.length, 1);
@@ -50,18 +52,38 @@ test('mail UI lists a bounded inbox, safely renders plain text, and saves attach
 test('mail buttons show actual domains before the body and only send message/link IDs on deliberate click', async () => {
   const ui = harness();
   const opened = [];
-  ui.window.ph.mail.read = async uid => ({ uid, subject: 'Reset request', text: 'Click the button below.', links: [{ id: 'link-abc', label: '<img src=x onerror=alert(1)> Reset password', host: 'shph.managebac.cn' }] });
+  ui.window.ph.mail.read = async uid => ({ uid, subject: 'Reset request', text: 'Click the button below.', to: [{ address: 'student@example.test' }], links: [{ id: 'link-abc', label: '<img src=x onerror=alert(1)> Reset password', host: 'shph.managebac.cn' }] });
   ui.window.ph.mail.openLink = async input => { opened.push(input); return { ok: true }; };
   await ui.window.mailUI.open();
   click(ui.window, ui.document.querySelector('[data-mail-open="one"]')); await settle();
   assert.equal(opened.length, 0, 'reading never follows links');
-  assert.equal(ui.document.querySelector('img,a,iframe'), null);
+  assert.equal(ui.document.querySelector('.mail-message iframe'), null, 'plain-text mail renders no HTML iframe');
   const button = ui.document.querySelector('[data-mail-link]');
   assert.match(button.textContent, /shph\.managebac\.cn/);
   const markup = ui.document.querySelector('.mail-message').innerHTML;
   assert.ok(markup.indexOf('mail-links') < markup.indexOf('mail-text'));
   click(ui.window, button); await settle();
   assert.equal(opened.length, 1); assert.equal(opened[0].uid, 'one'); assert.equal(opened[0].linkId, 'link-abc'); assert.equal(opened[0].url, undefined);
+});
+
+test('mail recipients beyond five collapse and expand on toggle, and HTML mail renders in a sandboxed frame', async () => {
+  const ui = harness();
+  const many = Array.from({ length: 8 }, (_, index) => ({ name: `Person ${index + 1}`, address: `person${index + 1}@example.test` }));
+  ui.window.ph.mail.read = async uid => ({ uid, subject: 'Group mail', text: 'plain fallback', html: '<p>formatted <b>body</b></p><script>steal()</script>', to: many, cc: [{ name: 'Extra', address: 'extra@example.test' }] });
+  await ui.window.mailUI.open();
+  click(ui.window, ui.document.querySelector('[data-mail-open="one"]'));
+  await settle();
+  assert.ok(ui.document.querySelector('.mail-preview-frame'), 'HTML mail renders in a sandboxed iframe');
+  assert.equal(ui.document.querySelector('.mail-preview-frame').getAttribute('sandbox'), 'allow-same-origin', 'iframe sandbox must not allow scripts');
+  const srcdoc = ui.document.querySelector('.mail-preview-frame').getAttribute('srcdoc');
+  assert.doesNotMatch(srcdoc, /<script/i, 'scripts are stripped from the stored HTML');
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-row').length, 9, 'eight to + one cc recipients');
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-row.mail-recipient-extra').length, 4, 'rows beyond five are collapsed');
+  click(ui.window, ui.document.querySelector('[data-mail-recipient-toggle]'));
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-row.mail-recipient-extra').length, 0, 'toggle reveals collapsed recipients');
+  assert.match(ui.document.querySelector('[data-mail-recipient-toggle]').textContent, /收起收件人/);
+  click(ui.window, ui.document.querySelector('[data-mail-recipient-toggle]'));
+  assert.equal(ui.document.querySelectorAll('.mail-recipient-row.mail-recipient-extra').length, 4, 'toggle collapses again');
 });
 
 test('mail UI uses known message-header contacts and sends only after an explicit form submit', async () => {

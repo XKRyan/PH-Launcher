@@ -5,6 +5,14 @@
   const mail = { root: null, items: [], contacts: [], selected: null, detail: null, filter: 'all', busy: false, harvesting: false, recipientsExpanded: false, readBusy: false, sending: false, openingLink: false, pending: null, epoch: 0, readRequest: 0, error: '', detailError: '', notice: '', compose: false, composeError: '', draft: {}, needsLogin: false, fetchedAt: 0 };
   const api = () => window.ph?.mail;
   const safeError = (error, fallback) => String(error?.message || error || fallback).replace(/^Error invoking remote method '[^']+':\s*/i, '').replace(/^(?:Error|MailClientError):\s*/i, '').trim() || fallback;
+  // Defense in depth: the data layer already strips scripts, but the
+  // renderer never trusts stored HTML either. The preview iframe is also
+  // sandboxed without allow-scripts.
+  const stripDangerousHtml = (html) => String(html || '')
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript\s*:/gi, '');
   const address = (person) => Array.isArray(person) ? person.map(address).filter(Boolean).join(', ') : typeof person === 'string' ? person : person ? [person.name, person.address].filter(Boolean).join(person.name && person.address ? ' <' : '') + (person.name && person.address ? '>' : '') : '';
   const dateLabel = (value) => {
     const date = new Date(value);
@@ -54,7 +62,7 @@
           // text is only used when no HTML part exists.
           const htmlAvail = Boolean(read.html && read.html.trim());
           const bodyHtml = htmlAvail
-            ? `<iframe class="mail-preview-frame" sandbox="allow-same-origin" srcdoc="${esc(read.html)}"></iframe>`
+            ? `<iframe class="mail-preview-frame" sandbox="allow-same-origin" srcdoc="${esc(stripDangerousHtml(read.html))}"></iframe>`
             : `<pre class="mail-text">${esc(read.text || '（这封邮件没有可显示的纯文本内容。）')}</pre>`;
           return `<article class="mail-message"><header><h3>${esc(read.subject || '(无主题)')}</h3>${recipientSection}</header>${read.attachments?.length ? `<section class="mail-attachments"><h4>附件（${read.attachments.length}）</h4>${read.attachments.map((file) => `<button type="button" data-mail-download="${esc(file.id)}" data-mail-uid="${esc(read.uid)}"><span>${esc(file.name || '未命名附件')}</span><small>${esc(formatBytes(file.size))} · 保存附件</small></button>`).join('')}</section>` : ''}${linkPanel(read)}${bodyHtml}</article>`;
         })()
