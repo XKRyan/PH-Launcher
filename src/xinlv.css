@@ -37,7 +37,8 @@
 .xinlv-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .xinlv-card-head h3 { margin: 4px 0 0; font-size: 1.0625rem; color: var(--ink); }
 .xinlv-card-head small { color: var(--ink-3); font-size: .75rem; }
-.xinlv-record, .xinlv-recommend, .xinlv-chat, .xinlv-profile { display: flex; flex-direction: column; gap: 16px; }
+.xinlv-record { display: flex; flex-direction: column; gap: 24px; }
+.xinlv-recommend, .xinlv-chat, .xinlv-profile { display: flex; flex-direction: column; gap: 16px; }
 
 .xinlv-status { margin: 0; padding: 9px 13px; border-radius: var(--radius-sm); background: var(--green-50); color: var(--green-800); font-size: .8125rem; }
 .xinlv-status.error { background: rgba(154, 52, 18, .1); color: #9a3412; }

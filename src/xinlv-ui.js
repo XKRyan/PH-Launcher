@@ -740,7 +740,11 @@
         render();
         startProactivePolling();
       }
-      if (state.tab === 'recommend' && configured() && !state.catalog) { await loadCatalog(); render(); }
+      if (state.tab === 'recommend' && configured()) {
+        if (!state.catalog) await loadCatalog();
+        if (!state.recommend.data && !state.recommend.loading) await loadRecommend('happy');
+        render();
+      }
       if (state.tab === 'profile' && configured()) { await loadProfile(); render(); }
       return;
     }

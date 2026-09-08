@@ -140,7 +140,7 @@ test('xinlv recommendations render server content as text and only open http lin
   await settle();
   click(ui.window, ui.document.querySelector('[data-xinlv-recommend="anxious"]'));
   await settle();
-  assert.deepEqual(ui.calls.recommend, ['anxious']);
+  assert.deepEqual(ui.calls.recommend, ['happy', 'anxious'], 'switching to recommend tab auto-loads happy, then the explicit click adds anxious');
   const page = ui.document.querySelector('#xinlvPage');
   assert.match(page.textContent, /先做三次深呼吸/);
   assert.match(page.textContent, /把担心的事写下来/, 'tip content and source are rendered');
