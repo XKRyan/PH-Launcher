@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="./school.css" />
     <link rel="stylesheet" href="./calendar.css" />
     <link rel="stylesheet" href="./mail.css" />
+    <link rel="stylesheet" href="./xinlv.css" />
     <link rel="stylesheet" href="./refinements.css" />
     <link rel="stylesheet" href="./focus.css" />
     <link rel="stylesheet" href="./dialogs.css" />
@@ -81,7 +82,7 @@
           <button class="nav-item" data-route="courses"><svg><use href="#i-book"/></svg><span>我的课程</span></button>
           <button class="nav-item" id="mailNav" data-route="mail" aria-label="平和邮箱"><svg><use href="#i-mail"/></svg><span>平和邮箱</span><b class="nav-count-badge hidden" id="navMailCount" aria-hidden="true"></b></button>
           <div class="nav-label">生活</div>
-          <button class="nav-item site-nav" data-site="psychology"><svg><use href="#i-spark"/></svg><span>心理</span><i class="status-dot"></i></button>
+          <button class="nav-item" data-route="psychology"><svg><use href="#i-spark"/></svg><span>心履</span></button>
           <div class="nav-label custom-sites-label"><span>我的网页</span><button type="button" data-action="add-custom-site" aria-label="添加自定义网页"><svg><use href="#i-plus"/></svg></button></div>
           <div class="custom-site-nav" id="customSiteNav"></div>
           <div class="nav-label">学习</div>
@@ -222,6 +223,7 @@
         <section class="page" data-page="calendar" id="calendarPage"></section>
         <section class="page" data-page="vocabulary" id="vocabularyPage"></section>
         <section class="page" data-page="mail" id="mailPage"></section>
+        <section class="page" data-page="psychology" id="xinlvPage"></section>
 
         <section class="page" data-page="dictionary">
           <div class="page-intro"><div><span class="section-kicker">OFFLINE DICTIONARY</span><h2>离线英汉词典</h2><p>释义、音标与词形全部保存在电脑中，断网也能查询。</p></div><span class="offline-badge"><i></i>完全离线</span></div>
@@ -302,6 +304,7 @@
     <script src="./school-ui.js"></script>
     <script src="./calendar-ui.js"></script>
     <script src="./mail-ui.js"></script>
+    <script src="./xinlv-ui.js"></script>
     <script src="./appearance-ui.js"></script>
     <script src="./startup-ui.js"></script>
     <script src="./agent-ui.js"></script>

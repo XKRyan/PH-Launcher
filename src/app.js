@@ -9,9 +9,9 @@ const BUILTIN_SITE_META = {
 };
 // Embedded first-party modules are fixed navigation items, but are deliberately
 // kept out of BUILTIN_SITE_META so they never appear in credential settings.
-const FIXED_SITE_META = {
-  psychology: { name: '心理', icon: 'i-spark', url: 'https://xin-lv.com/', eyebrow: 'WELLBEING', embedded: true },
-};
+// Xinlv moved from an embedded webpage to a native API-backed page, so this
+// map is intentionally empty now.
+const FIXED_SITE_META = {};
 const SITE_META = { ...BUILTIN_SITE_META, ...FIXED_SITE_META };
 const CUSTOM_SITE_COLORS = new Set(['green', 'wine', 'gold', 'blue', 'slate']);
 const ROUTE_META = {
@@ -23,6 +23,7 @@ const ROUTE_META = {
   timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
+  psychology: { title: '心履', eyebrow: 'WELLBEING' },
   'class-timetable': { title: '班级课表', eyebrow: 'CLASS TIMETABLE', page: 'school' },
   courses: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
@@ -278,6 +279,10 @@ function navigate(route) {
     window.mailUI?.markViewed?.();
     const opening = window.mailUI?.open?.();
     Promise.resolve(opening).then(() => { if (state.route === 'mail') window.mailUI?.markViewed?.(); }).catch(() => {});
+  }
+  if (route === 'psychology') {
+    if (typeof window.xinlvUI?.refresh === 'function') window.xinlvUI.refresh();
+    else window.xinlvUI?.mount?.();
   }
   if (route === 'dictionary') {
     renderDictionary();
@@ -1863,6 +1868,18 @@ function credentialEntry(siteId) {
   };
 }
 
+const XINLV_ACCOUNT = { id: 'xinlv', name: '心履', icon: 'i-spark' };
+
+function xinlvAccountStatus() {
+  const status = state.data?.xinlv || {};
+  return {
+    configured: Boolean(status.configured),
+    username: String(status.username || ''),
+    totalEntries: Number(status.totalEntries || 0),
+    pendingSync: Number(status.pendingSync || 0),
+  };
+}
+
 function renderCredentialSettings() {
   const container = $('#credentialSettings');
   if (!container) return;
@@ -1889,10 +1906,24 @@ function renderCredentialSettings() {
         : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
       : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
     return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
-  }).join('');
+  }).join('') + xinlvCredentialCard();
+}
+
+// Xinlv signs in through its own REST API, so it shares this login list but
+// stores its credentials in the encrypted launcher store, not the web vault.
+function xinlvCredentialCard() {
+  const account = xinlvAccountStatus();
+  const statusText = account.configured
+    ? `已登录 ${account.username || '心履账号'} · ${account.totalEntries} 条记录${account.pendingSync ? ` · ${account.pendingSync} 条待同步` : ''}`
+    : '未登录；登录后可在“心履”页面记录心情并按需同步';
+  const actions = account.configured
+    ? `<button type="button" data-connect-xinlv>同步</button><button type="button" data-edit-xinlv>修改账号</button><button type="button" class="danger" data-remove-xinlv>退出登录</button>`
+    : '<button type="button" data-edit-xinlv>登录心履</button>';
+  return `<div class="credential-setting"><div class="site-card-icon slate">${icon(XINLV_ACCOUNT.icon)}</div><div><strong>${escapeHtml(XINLV_ACCOUNT.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
 }
 
 function openCredentialDialog(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) return openXinlvLoginDialog();
   const site = BUILTIN_SITE_META[siteId];
   const status = state.credentialStatus;
   if (!site || !status?.supported || status.issue) {
@@ -1930,12 +1961,68 @@ function openCredentialDialog(siteId) {
   setTimeout(() => $('#credentialUsername').focus(), 30);
 }
 
+// Xinlv is not a website: it signs in through its REST API, so the dialog keeps
+// the same shape but hides webview-only options (autofill, auto re-login).
+function openXinlvLoginDialog() {
+  const status = state.credentialStatus;
+  if (!status?.supported || status.issue) {
+    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+  }
+  const account = xinlvAccountStatus();
+  $('#credentialForm').reset();
+  $('#credentialSiteId').value = XINLV_ACCOUNT.id;
+  $('#credentialUsername').value = account.username || '';
+  $('#credentialPassword').required = true;
+  $('#credentialPasswordLabel').textContent = '密码';
+  $('#credentialPasswordNote').textContent = '密码与登录令牌使用当前系统用户密钥加密保存，只用于登录心履，保存后不会再次显示。';
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  $('#credentialAutoFillRow').hidden = true;
+  $('#credentialAutoLoginRow').hidden = true;
+  $('#credentialDialogTitle').textContent = '心履登录';
+  $('#credentialIntro').textContent = '心履账号与学校账号相互独立。账号和密码只用于调用心履官方 API；心情记录加密保存在本机，只有你主动同步时才会发送到心履服务器。登录失败不会自动重试，避免账号被锁定。';
+  $('#credentialRiskAccepted').checked = false;
+  $('#saveCredentialButton').disabled = true;
+  $('#saveCredentialButton').textContent = account.configured ? '重新登录' : '登录心履';
+  $('#credentialDialog').showModal();
+  setTimeout(() => $('#credentialUsername').focus(), 30);
+}
+
+async function saveXinlvLoginFromDialog() {
+  const saveButton = $('#saveCredentialButton');
+  const username = $('#credentialUsername').value.trim();
+  const password = $('#credentialPassword').value;
+  if (!username || !password) return toast('请填写心履账号和密码', 'error');
+  $('#credentialPassword').value = '';
+  saveButton.disabled = true;
+  credentialSubmitInFlight = true;
+  const statusEl = $('#credentialConnectStatus');
+  if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在连接心履服务…'; }
+  try {
+    if (typeof window.xinlvUI?.connect !== 'function') throw new Error('心履模块尚未准备好');
+    await window.xinlvUI.connect({ username, password });
+    $('#credentialDialog').close();
+    state.data = await window.ph.data.get();
+    renderCredentialSettings();
+    if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = '心履登录成功，可同步心情记录'; }
+    toast('已登录心履');
+    setTimeout(() => { if (statusEl) statusEl.hidden = true; }, 1500);
+  } catch (error) {
+    if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `登录失败：${error.message}`; }
+    toast(`无法登录心履：${error.message}`, 'error');
+  } finally {
+    credentialSubmitInFlight = false;
+    if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
+  }
+}
+
 async function saveCredentialFromDialog(event) {
   event.preventDefault();
   if (credentialSubmitInFlight) return;
   if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
   const saveButton = $('#saveCredentialButton');
   const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
+  if ($('#credentialSiteId')?.value === 'xinlv') return saveXinlvLoginFromDialog();
   const credential = {
     siteId: $('#credentialSiteId').value,
     username: $('#credentialUsername').value,
@@ -1990,6 +2077,22 @@ async function saveCredentialFromDialog(event) {
 }
 
 async function connectWithSavedCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    try {
+      if (typeof window.ph.xinlv?.sync !== 'function') throw new Error('心履服务尚未准备好');
+      const result = await window.ph.xinlv.sync({});
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.refresh?.();
+      renderCredentialSettings();
+      const parts = [];
+      if (result?.pushed) parts.push(`上传 ${result.pushed} 条`);
+      if (result?.pulled) parts.push(`下载 ${result.pulled} 条`);
+      toast(parts.length ? `心履同步完成：${parts.join('，')}` : '心履已是最新状态');
+    } catch (error) {
+      toast(`无法同步心履：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site) return;
   try {
@@ -2008,8 +2111,27 @@ async function connectWithSavedCredential(siteId) {
 }
 
 window.openSchoolAccount = openCredentialDialog;
+// Native modules (for example Xinlv) sign in through their own API and need to
+// refresh the shared account list after login or logout.
+window.refreshAccountSettings = async () => {
+  state.data = await window.ph.data.get();
+  renderCredentialSettings();
+};
 
 async function removeCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    if (!await localizedConfirm('退出心履登录？本机心情记录会保留，但不再自动同步。')) return;
+    try {
+      await window.ph.xinlv.logout();
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.clear?.();
+      renderCredentialSettings();
+      toast('已退出心履登录');
+    } catch (error) {
+      toast(`无法退出心履登录：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site || !await localizedConfirm(`删除 ${site.name} 保存的账号和密码？网站登录状态不会受影响。`)) return;
   try {
@@ -2075,7 +2197,9 @@ async function openCustomSiteDialog(site = null) {
   $('#customSiteId').value = site?.id || '';
   $('#customSiteName').value = site?.name || '';
   $('#customSiteUrl').value = site?.url || '';
-  $('#customSiteColor').value = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  const siteColor = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  $('#customSiteColor').value = siteColor;
+  $$('#customSiteColorSwatches input[name="customSiteColorRadio"]').forEach((radio) => { radio.checked = radio.value === siteColor; });
   $('#customSiteShortcut').value = site?.shortcut || '';
   $('#customSiteShortcutEnabled').checked = Boolean(site?.shortcutEnabled);
   $('#customSiteDialogTitle').textContent = site ? '编辑网页' : '添加网页';
@@ -2292,11 +2416,11 @@ function renderOnboarding() {
   const steps = en ? [
     { title: 'Connect your school services', copy: 'Set up EduPage, ManageBac and Pinghe Mail. Passwords are encrypted locally and each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">You can change these accounts later in Settings → Websites.</p>` },
     { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
-    { title: 'Try Wellbeing (optional)', copy: 'Xinlv is embedded as a launcher module for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
+    { title: 'Try Wellbeing (optional)', copy: 'Xinlv runs natively inside the launcher through its official API for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
   ] : [
     { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会在本机加密保存，也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
     { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
-    { title: '试试心理模块（可选）', copy: '心履已作为启动器中的独立模块嵌入，登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心理</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心理”打开。</p>' },
+    { title: '试试心履（可选）', copy: '心履通过官方 API 原生接入启动器，用于记录心情与获得陪伴建议；登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心履</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心履”打开。</p>' },
   ];
   const step = steps[Math.max(0, Math.min(state.onboardingStep, steps.length - 1))];
   content.innerHTML = `<h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
@@ -2332,7 +2456,7 @@ function handleBodyClick(event) {
   const onboardingAccount = event.target.closest('[data-onboarding-account]');
   if (onboardingAccount) { openCredentialDialog(onboardingAccount.dataset.onboardingAccount); return; }
   if (event.target.closest('#onboardingAiSettings')) { openOnboardingDestination(() => navigate('ai')); return; }
-  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => openSite('psychology')); return; }
+  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => navigate('psychology')); return; }
   if (event.target.closest('#onboardingNext')) {
     if (state.onboardingStep >= 2) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
     return;
@@ -2650,6 +2774,9 @@ function bindEvents() {
     if (removeId) return removeCredential(removeId);
     if (fillId) return fillCredentialOnce(fillId);
     if (connectId) return connectWithSavedCredential(connectId);
+    if (event.target.closest('[data-edit-xinlv]')) return openXinlvLoginDialog();
+    if (event.target.closest('[data-connect-xinlv]')) return connectWithSavedCredential(XINLV_ACCOUNT.id);
+    if (event.target.closest('[data-remove-xinlv]')) return removeCredential(XINLV_ACCOUNT.id);
   });
   $('#credentialRiskAccepted').addEventListener('change', (event) => {
     $('#saveCredentialButton').disabled = !event.target.checked;
@@ -2661,6 +2788,11 @@ function bindEvents() {
     $('#saveCredentialButton').disabled = true;
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
+  $('#customSiteColorSwatches').addEventListener('change', (event) => {
+    const radio = event.target.closest('input[name="customSiteColorRadio"]');
+    if (!radio) return;
+    $('#customSiteColor').value = radio.value;
+  });
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
     const editId = event.target.closest('[data-edit-custom-site]')?.dataset.editCustomSite;
     const removeId = event.target.closest('[data-remove-custom-site]')?.dataset.removeCustomSite;

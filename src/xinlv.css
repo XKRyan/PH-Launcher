@@ -1,0 +1,205 @@
+/* Xinlv (心履) native module — PH Launcher visual language.
+   Layout mirrors the mail and school modules: ivory cards, green accents,
+   quiet borders, no third-party widget styling. */
+
+#xinlvPage { display: flex; flex-direction: column; gap: 18px; }
+
+.xinlv-hero {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;
+  padding: 22px 24px; border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--green-950) 0%, var(--green-800) 62%, var(--green-700) 100%);
+  color: var(--ivory-50); box-shadow: var(--shadow-md);
+}
+.xinlv-hero-copy h2 { margin: 6px 0 6px; font-size: 1.5rem; letter-spacing: .01em; }
+.xinlv-hero-copy p { margin: 0; max-width: 62ch; font-size: .875rem; color: rgba(251, 250, 246, .78); }
+.xinlv-hero .section-kicker { color: var(--gold-500); }
+.xinlv-hero-side { display: flex; gap: 8px; flex: none; }
+.xinlv-hero-side .secondary-button { background: rgba(251, 250, 246, .12); border-color: rgba(251, 250, 246, .3); color: var(--ivory-50); }
+.xinlv-hero-side .secondary-button:hover { background: rgba(251, 250, 246, .2); }
+
+.xinlv-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.xinlv-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px 16px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--ivory-50); color: var(--ink-2); cursor: pointer; text-align: left;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.xinlv-tab strong { font-size: .9375rem; color: var(--ink); }
+.xinlv-tab small { font-size: .75rem; color: var(--ink-3); }
+.xinlv-tab:hover { border-color: rgba(31, 90, 70, .28); transform: translateY(-1px); }
+.xinlv-tab.active { background: var(--green-50); border-color: var(--green-700); box-shadow: inset 0 0 0 1px rgba(42, 114, 90, .2); }
+.xinlv-tab.active strong { color: var(--green-800); }
+
+.xinlv-card {
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 20px 22px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 14px;
+}
+.xinlv-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.xinlv-card-head h3 { margin: 4px 0 0; font-size: 1.0625rem; color: var(--ink); }
+.xinlv-card-head small { color: var(--ink-3); font-size: .75rem; }
+.xinlv-record, .xinlv-recommend, .xinlv-chat, .xinlv-profile { display: flex; flex-direction: column; gap: 16px; }
+
+.xinlv-status { margin: 0; padding: 9px 13px; border-radius: var(--radius-sm); background: var(--green-50); color: var(--green-800); font-size: .8125rem; }
+.xinlv-status.error { background: rgba(154, 52, 18, .1); color: #9a3412; }
+.xinlv-muted { color: var(--ink-3); font-size: .8125rem; }
+
+/* ------------------------------------------------------------------ login */
+
+.xinlv-login { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.xinlv-login-copy { background: var(--ivory-50); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px 24px; }
+.xinlv-login-copy h3 { margin: 8px 0 10px; font-size: 1.25rem; color: var(--ink); }
+.xinlv-login-copy p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.65; }
+.xinlv-login-copy code { font-family: inherit; background: var(--green-50); color: var(--green-800); padding: 1px 6px; border-radius: 6px; }
+.xinlv-login-form { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px 24px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 14px; }
+.xinlv-login-form label { display: flex; flex-direction: column; gap: 6px; font-size: .8125rem; color: var(--ink-2); }
+.xinlv-login-form input[type="text"], .xinlv-login-form input[type="password"], .xinlv-login-form input:not([type]) {
+  height: 42px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--ivory-50); color: var(--ink); font-size: .9375rem;
+}
+.xinlv-login-form input:focus-visible { outline: 2px solid var(--green-700); outline-offset: 1px; }
+.xinlv-agree { flex-direction: row !important; align-items: flex-start; gap: 10px !important; }
+.xinlv-agree input { margin-top: 3px; }
+.xinlv-agree span { font-size: .8125rem; color: var(--ink-2); line-height: 1.55; }
+.xinlv-login-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.xinlv-login-note { margin: 0; font-size: .75rem; color: var(--ink-3); }
+
+/* ------------------------------------------------------------------ moods */
+
+.xinlv-mood-happy { --mood: #c5a05a; }
+.xinlv-mood-calm { --mood: #2a725a; }
+.xinlv-mood-excited { --mood: #d97706; }
+.xinlv-mood-grateful { --mood: #b5647f; }
+.xinlv-mood-tired { --mood: #6b7280; }
+.xinlv-mood-anxious { --mood: #a16207; }
+.xinlv-mood-sad { --mood: #3b6ea5; }
+.xinlv-mood-angry { --mood: #8b3445; }
+.xinlv-mood-lonely { --mood: #5b5bd6; }
+.xinlv-mood-numb { --mood: #7c8982; }
+.xinlv-mood-unknown { --mood: var(--ink-3); }
+
+.xinlv-mood-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.xinlv-mood-grid.compact { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+.xinlv-mood-option {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--ivory-50);
+  color: var(--ink-2); font-size: .875rem; transition: border-color .16s ease, background .16s ease;
+}
+.xinlv-mood-option i { width: 12px; height: 12px; border-radius: 50%; background: var(--mood); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mood) 18%, transparent); }
+.xinlv-mood-option:hover { border-color: var(--mood); }
+.xinlv-mood-option.active { background: color-mix(in srgb, var(--mood) 12%, var(--white)); border-color: var(--mood); color: var(--ink); font-weight: 600; }
+
+.xinlv-mood-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; font-size: .8125rem; background: color-mix(in srgb, var(--mood) 12%, var(--white)); color: var(--ink); }
+.xinlv-mood-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--mood); }
+
+/* ------------------------------------------------------------- compose form */
+
+.xinlv-field-row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+.xinlv-date { display: flex; flex-direction: column; gap: 6px; font-size: .8125rem; color: var(--ink-2); }
+.xinlv-date input { height: 38px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink); }
+.xinlv-intensity { display: flex; flex-direction: column; gap: 6px; font-size: .8125rem; color: var(--ink-2); }
+.xinlv-intensity-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.xinlv-intensity-option {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--ivory-50); color: var(--ink-2); font-size: .8125rem;
+}
+.xinlv-intensity-option i { width: 18px; height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--green-700) var(--fill), var(--ivory-200) var(--fill)); }
+.xinlv-intensity-option.active { border-color: var(--green-700); background: var(--green-50); color: var(--green-800); font-weight: 600; }
+.xinlv-note { display: flex; flex-direction: column; gap: 6px; font-size: .8125rem; color: var(--ink-2); }
+.xinlv-note textarea, .xinlv-chat-form textarea {
+  padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--ivory-50); color: var(--ink); font-size: .9375rem; font-family: inherit; resize: vertical;
+}
+.xinlv-compose-actions { display: flex; align-items: center; gap: 14px; }
+.xinlv-compose-actions small { color: var(--ink-3); font-size: .75rem; }
+
+/* ---------------------------------------------------------------- overview */
+
+.xinlv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+.xinlv-metric { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius); background: var(--ivory-50); border: 1px solid var(--border); }
+.xinlv-metric strong { font-size: 1.25rem; color: var(--green-800); }
+.xinlv-metric span { font-size: .75rem; color: var(--ink-3); }
+.xinlv-mood-bars { display: flex; flex-direction: column; gap: 8px; }
+.xinlv-mood-bar { display: grid; grid-template-columns: 1fr 44px; align-items: center; gap: 10px; position: relative; font-size: .8125rem; color: var(--ink-2); }
+.xinlv-mood-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: var(--fill); background: color-mix(in srgb, var(--mood) 16%, transparent); border-radius: 6px; }
+.xinlv-mood-bar span { position: relative; padding-left: 10px; }
+.xinlv-mood-bar b { position: relative; text-align: right; color: var(--ink); }
+
+/* ---------------------------------------------------------------- timeline */
+
+.xinlv-day { display: flex; flex-direction: column; gap: 8px; }
+.xinlv-day-head { display: flex; align-items: baseline; gap: 8px; }
+.xinlv-day-head strong { font-size: .875rem; color: var(--ink); }
+.xinlv-day-head small { color: var(--ink-3); font-size: .75rem; }
+.xinlv-day-list { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 2px solid var(--green-100); }
+.xinlv-entry { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--radius); background: var(--ivory-50); border: 1px solid var(--border); }
+.xinlv-entry-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.xinlv-entry-intensity, .xinlv-entry-time { font-size: .75rem; color: var(--ink-3); }
+.xinlv-entry-note { margin: 0; font-size: .875rem; color: var(--ink-2); white-space: pre-wrap; }
+.xinlv-entry-actions { display: flex; gap: 8px; }
+.xinlv-entry-actions button {
+  padding: 4px 10px; font-size: .75rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--white); color: var(--ink-2);
+}
+.xinlv-entry-actions button:hover { border-color: var(--green-700); color: var(--green-800); }
+.xinlv-entry-actions button.danger:hover { border-color: var(--wine-700); color: var(--wine-700); }
+
+/* --------------------------------------------------------------- recommend */
+
+.xinlv-info { padding: 14px 16px; border-radius: var(--radius); background: var(--green-50); }
+.xinlv-info strong { display: block; font-size: .9375rem; color: var(--green-800); margin-bottom: 6px; }
+.xinlv-info p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.65; }
+.xinlv-block h4 { margin: 0 0 8px; font-size: .8125rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.xinlv-block ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.xinlv-block li { font-size: .875rem; color: var(--ink-2); line-height: 1.6; }
+.xinlv-chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.xinlv-suggest-chip { padding: 6px 12px; border-radius: 999px; background: var(--gold-100); color: #6b4f1c; font-size: .8125rem; }
+.xinlv-practice { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.7; white-space: pre-wrap; }
+.xinlv-song-list { display: flex; flex-direction: column; gap: 8px; }
+.xinlv-song-list button, .xinlv-song-static {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--ivory-50); color: var(--ink); text-align: left; font-size: .875rem;
+}
+.xinlv-song-list button { cursor: pointer; }
+.xinlv-song-list button:hover { border-color: var(--green-700); background: var(--green-50); }
+.xinlv-song-list span { display: flex; flex-direction: column; gap: 2px; }
+.xinlv-song-list small { color: var(--ink-3); font-size: .75rem; }
+.xinlv-song-list em { font-style: normal; font-size: .75rem; color: var(--green-700); }
+
+/* -------------------------------------------------------------------- chat */
+
+.xinlv-crisis { padding: 16px 18px; border-radius: var(--radius); background: #fdf2f2; border: 1px solid #f3c6c6; display: flex; flex-direction: column; gap: 8px; }
+.xinlv-crisis strong { color: #9a3412; font-size: 1rem; }
+.xinlv-crisis p { margin: 0; font-size: .875rem; color: #7c2d12; line-height: 1.65; }
+.xinlv-crisis-hotline { font-weight: 600; }
+.xinlv-crisis .secondary-button { align-self: flex-start; }
+.xinlv-chat-log { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow-y: auto; padding: 4px 2px; }
+.xinlv-bubble { max-width: min(680px, 82%); padding: 11px 15px; border-radius: 18px; font-size: .9375rem; line-height: 1.6; }
+.xinlv-bubble p { margin: 0; white-space: pre-wrap; }
+.xinlv-bubble small { display: block; margin-top: 6px; font-size: .6875rem; color: var(--ink-3); }
+.xinlv-bubble.assistant { align-self: flex-start; background: var(--ivory-100); border: 1px solid var(--border); color: var(--ink); border-bottom-left-radius: 6px; }
+.xinlv-bubble.user { align-self: flex-end; background: var(--green-800); color: var(--ivory-50); border-bottom-right-radius: 6px; }
+.xinlv-bubble.user small { color: rgba(251, 250, 246, .7); }
+.xinlv-bubble.pending p { color: var(--ink-3); }
+.xinlv-chat-form { display: flex; flex-direction: column; gap: 10px; }
+.xinlv-chat-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.xinlv-chat-actions small { color: var(--ink-3); font-size: .75rem; max-width: 60ch; }
+
+/* ----------------------------------------------------------------- profile */
+
+.xinlv-profile-actions { display: flex; gap: 8px; }
+.xinlv-profile-actions .secondary-button.danger { color: var(--wine-700); border-color: rgba(139, 52, 69, .3); }
+.xinlv-profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.xinlv-profile-detail { display: flex; flex-direction: column; gap: 10px; }
+.xinlv-profile-detail p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.65; }
+.xinlv-about p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.7; }
+
+@media (max-width: 900px) {
+  .xinlv-login { grid-template-columns: minmax(0, 1fr); }
+  .xinlv-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .xinlv-hero { flex-direction: column; align-items: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xinlv-tab { transition: none; }
+}

@@ -51,7 +51,7 @@
   }
   function render() {
     const host = document.getElementById('appearanceSettings'); if (!host) return;
-    host.innerHTML = `<h3>外观</h3><p class="setting-intro">六套配色，或调成你喜欢的样子。字号覆盖侧栏、设置和学习页面；内嵌的心理模块也会同步主题色。</p>
+    host.innerHTML = `<h3>外观</h3><p class="setting-intro">六套配色，或调成你喜欢的样子。字号覆盖侧栏、设置和学习页面。</p>
       <div class="appearance-presets">${Object.entries(presets).map(([id, p]) => `<button type="button" data-appearance-preset="${id}" class="${current.preset === id ? 'selected' : ''}"><i style="background:${p.primary}"></i><span>${p.name}</span></button>`).join('')}</div>
       <div class="setting-row"><div><strong>全局字号</strong><small>默认 16 px，可随时调整</small></div><select id="appearanceScale" aria-label="全局字号">${[14,16,18,20,22,24].map((s) => `<option value="${s}"${s === current.fontSize ? ' selected' : ''}>${s} px${s === 16 ? '（默认）' : ''}</option>`).join('')}</select></div>
       <div class="appearance-colors">${[['primary','主色'],['accent','强调色'],['gold','点缀色'],['paper','纸张底色']].map(([key,label]) => `<label><input type="color" data-appearance-color="${key}" value="${current[key]}"/><span>${label}</span></label>`).join('')}</div>`;
