@@ -87,6 +87,7 @@ const { courseReminders, COURSE_REMINDER_OPTIONS } = require('./course-reminders
 let reminderScheduler = null;
 let reminderWindows = null;
 const { createMailController } = require('./mail-controller.cjs');
+const { XinlvService, XinlvServiceError } = require('./xinlv-service.cjs');
 
 const APP_ID = 'cn.phlauncher.desktop';
 const SIDEBAR_WIDTH = 248;
@@ -179,6 +180,14 @@ function createDefaultData() {
     focusSessions: [],
     vocabulary: vocabulary.emptyVocabulary(),
     calendarEvents: [],
+    xinlv: {
+      username: '',
+      password: '',
+      token: '',
+      entries: {},
+      serverTime: '',
+      dirty: [],
+    },
     ib: {
       milestones: [],
       commandSearches: [],
@@ -318,13 +327,37 @@ class SecureStore {
 
   update(nextData) {
     const previousAi = this.data.settings?.ai || createDefaultData().settings.ai;
+    // Xinlv state (mood entries, token, sync cursor) is written only through
+    // updateXinlvData(), so a generic renderer save/import cannot wipe it.
+    const previousXinlv = this.data.xinlv || createDefaultData().xinlv;
     const merged = mergeDefaults(nextData);
     // AI authorization is deliberately writable only through updateAi(). A
     // generic renderer save/import must never grant launcher or mail access.
     merged.settings.ai = structuredClone(previousAi);
+    merged.xinlv = structuredClone(previousXinlv);
     this.data = merged;
     this.save();
     return this.forRenderer();
+  }
+
+  xinlvData() {
+    const current = this.data.xinlv;
+    return current && typeof current === 'object' ? current : createDefaultData().xinlv;
+  }
+
+  updateXinlvData(patch) {
+    const input = patch && typeof patch === 'object' ? patch : {};
+    const current = this.xinlvData();
+    const next = { ...current };
+    if (Object.hasOwn(input, 'username')) next.username = String(input.username || '');
+    if (Object.hasOwn(input, 'password')) next.password = String(input.password || '');
+    if (Object.hasOwn(input, 'token')) next.token = String(input.token || '');
+    if (input.entries && typeof input.entries === 'object') next.entries = input.entries;
+    if (Object.hasOwn(input, 'serverTime')) next.serverTime = String(input.serverTime || '');
+    if (Array.isArray(input.dirty)) next.dirty = input.dirty.slice();
+    this.data.xinlv = next;
+    this.save();
+    return this.forRenderer().xinlv;
   }
 
   updateAi(config) {
@@ -412,6 +445,17 @@ class SecureStore {
     const hasApiKey = Boolean(copy.settings.ai.apiKey);
     copy.settings.ai.apiKey = '';
     copy.settings.ai.apiKeySaved = hasApiKey;
+    // The renderer never receives the Xinlv password, token, or raw sync
+    // payload: the mood UI reads them through the xinlv:* bridge instead.
+    const xinlvState = this.xinlvData();
+    const xinlvEntries = Object.values(xinlvState.entries || {}).filter((entry) => entry && !entry.deleted);
+    copy.xinlv = {
+      username: String(xinlvState.username || ''),
+      configured: Boolean(xinlvState.username && xinlvState.token),
+      tokenSaved: Boolean(xinlvState.token),
+      totalEntries: xinlvEntries.length,
+      pendingSync: Array.isArray(xinlvState.dirty) ? xinlvState.dirty.length : 0,
+    };
     copy.meta = {
       dataPath: this.filePath,
       encrypted: safeStorage.isEncryptionAvailable(),
@@ -429,6 +473,7 @@ let credentialVault = null;
 let schoolClient = null;
 let schoolAuthenticator = null;
 let schoolMailClient = null;
+let xinlvService = null;
 const schoolState = new SchoolCache();
 const schoolCache = schoolState.current;
 const schoolSessionMutations = new Set();
@@ -2190,6 +2235,29 @@ function registerIpc() {
       return mailbox[name](input);
     });
   }
+  // Xinlv (心履) is a native API integration, not an embedded webpage.
+  const xinlvHandle = (name, handler) => ipcMain.handle(`xinlv:${name}`, async (event, ...args) => {
+    assertMainRenderer(event);
+    if (!xinlvService) throw new Error('心履服务尚未就绪');
+    return handler(...args);
+  });
+  xinlvHandle('status', () => xinlvService.status());
+  xinlvHandle('ping', () => xinlvService.ping());
+  xinlvHandle('login', (input) => xinlvService.login(input?.username, input?.password));
+  xinlvHandle('register', (input) => xinlvService.register(input?.username, input?.password));
+  xinlvHandle('logout', () => xinlvService.logout());
+  xinlvHandle('profile', () => xinlvService.profile());
+  xinlvHandle('list', (input) => xinlvService.listMoods(input || {}));
+  xinlvHandle('add', (input) => xinlvService.addMood(input || {}));
+  xinlvHandle('edit', (input) => xinlvService.editMood(input?.uuid, input?.patch || {}));
+  xinlvHandle('remove', (uuid) => xinlvService.deleteMood(uuid));
+  xinlvHandle('sync', (input) => xinlvService.sync(input || {}));
+  xinlvHandle('catalog', () => xinlvService.catalog());
+  xinlvHandle('recommend', (mood) => xinlvService.recommend(mood));
+  xinlvHandle('chat', (message) => xinlvService.chat(message));
+  xinlvHandle('history', () => xinlvService.chatHistory());
+  xinlvHandle('proactive', (since) => xinlvService.proactive(since));
+  xinlvHandle('clear-chat', () => xinlvService.clearChat());
   schoolHandle('preferences', (input) => updateSchoolPreferences(input || {}));
   schoolHandle('import-plan', importSchoolPlan);
   schoolHandle('course', (id) => readSchoolDetail(() => schoolClient.getCourseDetail(id)));
@@ -2965,6 +3033,12 @@ async function runSelfTest() {
     const nativeMailRendered = document.querySelector('#mailPage h2')?.textContent === '平和邮箱'
       && Boolean(document.querySelector('#mailPage [data-mail-login]'))
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'mail';
+    navigate('psychology');
+    await window.xinlvUI?.open?.();
+    const nativeXinlvRendered = document.querySelector('#xinlvPage h2')?.textContent === '心履'
+      && Boolean(document.querySelector('#xinlvPage [data-xinlv-login-form]'))
+      && !document.querySelector('#xinlvPage iframe, #xinlvPage webview')
+      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'psychology';
     const customCreated = await window.ph.sites.saveCustom({
       name: '自检网页',
       url: 'https://example.com/',
@@ -3004,6 +3078,7 @@ async function runSelfTest() {
       classTimetableRendered,
       coursesRendered,
       nativeMailRendered,
+      nativeXinlvRendered,
       customSiteCreated: Boolean(customSite),
       customSiteRendered,
       customSiteRemoved: !state.data.settings.customSites.some((item) => item.id === customSite.id),
@@ -3159,6 +3234,13 @@ app.whenReady().then(() => {
     siteIds: SITE_IDS,
   });
   credentialVault.load();
+  xinlvService = new XinlvService({
+    getData: () => secureStore.xinlvData(),
+    updateData: (patch) => {
+      secureStore.updateXinlvData(patch);
+      sendToRenderer('data:changed', secureStore.forRenderer());
+    },
+  });
   const schoolFetch = createSchoolFetch({ net, getSession: (siteId) => {
     const siteSession = session.fromPartition(SITES[siteId].partition, { cache: true });
     siteStoragePersistence.watch(siteSession);
