@@ -130,12 +130,32 @@ class XinlvService {
 
   // Read-only passthroughs used by the renderer bridge.
   ping() { return this._client().ping(); }
-  catalog() { return this._client().catalog(); }
+  catalog() { return this.loadCatalog(); }
+
   recommend(mood) { return this._client().recommend(mood); }
   chat(message) { return this._client().chat(message); }
   chatHistory() { return this._client().chatHistory(); }
   proactive(since) { return this._client().chatProactive(since); }
   async clearChat() { await this._client().chatClear(); return true; }
+
+  // The API documents caching the small content catalog locally so the
+  // recommendation view still works offline. It lives beside the entries in
+  // the encrypted store, refreshed at most once per day unless forced.
+  async loadCatalog({ force = false, maxAgeMs = 24 * 60 * 60 * 1000 } = {}) {
+    const raw = this._getData();
+    const cached = raw.catalog && typeof raw.catalog === 'object' ? raw.catalog : null;
+    const fetchedAt = Number(raw.catalogFetchedAt || 0);
+    if (!force && cached && Date.now() - fetchedAt < maxAgeMs) return { catalog: cached, cached: true, fetchedAt };
+    try {
+      const catalog = await this._client().catalog();
+      const now = Date.now();
+      this._updateData({ catalog, catalogFetchedAt: now });
+      return { catalog, cached: false, fetchedAt: now };
+    } catch (error) {
+      if (cached) return { catalog: cached, cached: true, fetchedAt, error: error.message };
+      throw error;
+    }
+  }
 
   // Local mood record: upsert into the store and mark dirty for the next sync.
   addMood({ date, at = null, mood, note = '', intensityLevel = 2, intensityPercent = 50 }) {

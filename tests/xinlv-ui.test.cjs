@@ -9,9 +9,9 @@ const { parseHTML } = require('linkedom');
 const source = fs.readFileSync(require.resolve('../src/xinlv-ui.js'), 'utf8');
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function harness({ configured = true, loginFails = false, chatResult = { crisis: false, reply: '我在听。', hotline: '' } } = {}) {
+function harness({ configured = true, loginFails = false, recommendFails = false, chatResult = { crisis: false, reply: '我在听。', hotline: '' } } = {}) {
   const { window } = parseHTML('<!doctype html><html><body><section id="psychologyPage"></section><section id="xinlvPage"></section></body></html>');
-  const calls = { status: 0, list: 0, add: [], edit: [], remove: [], sync: 0, login: [], recommend: [], chat: [], clearChat: 0, logout: 0, opened: [] };
+  const calls = { status: 0, list: 0, add: [], edit: [], remove: [], sync: 0, login: [], recommend: [], chat: [], clearChat: 0, logout: 0, opened: [], catalog: 0 };
   const entries = [
     { uuid: 'e1', date: '2026-09-06', mood: 'calm', note: '<img src=x onerror=alert(1)>今天还行', intensityLevel: 3, intensityPercent: 50, deleted: false, createdAt: '2026-09-06T20:00:00Z', updatedAt: '2026-09-06T20:00:00Z' },
     { uuid: 'e2', date: '2026-09-04', mood: 'anxious', note: '', intensityLevel: 4, intensityPercent: 70, deleted: false, createdAt: '2026-09-04T09:00:00Z', updatedAt: '2026-09-04T09:00:00Z' },
@@ -30,7 +30,15 @@ function harness({ configured = true, loginFails = false, chatResult = { crisis:
       profile: async () => ({ username: 'student', streak: 12, badges: ['第一周'], totalEntries: 2, dateJoined: '2026-01-01' }),
       history: async () => [{ role: 'user', content: '你好', created_at: '2026-09-06T20:00:00Z' }, { role: 'assistant', content: '我在。', created_at: '2026-09-06T20:01:00Z' }],
       proactive: async () => ({ serverTime: 'cursor-2', messages: [{ role: 'assistant', content: '最近还好吗？', created_at: '2026-09-07T09:00:00Z' }] }),
-      recommend: async (mood) => { calls.recommend.push(mood); return { mood, info: { title: '焦虑的时候', text: '先做三次深呼吸。' }, tips: ['写下来'], activities: ['散步 10 分钟'], songs: [{ title: '安静的歌', artist: '某人', url: 'https://example.test/song' }, { title: '坏链接', url: 'javascript:alert(1)' }], practice: '4-7-8 呼吸', video: null }; },
+      recommend: async (mood) => {
+        calls.recommend.push(mood);
+        if (recommendFails) { const error = new Error('连不上心履服务器，请检查网络'); error.code = 'xinlv_offline'; throw error; }
+        return { mood, info: { title: '焦虑的时候', text: '先做三次深呼吸。' }, tips: ['写下来'], activities: ['散步 10 分钟'], songs: [{ title: '安静的歌', artist: '某人', url: 'https://example.test/song' }, { title: '坏链接', url: 'javascript:alert(1)' }], practice: '4-7-8 呼吸', video: null };
+      },
+      catalog: async () => {
+        calls.catalog += 1;
+        return { catalog: { moods: [{ key: 'anxious', label: '焦虑' }], songs: [{ title: '缓存里的歌', url: 'https://example.test/cached', moods: ['anxious'] }], activities: [{ id: 1, text: '深呼吸三次', moods: ['anxious'] }], tips: [{ id: 1, title: '缓存提示', content: '慢慢来', moods: ['anxious'] }], videos: [] }, cached: true };
+      },
       chat: async (message) => { calls.chat.push(message); return chatResult; },
       clearChat: async () => { calls.clearChat += 1; return true; },
     },
@@ -39,7 +47,7 @@ function harness({ configured = true, loginFails = false, chatResult = { crisis:
   window.navigate = () => {};
   window.confirmAction = async () => true;
   window.refreshAccountSettings = async () => {};
-  vm.runInNewContext(source, { window, document: window.document, console, setTimeout, clearTimeout, Promise, Date, Number, Object, Array, String, Math, RegExp, JSON, Map, Set, Intl });
+  vm.runInNewContext(source, { window, document: window.document, console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: () => {}, Promise, Date, Number, Object, Array, String, Math, RegExp, JSON, Map, Set, Intl });
   return { window, document: window.document, calls, entries };
 }
 
@@ -87,7 +95,7 @@ test('xinlv records a mood locally with intensity and renders the timeline safel
   assert.equal(page.querySelector('.xinlv-mood-grid img'), null, 'stored notes must never become DOM markup');
   assert.match(page.querySelector('.xinlv-timeline').textContent, /<img src=x onerror=alert\(1\)>今天还行/);
   click(ui.window, page.querySelector('[data-xinlv-mood="happy"]'));
-  click(ui.window, page.querySelector('[data-xinlv-intensity="5"]'));
+  click(ui.window, page.querySelector('[data-xinlv-intensity="4"]'));
   const form = ui.document.querySelector('[data-xinlv-entry-form]');
   form.querySelector('[name="note"]').value = '今天很顺利';
   submit(ui.window, form);
@@ -97,8 +105,8 @@ test('xinlv records a mood locally with intensity and renders the timeline safel
   assert.equal(saved.date, new Date().toLocaleDateString('sv-SE'));
   assert.equal(saved.mood, 'happy');
   assert.equal(saved.note, '今天很顺利');
-  assert.equal(saved.intensity_level, 5);
-  assert.equal(saved.intensity_percent, 90);
+  assert.equal(saved.intensity_level, 4, 'the API only accepts intensity_level 1-4');
+  assert.equal(saved.intensity_percent, 100);
   // Local saves are pushed after a short debounce so a burst of edits is one request.
   await new Promise((resolve) => setTimeout(resolve, 4200));
   assert.equal(ui.calls.sync, syncBefore + 1, 'a local save schedules exactly one sync round');
@@ -140,6 +148,22 @@ test('xinlv recommendations render server content as text and only open http lin
   assert.equal(songButtons.length, 1, 'a javascript: URL must not become a clickable button');
   click(ui.window, songButtons[0]);
   assert.deepEqual(ui.calls.opened, ['https://example.test/song']);
+  assert.equal(page.querySelector('.xinlv-song-list img'), null);
+});
+
+test('xinlv falls back to the cached catalog when the recommendation endpoint is offline', async () => {
+  const ui = harness({ recommendFails: true });
+  await ui.window.xinlvUI.open();
+  await settle();
+  assert.equal(ui.calls.catalog, 1, 'the catalog is cached once per session for offline use');
+  click(ui.window, ui.document.querySelector('[data-xinlv-tab="recommend"]'));
+  await settle();
+  click(ui.window, ui.document.querySelector('[data-xinlv-recommend="anxious"]'));
+  await settle();
+  const page = ui.document.querySelector('#xinlvPage');
+  assert.match(page.textContent, /本机缓存的内容目录/);
+  assert.match(page.textContent, /深呼吸三次/, 'cached activities are shown');
+  assert.match(page.textContent, /缓存里的歌/);
   assert.equal(page.querySelector('.xinlv-song-list img'), null);
 });
 

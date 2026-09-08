@@ -14,23 +14,25 @@
     { key: 'happy', label: '开心' },
     { key: 'calm', label: '平静' },
     { key: 'excited', label: '兴奋' },
-    { key: 'grateful', label: '感激' },
+    { key: 'grateful', label: '感恩' },
     { key: 'tired', label: '疲惫' },
     { key: 'anxious', label: '焦虑' },
     { key: 'sad', label: '难过' },
-    { key: 'angry', label: '生气' },
+    { key: 'angry', label: '愤怒' },
     { key: 'lonely', label: '孤独' },
     { key: 'numb', label: '麻木' },
   ];
   const MOOD_LABEL = Object.fromEntries(MOODS.map((mood) => [mood.key, mood.label]));
   const MOOD_KEYS = new Set(MOODS.map((mood) => mood.key));
+  // The API only accepts intensity_level 1-4 (1=略微 … 4=十分); percent is a
+  // 0-100 display value, so the four steps map onto a readable scale.
   const INTENSITY = [
-    { level: 1, label: '很轻', percent: 10 },
-    { level: 2, label: '较轻', percent: 30 },
-    { level: 3, label: '中等', percent: 50 },
-    { level: 4, label: '较强', percent: 70 },
-    { level: 5, label: '很强', percent: 90 },
+    { level: 1, label: '略微', percent: 25 },
+    { level: 2, label: '有点', percent: 50 },
+    { level: 3, label: '相当', percent: 75 },
+    { level: 4, label: '十分', percent: 100 },
   ];
+  const DISCLAIMER_URL = 'https://xin-lv.com/disclaimer/';
   const TABS = [
     { key: 'record', label: '记录', hint: '记录与回顾心情' },
     { key: 'recommend', label: '推荐', hint: '按心情获取建议' },
@@ -57,12 +59,14 @@
     error: '',
     notice: '',
     lastSyncAt: 0,
-    form: { date: dateKey(), mood: '', intensityLevel: 3, note: '' },
+    form: { date: dateKey(), mood: '', intensityLevel: 2, note: '' },
     editingUuid: '',
-    recommend: { mood: '', loading: false, data: null, error: '' },
-    chat: { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '' },
+    recommend: { mood: '', loading: false, data: null, error: '', local: false },
+    chat: { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '', timer: 0 },
     profile: { loading: false, data: null, error: '' },
     login: { username: '', password: '', agree: false, busy: false, error: '', mode: 'login' },
+    catalog: null,
+    catalogAt: 0,
     syncTimer: 0,
   };
 
@@ -121,7 +125,8 @@
       <form class="xinlv-login-form" data-xinlv-login-form>
         <label><span>账号</span><input name="username" maxlength="200" autocomplete="username" value="${esc(login.username)}" placeholder="心履账号" required></label>
         <label><span>密码</span><input name="password" type="password" maxlength="512" autocomplete="${isRegister ? 'new-password' : 'current-password'}" placeholder="登录后密码不会再次显示" required></label>
-        ${isRegister ? `<label class="xinlv-agree"><input type="checkbox" name="agree"${login.agree ? ' checked' : ''}><span>我已阅读并同意心履的免责声明，了解心履不能替代专业医疗与心理治疗。</span></label>` : ''}
+        ${isRegister ? `<label class="xinlv-agree"><input type="checkbox" name="agree"${login.agree ? ' checked' : ''}><span>我已阅读并同意心履的免责声明，了解心履不能替代专业医疗与心理治疗。</span></label>
+        <button type="button" class="secondary-button xinlv-disclaimer" data-xinlv-open-url="${DISCLAIMER_URL}">在浏览器打开免责声明 ↗</button>` : ''}
         ${login.error ? `<p class="xinlv-status error" role="alert">${esc(login.error)}</p>` : ''}
         <div class="xinlv-login-actions">
           <button type="submit" class="primary-button"${login.busy ? ' disabled' : ''}>${login.busy ? '正在连接…' : isRegister ? '注册并登录' : '登录心履'}</button>
@@ -228,6 +233,7 @@
         </div>
         ${view.loading ? '<div class="empty-row">正在获取建议…</div>' : ''}
         ${view.error ? `<p class="xinlv-status error" role="alert">${esc(view.error)}</p>` : ''}
+        ${view.local ? '<p class="xinlv-status">当前无法连接心履，正在显示本机缓存的内容目录。</p>' : ''}
       </section>
       ${data ? `<section class="xinlv-card">
         <header class="xinlv-card-head"><div><span class="section-kicker">FOR ${esc(String(data.mood || mood).toUpperCase())}</span><h3>${esc(moodLabel(data.mood || mood))}的时候</h3></div></header>
@@ -471,7 +477,7 @@
     const note = String(form.note || '').trim();
     const mood = state.form.mood;
     const date = String(form.date || state.form.date);
-    const intensity = INTENSITY.find((item) => item.level === Number(state.form.intensityLevel)) || INTENSITY[2];
+    const intensity = INTENSITY.find((item) => item.level === Number(state.form.intensityLevel)) || INTENSITY[1];
     if (!mood) return;
     state.busy = true;
     state.error = '';
@@ -485,7 +491,7 @@
         state.notice = '已记录今天的心情';
       }
       state.editingUuid = '';
-      state.form = { date: dateKey(), mood: '', intensityLevel: 3, note: '' };
+      state.form = { date: dateKey(), mood: '', intensityLevel: 2, note: '' };
       await loadStatus();
       await loadEntries();
       scheduleSync();
@@ -516,10 +522,39 @@
     const entry = state.entries.find((item) => item.uuid === uuid);
     if (!entry) return;
     state.editingUuid = uuid;
-    state.form = { date: entry.date, mood: entry.mood, intensityLevel: Number(entry.intensityLevel) || 3, note: entry.note || '' };
+    state.form = { date: entry.date, mood: entry.mood, intensityLevel: Number(entry.intensityLevel) || 2, note: entry.note || '' };
     state.tab = 'record';
     render();
     state.root?.querySelector('.xinlv-compose')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // The content catalog is small and the API documents caching it locally so
+  // recommendations still work offline. It is stored inside the encrypted
+  // launcher store through the main process.
+  async function loadCatalog({ force = false } = {}) {
+    if (!configured()) return null;
+    try {
+      const result = await api().catalog(force ? { force: true } : {});
+      if (result?.catalog && typeof result.catalog === 'object') {
+        state.catalog = result.catalog;
+        state.catalogAt = Date.now();
+        return state.catalog;
+      }
+    } catch { /* the online recommend endpoint stays the primary path */ }
+    return state.catalog;
+  }
+
+  function localRecommendation(mood) {
+    const catalog = state.catalog;
+    if (!catalog || typeof catalog !== 'object') return null;
+    const match = (item) => Array.isArray(item?.moods) ? item.moods.includes(mood) : false;
+    const songs = (Array.isArray(catalog.songs) ? catalog.songs : []).filter(match).slice(0, 6);
+    const activities = (Array.isArray(catalog.activities) ? catalog.activities : []).filter(match).map((item) => item?.text || item?.title || '').filter(Boolean).slice(0, 8);
+    const tips = (Array.isArray(catalog.tips) ? catalog.tips : []).filter(match).slice(0, 6);
+    const video = (Array.isArray(catalog.videos) ? catalog.videos : []).find(match) || null;
+    const info = (Array.isArray(catalog.moods) ? catalog.moods : []).find((item) => item?.key === mood) || null;
+    if (!songs.length && !activities.length && !tips.length && !video) return null;
+    return { mood, info, valence: info?.valence, songs, activities, tips, practice: '', video };
   }
 
   async function loadRecommend(mood) {
@@ -527,12 +562,20 @@
     state.recommend.mood = mood;
     state.recommend.loading = true;
     state.recommend.error = '';
+    state.recommend.local = false;
     render();
     try {
       state.recommend.data = await api().recommend(mood);
     } catch (error) {
-      state.recommend.error = safeError(error, '无法获取推荐');
-      state.recommend.data = null;
+      const fallback = localRecommendation(mood);
+      if (fallback) {
+        state.recommend.data = fallback;
+        state.recommend.local = true;
+        state.recommend.error = safeError(error, '无法获取推荐');
+      } else {
+        state.recommend.error = safeError(error, '无法获取推荐');
+        state.recommend.data = null;
+      }
     } finally {
       state.recommend.loading = false;
       render();
@@ -583,7 +626,11 @@
     login.agree = Boolean(form.agree);
     login.error = '';
     if (!login.username || !login.password) { login.error = '请填写账号和密码'; render(); return; }
-    if (login.mode === 'register' && !login.agree) { login.error = '注册前需要先阅读并同意免责声明'; render(); return; }
+    if (login.mode === 'register') {
+      if (!login.agree) { login.error = '注册前需要先阅读并同意免责声明'; render(); return; }
+      if (login.password.length < 6) { login.error = '密码至少 6 位'; render(); return; }
+      if (!/^[\w.@+\-\u4e00-\u9fa5]{1,150}$/.test(login.username)) { login.error = '账号只能包含字母、数字、下划线、. @ + - 或中文'; render(); return; }
+    }
     login.busy = true;
     render();
     try {
@@ -606,11 +653,12 @@
   async function logout() {
     const confirmed = typeof window.confirmAction === 'function' ? await window.confirmAction('退出心履登录？本机记录会保留，但不再自动同步。') : true;
     if (!confirmed) return;
+    stopProactivePolling();
     try {
       await api().logout();
       state.status = { configured: false };
       state.entries = [];
-      state.chat = { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '' };
+      state.chat = { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '', timer: 0 };
       state.profile = { loading: false, data: null, error: '' };
       state.notice = '已退出心履登录';
     } catch (error) {
@@ -618,6 +666,20 @@
     }
     render();
     if (typeof window.refreshAccountSettings === 'function') window.refreshAccountSettings();
+  }
+
+  // The API documents polling for AI check-in messages about once a minute
+  // while the chat is open; leaving the tab stops it immediately.
+  function stopProactivePolling() {
+    if (state.chat.timer) { clearInterval(state.chat.timer); state.chat.timer = 0; }
+  }
+
+  function startProactivePolling() {
+    stopProactivePolling();
+    state.chat.timer = setInterval(() => {
+      if (state.tab !== 'chat' || !configured()) { stopProactivePolling(); return; }
+      loadProactive().then(() => { if (state.tab === 'chat') render(); }).catch(() => {});
+    }, 60000);
   }
 
   function openUrl(url) {
@@ -663,12 +725,15 @@
       state.tab = tab.dataset.xinlvTab;
       state.error = '';
       state.notice = '';
+      if (state.tab !== 'chat') stopProactivePolling();
       render();
       if (state.tab === 'chat' && configured()) {
         if (!state.chat.messages.length) await loadChat();
         await loadProactive();
         render();
+        startProactivePolling();
       }
+      if (state.tab === 'recommend' && configured() && !state.catalog) { await loadCatalog(); render(); }
       if (state.tab === 'profile' && configured()) { await loadProfile(); render(); }
       return;
     }
@@ -686,7 +751,7 @@
     }
     if (event.target.closest('[data-xinlv-cancel-edit]')) {
       state.editingUuid = '';
-      state.form = { date: dateKey(), mood: '', intensityLevel: 3, note: '' };
+      state.form = { date: dateKey(), mood: '', intensityLevel: 2, note: '' };
       render();
       return;
     }
@@ -733,10 +798,12 @@
     if (configured()) {
       render();
       await loadEntries();
+      await loadCatalog();
       const stale = !state.lastSyncAt || Date.now() - state.lastSyncAt > 300000;
       if (stale) await sync({ silent: true });
       else render();
     } else {
+      stopProactivePolling();
       render();
     }
     return true;
@@ -758,9 +825,10 @@
   }
 
   function clear() {
+    stopProactivePolling();
     state.status = null;
     state.entries = [];
-    state.chat = { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '' };
+    state.chat = { messages: [], loading: false, sending: false, error: '', draft: '', crisis: null, lastProactive: '', timer: 0 };
     state.profile = { loading: false, data: null, error: '' };
     state.error = '';
     state.notice = '';

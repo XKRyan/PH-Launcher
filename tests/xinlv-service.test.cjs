@@ -187,6 +187,42 @@ test('xinlv sync drops the token when the server rejects it, without retrying', 
   assert.equal(calls.push.length, 0, 'no automatic retry is attempted');
 });
 
+test('xinlv catalog is cached once per day and reused offline', async () => {
+  const store = makeStore({ token: 'token-abc' });
+  const { client, calls } = makeClient();
+  let fetches = 0;
+  client.catalog = async () => { fetches += 1; return { moods: [{ key: 'calm' }], songs: [{ title: '歌' }] }; };
+  const service = serviceWith(store, client);
+
+  const first = await service.loadCatalog({});
+  assert.equal(first.cached, false);
+  assert.equal(fetches, 1);
+  assert.equal(store.store.catalog.songs.length, 1, 'the catalog is persisted in the encrypted store');
+
+  const second = await service.loadCatalog({});
+  assert.equal(second.cached, true);
+  assert.equal(fetches, 1, 'a fresh cache avoids another request');
+
+  const forced = await service.loadCatalog({ force: true });
+  assert.equal(forced.cached, false);
+  assert.equal(fetches, 2);
+
+  client.catalog = async () => { const error = new Error('连不上心履服务器，请检查网络'); error.code = 'xinlv_offline'; throw error; };
+  const offline = await service.loadCatalog({ force: true });
+  assert.equal(offline.cached, true);
+  assert.equal(offline.catalog.songs.length, 1, 'the offline path falls back to the cached catalog');
+  assert.match(offline.error, /连不上/);
+  assert.equal(calls.push.length, 0);
+});
+
+test('xinlv catalog rethrows when there is no cache and the request fails', async () => {
+  const store = makeStore({ token: 'token-abc' });
+  const { client } = makeClient();
+  client.catalog = async () => { const error = new Error('连不上心履服务器，请检查网络'); error.code = 'xinlv_offline'; throw error; };
+  const service = serviceWith(store, client);
+  await assert.rejects(() => service.loadCatalog({}), (error) => error.code === 'xinlv_offline');
+});
+
 test('xinlv sync batches large local histories at 500 entries per request', async () => {
   const entries = {};
   const dirty = [];

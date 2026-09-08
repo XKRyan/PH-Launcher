@@ -55,6 +55,16 @@ test('an explicit import may restore mood entries but never credentials or the c
   assert.deepEqual(merged.dirty, ['u1']);
 });
 
+test('the cached content catalog survives saves and can be restored by an import', () => {
+  const withCatalog = { ...stored, catalog: { songs: [{ title: '歌' }] }, catalogFetchedAt: 123 };
+  const kept = merge(withCatalog, { username: 'student', configured: true });
+  assert.equal(kept.catalog.songs.length, 1, 'a renderer save keeps the cached catalog');
+  assert.equal(kept.catalogFetchedAt, 123);
+
+  const restored = merge(stored, { catalog: { songs: [{ title: '导入的歌' }] } });
+  assert.equal(restored.catalog.songs[0].title, '导入的歌', 'an import can restore the catalog');
+});
+
 test('a missing or malformed Xinlv block falls back to defaults instead of throwing', () => {
   const merged = merge(undefined, null);
   assert.equal(merged.username, '');
@@ -68,8 +78,7 @@ test('a missing or malformed Xinlv block falls back to defaults instead of throw
   assert.equal(partial.token, 't');
 });
 
-test('a plaintext data export strips the Xinlv password and token', () => {
-  assert.match(mainSource, /exportData\.settings\.ai\.apiKey = '';/);
+test('a plaintext data export strips the Xinlv password and token', () => {  assert.match(mainSource, /exportData\.settings\.ai\.apiKey = '';/);
   assert.match(mainSource, /exportData\.xinlv\.password = '';/);
   assert.match(mainSource, /exportData\.xinlv\.token = '';/);
 });

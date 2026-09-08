@@ -187,6 +187,8 @@ function createDefaultData() {
       entries: {},
       serverTime: '',
       dirty: [],
+      catalog: null,
+      catalogFetchedAt: 0,
     },
     ib: {
       milestones: [],
@@ -279,6 +281,7 @@ function mergeXinlvState(current, incoming) {
   const base = current && typeof current === 'object' ? current : createDefaultData().xinlv;
   const next = incoming && typeof incoming === 'object' ? incoming : {};
   const incomingEntries = next.entries && typeof next.entries === 'object' ? next.entries : null;
+  const incomingCatalog = next.catalog && typeof next.catalog === 'object' ? next.catalog : null;
   return {
     username: String(base.username || ''),
     password: String(base.password || ''),
@@ -286,6 +289,8 @@ function mergeXinlvState(current, incoming) {
     entries: incomingEntries && Object.keys(incomingEntries).length ? incomingEntries : (base.entries || {}),
     serverTime: String(base.serverTime || ''),
     dirty: Array.isArray(base.dirty) ? base.dirty : [],
+    catalog: incomingCatalog && Object.keys(incomingCatalog).length ? incomingCatalog : (base.catalog || null),
+    catalogFetchedAt: Number(base.catalogFetchedAt || 0),
   };
 }
 
@@ -372,6 +377,8 @@ class SecureStore {
     if (input.entries && typeof input.entries === 'object') next.entries = input.entries;
     if (Object.hasOwn(input, 'serverTime')) next.serverTime = String(input.serverTime || '');
     if (Array.isArray(input.dirty)) next.dirty = input.dirty.slice();
+    if (input.catalog && typeof input.catalog === 'object') next.catalog = input.catalog;
+    if (Object.hasOwn(input, 'catalogFetchedAt')) next.catalogFetchedAt = Number(input.catalogFetchedAt) || 0;
     this.data.xinlv = next;
     this.save();
     return this.forRenderer().xinlv;
@@ -2269,7 +2276,7 @@ function registerIpc() {
   xinlvHandle('edit', (input) => xinlvService.editMood(input?.uuid, input?.patch || {}));
   xinlvHandle('remove', (uuid) => xinlvService.deleteMood(uuid));
   xinlvHandle('sync', (input) => xinlvService.sync(input || {}));
-  xinlvHandle('catalog', () => xinlvService.catalog());
+  xinlvHandle('catalog', (input) => xinlvService.loadCatalog(input || {}));
   xinlvHandle('recommend', (mood) => xinlvService.recommend(mood));
   xinlvHandle('chat', (message) => xinlvService.chat(message));
   xinlvHandle('history', () => xinlvService.chatHistory());
