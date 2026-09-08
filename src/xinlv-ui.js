@@ -596,6 +596,7 @@
       if (typeof window.refreshAccountSettings === 'function') window.refreshAccountSettings();
     } catch (error) {
       login.busy = false;
+      login.password = '';
       // Never retry automatically: repeated failures can lock the account.
       login.error = safeError(error, '登录失败，请检查账号密码');
       render();
@@ -663,7 +664,11 @@
       state.error = '';
       state.notice = '';
       render();
-      if (state.tab === 'chat' && !state.chat.messages.length && configured()) { await loadChat(); render(); }
+      if (state.tab === 'chat' && configured()) {
+        if (!state.chat.messages.length) await loadChat();
+        await loadProactive();
+        render();
+      }
       if (state.tab === 'profile' && configured()) { await loadProfile(); render(); }
       return;
     }

@@ -29,7 +29,7 @@ function harness({ configured = true, loginFails = false, chatResult = { crisis:
       logout: async () => { calls.logout += 1; return { configured: false }; },
       profile: async () => ({ username: 'student', streak: 12, badges: ['第一周'], totalEntries: 2, dateJoined: '2026-01-01' }),
       history: async () => [{ role: 'user', content: '你好', created_at: '2026-09-06T20:00:00Z' }, { role: 'assistant', content: '我在。', created_at: '2026-09-06T20:01:00Z' }],
-      proactive: async () => ({ serverTime: 'cursor-2', messages: [] }),
+      proactive: async () => ({ serverTime: 'cursor-2', messages: [{ role: 'assistant', content: '最近还好吗？', created_at: '2026-09-07T09:00:00Z' }] }),
       recommend: async (mood) => { calls.recommend.push(mood); return { mood, info: { title: '焦虑的时候', text: '先做三次深呼吸。' }, tips: ['写下来'], activities: ['散步 10 分钟'], songs: [{ title: '安静的歌', artist: '某人', url: 'https://example.test/song' }, { title: '坏链接', url: 'javascript:alert(1)' }], practice: '4-7-8 呼吸', video: null }; },
       chat: async (message) => { calls.chat.push(message); return chatResult; },
       clearChat: async () => { calls.clearChat += 1; return true; },
@@ -149,6 +149,7 @@ test('xinlv chat shows a crisis banner with the hotline and keeps the reply', as
   await settle();
   click(ui.window, ui.document.querySelector('[data-xinlv-tab="chat"]'));
   await settle();
+  assert.match(ui.document.querySelector('.xinlv-chat-log').textContent, /最近还好吗？/, 'proactive messages are fetched when the chat opens');
   const form = ui.document.querySelector('[data-xinlv-chat-form]');
   form.querySelector('[name="message"]').value = '我很难受';
   submit(ui.window, form);
