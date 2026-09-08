@@ -272,6 +272,23 @@ function mergeDefaults(source) {
   };
 }
 
+// Xinlv state is split by trust level: credentials and the sync cursor stay in
+// the encrypted store and are never taken from a renderer payload, while mood
+// entries may be restored by an explicit data import.
+function mergeXinlvState(current, incoming) {
+  const base = current && typeof current === 'object' ? current : createDefaultData().xinlv;
+  const next = incoming && typeof incoming === 'object' ? incoming : {};
+  const incomingEntries = next.entries && typeof next.entries === 'object' ? next.entries : null;
+  return {
+    username: String(base.username || ''),
+    password: String(base.password || ''),
+    token: String(base.token || ''),
+    entries: incomingEntries && Object.keys(incomingEntries).length ? incomingEntries : (base.entries || {}),
+    serverTime: String(base.serverTime || ''),
+    dirty: Array.isArray(base.dirty) ? base.dirty : [],
+  };
+}
+
 class SecureStore {
   constructor(filePath) {
     this.filePath = filePath;
@@ -327,14 +344,14 @@ class SecureStore {
 
   update(nextData) {
     const previousAi = this.data.settings?.ai || createDefaultData().settings.ai;
-    // Xinlv state (mood entries, token, sync cursor) is written only through
-    // updateXinlvData(), so a generic renderer save/import cannot wipe it.
     const previousXinlv = this.data.xinlv || createDefaultData().xinlv;
     const merged = mergeDefaults(nextData);
     // AI authorization is deliberately writable only through updateAi(). A
     // generic renderer save/import must never grant launcher or mail access.
     merged.settings.ai = structuredClone(previousAi);
-    merged.xinlv = structuredClone(previousXinlv);
+    // Xinlv credentials and the sync cursor are written only through
+    // updateXinlvData(); an explicit import may restore mood entries.
+    merged.xinlv = mergeXinlvState(previousXinlv, merged.xinlv);
     this.data = merged;
     this.save();
     return this.forRenderer();
@@ -2407,6 +2424,11 @@ function registerIpc() {
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
     const exportData = structuredClone(secureStore.data);
     exportData.settings.ai.apiKey = '';
+    // A plaintext backup must never contain the Xinlv password or token.
+    if (exportData.xinlv && typeof exportData.xinlv === 'object') {
+      exportData.xinlv.password = '';
+      exportData.xinlv.token = '';
+    }
     fs.writeFileSync(result.filePath, JSON.stringify(exportData, null, 2), 'utf8');
     return { ok: true, filePath: result.filePath };
   });
