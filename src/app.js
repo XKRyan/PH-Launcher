@@ -1873,8 +1873,9 @@ function openCredentialDialog(siteId) {
   if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
   $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
   $('#credentialPassword').required = !credential.saved && !isMail;
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').required = isMail && !credential.saved;
   $('#credentialPasswordNote').textContent = isMail
-    ? 'IMAP/SMTP 收发信必须使用客户端授权码；网页密码仅在邮箱仍允许普通登录时作为回退。两项至少填一项。'
+    ? 'IMAP/SMTP 收发信必须使用客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）；网页密码仅在邮箱仍允许普通登录时作为回退。授权码必填，密码可选。'
     : credential.saved
       ? '如需保留原密码，请留空；保存后不会显示密码。'
       : '保存后不会显示密码；如需更新，请重新输入。';
@@ -1902,8 +1903,8 @@ async function saveCredentialFromDialog(event) {
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };
-  if (isMailSubmit && !credential.password && !credential.authcode) {
-    return toast('客户端授权码与网页密码至少填一项（推荐使用授权码）', 'error');
+  if (isMailSubmit && !credential.authcode) {
+    return toast('客户端授权码必填（网页邮箱 → 设置 → 客户端设置 生成）', 'error');
   }
   // Clear the editable password field before waiting for IPC. The main process
   // receives the value through the isolated bridge and never returns it.

@@ -19,7 +19,7 @@ function harness({ siteId = 'edupage', saveError, connectError, connected = true
     ['credentialPassword', { value: 'fixture-secret' }],
     ['credentialAutoFill', { checked: true }],
     ['credentialAutoLogin', { checked: false }],
-    ['credentialAuthcode', { value: '' }],
+    ['credentialAuthcode', { value: 'fixture-authcode' }],
     ['credentialConnectStatus', { hidden: true, className: '', textContent: '' }],
     ['credentialDialog', { open: true, close() { this.open = false; } }],
   ]);

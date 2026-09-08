@@ -77,6 +77,19 @@ body.loaded .app-shell { opacity:1; }
 .mail-preview-frame { width:100%; min-height:360px; max-height:70vh; border:1px solid var(--border); border-radius:10px; background:#fff; }
 .mail-recipients-collapsed .mail-recipient-extra { display:none; }
 .mail-recipient-toggle { background:none; border:none; color:var(--green-800); cursor:pointer; font-size:.8125rem; padding:4px 0; text-decoration:underline; }
+
+/* Mail page entry animations */
+@media (prefers-reduced-motion: no-preference) {
+  .mail-list-pane .mail-list > * { animation: mailItemIn .28s ease both; }
+  .mail-list-pane .mail-list > *:nth-child(1) { animation-delay: .02s; }
+  .mail-list-pane .mail-list > *:nth-child(2) { animation-delay: .05s; }
+  .mail-list-pane .mail-list > *:nth-child(3) { animation-delay: .08s; }
+  .mail-list-pane .mail-list > *:nth-child(4) { animation-delay: .11s; }
+  .mail-list-pane .mail-list > *:nth-child(n+5) { animation-delay: .14s; }
+  .mail-message { animation: mailItemIn .25s ease both; }
+  .mail-message header { animation: mailItemIn .2s ease .05s both; }
+}
+@keyframes mailItemIn { from { opacity:0; transform: translate3d(0, 10px, 0); } to { opacity:1; transform: translate3d(0, 0, 0); } }
 .credential-setting > div:nth-child(2) { flex:1; min-width:0; }
 .credential-setting strong, .credential-setting small { display:block; }
 .credential-setting small { margin-top:4px; color:var(--ink-2); overflow-wrap:anywhere; }
