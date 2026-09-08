@@ -1930,28 +1930,29 @@ function openCredentialDialog(siteId) {
     return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
   }
   const credential = credentialEntry(siteId);
+  const isMail = siteId === 'mail';
   $('#credentialForm').reset();
   $('#credentialSiteId').value = siteId;
   $('#credentialUsername').value = credential.username || '';
   $('#credentialPassword').required = !credential.saved;
-  $('#credentialPasswordNote').textContent = credential.saved
-    ? '如需保留原密码，请留空；保存后不会显示密码。'
-    : '保存后不会显示密码；如需更新，请重新输入。';
-  const isMail = siteId === 'mail';
+  // Only the mail account needs the client authorization code; the other
+  // sites use plain username + password.  form.reset() may clear the
+  // hidden attribute, so reapply it unconditionally.
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  if (isMail) { $('#credentialAuthcodeRow').hidden = false; if ($('#credentialAuthcode')) $('#credentialAuthcode').required = true; }
   $('#credentialAutoFill').checked = isMail ? false : credential.saved ? Boolean(credential.autoFill) : true;
   $('#credentialAutoFillRow').hidden = isMail;
   $('#credentialAutoLoginRow').hidden = isMail;
   $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
-  $('#credentialDialogTitle').textContent = '账号登录';
-  if ($('#credentialAuthcodeRow')) $('#credentialAuthcodeRow').hidden = !isMail;
-  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = isMail && !credential.saved; }
+  $('#credentialDialogTitle').textContent = isMail ? '邮箱登录' : '账号登录';
   $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
   $('#credentialPasswordNote').textContent = isMail
     ? 'IMAP/SMTP 收发信必须使用客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）；网页密码仅在邮箱仍允许普通登录时作为回退。授权码必填，密码可选。'
     : credential.saved
       ? '如需保留原密码，请留空；保存后不会显示密码。'
       : '保存后不会显示密码；如需更新，请重新输入。';
-  $('#credentialIntro').textContent = siteId === 'mail'
+  $('#credentialIntro').textContent = isMail
     ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，使用当前系统用户密钥加密保存；邮件内容不会交给 AI。'
     : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
