@@ -28,7 +28,8 @@
   "devDependencies": {
     "csv-parse": "^7.0.2",
     "electron": "44.2.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "jszip": "^3.10.1"
   },
   "build": {
     "appId": "cn.phlauncher.desktop",

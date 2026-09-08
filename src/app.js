@@ -1912,9 +1912,16 @@ function openCredentialDialog(siteId) {
   $('#credentialAutoLoginRow').hidden = isMail;
   $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
   $('#credentialDialogTitle').textContent = '账号登录';
-  $('#credentialPasswordLabel').textContent = isMail ? '密码或客户端授权码' : '密码';
+  if ($('#credentialAuthcodeRow')) $('#credentialAuthcodeRow').hidden = !isMail;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = isMail && !credential.saved; }
+  $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
+  $('#credentialPasswordNote').textContent = isMail
+    ? 'IMAP/SMTP 收发信必须使用客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）；网页密码仅在邮箱仍允许普通登录时作为回退。授权码必填，密码可选。'
+    : credential.saved
+      ? '如需保留原密码，请留空；保存后不会显示密码。'
+      : '保存后不会显示密码；如需更新，请重新输入。';
   $('#credentialIntro').textContent = siteId === 'mail'
-    ? '网易邮箱可能需要先开启 IMAP/SMTP，并使用客户端授权码。密码或授权码会使用当前系统用户密钥加密，只发送到网易固定邮件服务器；邮件内容不会交给 AI。'
+    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，使用当前系统用户密钥加密保存；邮件内容不会交给 AI。'
     : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
@@ -1928,16 +1935,22 @@ async function saveCredentialFromDialog(event) {
   if (credentialSubmitInFlight) return;
   if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
   const saveButton = $('#saveCredentialButton');
+  const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
   const credential = {
     siteId: $('#credentialSiteId').value,
     username: $('#credentialUsername').value,
     password: $('#credentialPassword').value,
+    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '') : '',
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };
+  if (isMailSubmit && !credential.password && !credential.authcode) {
+    return toast('客户端授权码必填（网页邮箱 → 设置 → 客户端设置 生成）', 'error');
+  }
   // Clear the editable password field before waiting for IPC. The main process
   // receives the value through the isolated bridge and never returns it.
   $('#credentialPassword').value = '';
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
   saveButton.disabled = true;
   credentialSubmitInFlight = true;
   try {
@@ -1952,11 +1965,17 @@ async function saveCredentialFromDialog(event) {
     if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
   }
   if (credential.siteId === 'mail') {
+    const statusEl = $('#credentialConnectStatus');
+    if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在测试 IMAP 连接…'; }
     try {
       if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
       const connected = await window.mailUI.connect();
+      if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = connected ? 'IMAP 连接成功，收件箱同步完成' : '连接已建立'; }
       if (connected) toast('已登录并同步最近邮件');
+      if (typeof setTimeout === 'function') setTimeout(() => { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }, 1500);
+      else { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }
     } catch (error) {
+      if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `连接失败：${error.message}`; }
       toast(`账号已保存，但无法连接邮箱：${error.message}`, 'error');
     }
     return;
@@ -2841,7 +2860,15 @@ async function init() {
   setInterval(() => { updateClock(); refreshVocabularyBadge(); void window.mailUI?.open?.(); }, 60_000);
   setInterval(updateTimerUi, 500);
   document.body.dataset.initialized = 'true';
+  // Splash visibility floor: hold the logo and progress bars for at least
+  // 2.2s from first paint before fading into the main UI.
+  const splashStartedAt = Number(window.__phSplashStartedAt) || Date.now();
+  const splashHold = Math.max(0, 2200 - (Date.now() - splashStartedAt));
+  await new Promise((resolve) => setTimeout(resolve, splashHold));
+  document.body.classList.add('loaded');
   if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
+  const skipButton = $('#splashSkip');
+  if (skipButton) skipButton.addEventListener('click', () => document.body.classList.add('loaded'));
 }
 
 document.addEventListener('DOMContentLoaded', init);

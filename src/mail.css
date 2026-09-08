@@ -85,3 +85,9 @@
   .mail-compose-overlay { padding:12px; }
   .mail-compose { width:100%; height:92vh; padding:16px; }
 }
+
+/* HTML mail preview (sandboxed iframe) and collapsible recipients */
+.mail-preview-frame { width: 100%; min-height: 360px; max-height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: var(--white); }
+.mail-recipient-row.mail-recipient-extra { display: none; }
+.mail-recipient-toggle { background: none; border: none; color: var(--green-800); cursor: pointer; font-size: .8125rem; padding: 4px 0; text-decoration: underline; }
+.mail-message dd { overflow-wrap: anywhere; }

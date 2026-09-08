@@ -119,7 +119,7 @@ function runCalendarDomFixture() {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const seed = { ...event, date: today, title: '<img src=x onerror="window.calendarXss=true">' };
-    await web.executeJavaScript(`window.fixtureEvents = ${JSON.stringify([seed])}; window.confirm = () => true; window.ph = {calendar: {
+    await web.executeJavaScript(`window.fixtureEvents = ${JSON.stringify([seed])}; window.confirmAction = async () => true; window.confirm = () => true; window.ph = {calendar: {
       get: async () => structuredClone(window.fixtureEvents),
       save: async (value) => { const entry = {...value, id: value.id || 'fixture-added'}; window.fixtureEvents = [...window.fixtureEvents.filter(item => item.id !== entry.id), entry]; return structuredClone(window.fixtureEvents); },
       remove: async (id) => { window.fixtureEvents = window.fixtureEvents.filter(item => item.id !== id); return structuredClone(window.fixtureEvents); }
@@ -164,7 +164,7 @@ function runCalendarDomFixture() {
     process.stdout.write('PH_CALENDAR_DOM_OK\n');
     app.exit(0);
   }).catch((error) => {
-    process.stderr.write(`Calendar DOM fixture failed at ${stage}: ${error.message}\n`);
+    process.stderr.write(`Calendar DOM fixture failed at ${stage}: ${error.message}\n${error.stack || ''}\n`);
     app.exit(1);
   });
 }

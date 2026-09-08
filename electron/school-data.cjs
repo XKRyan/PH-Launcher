@@ -82,7 +82,11 @@ function parseManageBacCourses(html) {
     const name = text(title || node, null, 160);
     if (!id || !name || ignore.test(name)) continue;
     const priority = title || /^\/student\/classes\/\d+\/?$/.test(new URL(url).pathname) ? 2 : 1;
-    if (!courses.has(id) || priority > courses.get(id).priority) courses.set(id, { id, name, url: `${ORIGINS.managebac}/student/classes/${id}/units`, priority });
+    const card = node.closest('[data-class-id], .fusion-card-item');
+    const cardIds = card ? [...card.querySelectorAll('a[href]')].map(link => safeSourceUrl('managebac', link.getAttribute('href')).match(/\/classes\/(\d+)/)?.[1]).filter(Boolean) : [];
+    const teacherNames = card && (!card.getAttribute('data-class-id') || card.getAttribute('data-class-id') === id) && cardIds.length && cardIds.every(value => value === id)
+      ? [...new Set([...card.querySelectorAll('[data-teacher-name], .teacher-name')].map(item => clean(item.getAttribute('data-teacher-name') || item.textContent, 100)).filter(Boolean))].slice(0, 8) : [];
+    if (!courses.has(id) || priority > courses.get(id).priority) courses.set(id, { id, name, url: `${ORIGINS.managebac}/student/classes/${id}/units`, priority, ...(teacherNames.length ? { teachers: teacherNames } : {}) });
   }
   const empty = /No classes found/i.test(doc.documentElement?.textContent || '');
   return { courses: [...courses.values()].map(({ priority, ...course }) => course), recognized: links.length > 0 || empty, empty };
@@ -430,7 +434,7 @@ function eduRows(dates, identity, requestedDates) {
       const timeLabel = `${date.slice(5)} ${start}–${end}`;
       const existingOption = options.get(groupKey);
       if (!existingOption) {
-        options.set(groupKey, { key: groupKey, course, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · '), rooms: room ? [room] : [], times: [timeLabel] });
+        options.set(groupKey, { key: groupKey, course, teacher, groups, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · '), rooms: room ? [room] : [], times: [timeLabel] });
       } else {
         if (room && !existingOption.rooms.includes(room)) existingOption.rooms.push(room);
         if (!existingOption.times.includes(timeLabel)) { existingOption.times.push(timeLabel); existingOption.times.sort(); }

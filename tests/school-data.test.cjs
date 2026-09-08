@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { parseHTML } = require('linkedom');
 const {
   SchoolDataClient, readUrl, safeSourceUrl, parseManageBacCourses,
-  parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail,
+  parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail,
   parseManageBacDiscussions, parseDiscussionDetail,
   parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows,
 } = require('../electron/school-data.cjs');
@@ -50,6 +50,53 @@ test('course HTML parser isolates links, never executes scripts, and ignores act
 test('grade parser requires semantic label and cannot misread fourth sidebar cell', () => {
   assert.equal(parseManageBacGrade('<div class="sidebar-items-list"><div class="cell">Overall Grade <b>6</b></div></div>').grade, '6');
   assert.equal(parseManageBacGrade('<div class="sidebar-items-list"><div class="cell">Teacher</div><div class="cell">Room</div><div class="cell">Term</div><div class="cell">Students 27</div></div>').grade, null);
+});
+
+test('course parser reads explicit teacher labels only inside the matching course card', () => {
+  const data = parseManageBacCourses('<section id="classes"><div data-class-id="21"><a href="/student/classes/21"><h3>Biology HL</h3></a><span data-teacher-name="Alex Wang"></span></div><div data-class-id="22"><a href="/student/classes/22"><h3>Geography</h3></a><span class="teacher-name">Casey Li</span></div></section>');
+  assert.deepEqual(data.courses.map(course => course.teachers), [['Alex Wang'], ['Casey Li']]);
+  const ambiguous = parseManageBacCourses('<section id="classes" data-class-id="21"><a href="/student/classes/21">Biology</a><a href="/student/classes/22">Geography</a><span class="teacher-name">Not assigned to either course</span></section>');
+  assert.ok(ambiguous.courses.every(course => !course.teachers));
+});
+
+test('automatic course recognition prechecks unique groups, preserves manual subjects, and saves only on confirmation', async () => {
+  const weekStart = currentMonday();
+  const options = [
+    { key: 'bio-sl', course: 'Biology SL', label: 'Biology SL · B' },
+    { key: 'bio-hl', course: 'Biology HL', label: 'Biology HL · A' },
+    { key: 'aa', course: 'Mathematics AA HL', label: 'Mathematics AA HL · C' },
+    { key: 'geo-a', course: 'Geography', label: 'Geography · A' },
+    { key: 'geo-b', course: 'Geography', label: 'Geography · B' },
+  ];
+  const snapshot = { edupage: { weekStart, accountKey: 'student-a', fetchedAt: new Date().toISOString(), lessons: [], options, missingDates: [], warnings: [] }, managebac: { courses: [{ name: 'Biology HL' }, { name: 'Mathematics Analysis and Approaches HL' }, { name: 'Geography' }] }, preferences: { accountKey: 'student-a', groups: ['bio-sl'] } };
+  const harness = schoolUiHarness(snapshot); harness.context.window.schoolUI.mount(); await settleUi();
+  harness.click('[data-school-action="auto-groups"]');
+  assert.equal(harness.preferenceWrites, 0);
+  const chosen = [...harness.document.querySelectorAll('[name="school-group"]:checked')].map(input => input.value);
+  assert.deepEqual(chosen, ['bio-sl', 'aa']);
+  assert.match(harness.document.querySelector('dialog').textContent, /geography/);
+  harness.click('[data-school-action="save-groups"]'); await settleUi();
+  assert.equal(harness.preferenceWrites, 1);
+  assert.deepEqual(Array.from(harness.snapshot.preferences.groups), ['bio-sl', 'aa']);
+});
+
+test('course recognition cannot save a preview after switching school accounts', async () => {
+  const weekStart = currentMonday();
+  const data = { weekStart, accountKey: 'first', lessons: [], options: [{ key: 'bio', course: 'Biology', label: 'Biology' }], warnings: [] };
+  const harness = schoolUiHarness({ edupage: data, managebac: { courses: [{ name: 'Biology' }] }, preferences: {}, epochs: { edupage: 0, managebac: 0 } });
+  harness.context.window.schoolUI.mount(); await settleUi(); harness.click('[data-school-action="auto-groups"]');
+  harness.setSnapshot({ edupage: { ...data, accountKey: 'second' }, managebac: null, preferences: {}, epochs: { edupage: 1, managebac: 1 } });
+  await harness.context.window.schoolUI.refresh();
+  harness.click('[data-school-action="save-groups"]'); await settleUi();
+  assert.equal(harness.preferenceWrites, 0);
+  assert.match(harness.document.querySelector('#schoolPage').textContent, /学校账号已变化/);
+});
+
+test('course recognition asks for ManageBac sync without starting a login or writing selections', async () => {
+  const harness = schoolUiHarness({ edupage: { weekStart: currentMonday(), accountKey: 'first', lessons: [], options: [], warnings: [] }, managebac: null, preferences: {} });
+  harness.context.window.schoolUI.mount(); await settleUi(); harness.click('[data-school-action="auto-groups"]');
+  assert.match(harness.document.querySelector('dialog').textContent, /请先同步 ManageBac/);
+  assert.equal(harness.syncCalls, 0); assert.equal(harness.preferenceWrites, 0);
 });
 
 test('task parsing preserves ambiguous due dates instead of guessing a year', () => {
@@ -229,6 +276,7 @@ function schoolUiHarness(initialSnapshot) {
   };
   const bridge = { school: api, system: { openUrl: async () => {} } };
   const context = { window: { ph: bridge, openSite: async () => {} }, document, Intl, Date, URL, setInterval: () => 0, console };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/school-selection-inference.js'), 'utf8'), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/school-ui.js'), 'utf8'), context);
   const click = (selector) => { const node = document.querySelector(selector); assert.ok(node, `missing ${selector}`); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
   return { context, document, click, api, get snapshot() { return snapshot; }, get syncCalls() { return syncCalls; }, get preferenceWrites() { return preferenceWrites; }, setSnapshot: (value) => { snapshot = value; } };
@@ -266,7 +314,7 @@ test('school UI distinguishes unselected teaching groups from deliberately empty
   harness.click('[data-school-action="groups"]'); harness.click('[data-school-action="save-groups"]'); await settleUi();
   assert.equal(harness.preferenceWrites, 1);
   assert.equal(harness.document.querySelectorAll('.school-lesson').length, 0);
-  assert.ok(harness.document.querySelector('[data-school-action="import-plan"]').hasAttribute('disabled'));
+  assert.equal(harness.document.querySelector('[data-school-action="import-plan"]'), null, 'retired plan timetable has no import entry');
 });
 
 test('school UI aggregates three overlapping lessons and opens the full conflict list', async () => {
@@ -324,130 +372,4 @@ test('school UI shows login-expired errors instead of treating a failed sync as 
   harness.click('[data-school-action="sync"]'); harness.click('[data-school-action="consent"]'); await settleUi();
   assert.match(harness.document.querySelector('[role="alert"]').textContent, /登录已过期/);
   assert.ok(harness.document.querySelector('[data-school-action="account"]'));
-});
-
-// --- Tasks & Deadlines aggregate page (plain-text line algorithm) ---
-
-const ddlPage = (rows) => `<html><body><main>${rows.map((row) => `<div>${row}</div>`).join('')}</main></body></html>`;
-
-test('readUrl allows tasks_and_deadlines only with a known view parameter', () => {
-  for (const view of ['upcoming', 'past', 'overdue']) {
-    assert.equal(readUrl('managebac', `/student/tasks_and_deadlines?view=${view}`), `https://shph.managebac.cn/student/tasks_and_deadlines?view=${view}`);
-  }
-  for (const bad of ['/student/tasks_and_deadlines', '/student/tasks_and_deadlines?view=secret', '/student/tasks_and_deadlines?view=upcoming&page=2', '/student/tasks_and_deadlines?view=upcoming&x=1']) {
-    assert.throws(() => readUrl('managebac', bad), { code: 'URL_NOT_ALLOWED' });
-  }
-  assert.throws(() => readUrl('managebac', '/student/tasks_and_deadlines?view=upcoming', 'POST'), { code: 'URL_NOT_ALLOWED' });
-});
-
-test('parseManageBacDeadlines: title/due/course/status lines with year inference and pseudo-title filtering', () => {
-  const reference = new Date(2026, 8, 15, 10, 0); // Sep 15 2026 local
-  const html = ddlPage([
-    'Upcoming', 'Sep 12, 11:59 PM', // pseudo title (section header) must be dropped
-    'Osmosis Lab Report', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending',
-    'Physics Problem Set', 'Sep 18, 8:00 AM', 'Physics SL', 'Submitted',
-    'Privacy', 'Sep 20, 11:59 PM', // footer pseudo title
-    'Spring Review', 'Jun 1, 11:59 PM', 'History HL', 'Pending', // month < current -> next year
-  ]);
-  const parsed = parseManageBacDeadlines(html, { category: 'upcoming', sourceUrl: 'https://shph.managebac.cn/student/tasks_and_deadlines?view=upcoming', reference });
-  assert.equal(parsed.recognized, true);
-  assert.equal(parsed.items.length, 3);
-  const [first, second, third] = parsed.items;
-  assert.equal(first.title, 'Osmosis Lab Report');
-  assert.equal(first.course, 'Biology HL');
-  assert.equal(first.status, 'Pending');
-  assert.equal(first.dueText, 'Sep 12, 11:59 PM');
-  assert.equal(first.dueAt, new Date(2026, 8, 12, 23, 59).toISOString());
-  assert.equal(second.title, 'Physics Problem Set');
-  assert.equal(second.status, 'Submitted');
-  assert.equal(second.dueAt, new Date(2026, 8, 18, 8, 0).toISOString());
-  assert.equal(third.title, 'Spring Review');
-  assert.equal(third.dueAt, new Date(2027, 5, 1, 23, 59).toISOString()); // next year inferred
-});
-
-test('parseManageBacDeadlines: overdue view resolves earlier years', () => {
-  const reference = new Date(2026, 8, 15, 10, 0);
-  const html = ddlPage(['Old Assignment', 'May 1, 11:59 PM', 'Biology HL', 'Overdue']);
-  const parsed = parseManageBacDeadlines(html, { category: 'overdue', reference });
-  assert.equal(parsed.items.length, 1);
-  assert.equal(parsed.items[0].dueAt, new Date(2026, 4, 1, 23, 59).toISOString());
-  assert.equal(parsed.items[0].course, 'Biology HL');
-});
-
-test('SchoolDataClient.getDeadlines merges views, dedupes and sorts by due time', async () => {
-  const upcoming = ddlPage([
-    'Later Task', 'Sep 21, 8:00 AM', 'Mathematics AA HL', 'Pending',
-    'Shared Task', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending',
-  ]);
-  const overdue = ddlPage([
-    'Shared Task', 'Sep 12, 11:59 PM', 'Biology HL', 'Pending', // duplicate across views
-    'Earlier Missing', 'Sep 10, 11:59 PM', 'Physics SL', 'Missing',
-  ]);
-  const client = new SchoolDataClient({
-    fetch: async (site, url) => {
-      assert.equal(site, 'managebac');
-      if (url.includes('view=upcoming')) return response(upcoming);
-      if (url.includes('view=overdue')) return response(overdue);
-      throw new Error(`unexpected url ${url}`);
-    },
-    now: () => new Date(2026, 8, 15, 10, 0),
-    pause: async () => {},
-  });
-  const result = await client.getDeadlines();
-  assert.deepEqual(result.items.map((item) => item.title), ['Earlier Missing', 'Shared Task', 'Later Task']);
-  const shared = result.items.find((item) => item.title === 'Shared Task');
-  assert.equal(shared.category, 'upcoming'); // first occurrence wins
-  assert.ok(result.warnings.length === 0);
-});
-
-test('syncManageBac filters tasks older than 14 days even with text-only due dates', async () => {
-  const coursesPage = '<ul id=\"f-menu\"><li class=\"f-menu-submenu-item\"><a href=\"/student/classes/101\"><span class=\"f-menu-submenu-link-title\">Biology HL</span></a></li></ul>';
-  const unitsPage = '<div class=\"sidebar-items-list\"><div class=\"cell\">a</div><div class=\"cell\">b</div><div class=\"cell\">c</div><div class=\"cell\">Overall\n90\n(A)</div></div>';
-  const card = (title, dueText, pastDue) => [
-    '<div class=\"fusion-card-item short-assignment\">',
-    '<div class=\"date-badge' + (pastDue ? ' past-due' : '') + '\"><span class=\"month\">' + dueText.split(' ')[0] + '</span><span class=\"day\">' + dueText.split(' ')[1].replace(',', '') + '</span></div>',
-    '<div class=\"h4 title\"><a href=\"/student/classes/101/core_tasks/9' + title.length + '\">' + title + '</a></div>',
-    '<span class=\"due-date\">Due ' + dueText + '</span>',
-    '</div>',
-  ].join('');
-  const tasksPage = [
-    card('Recent Task', 'Sep 12, 11:59 PM', false),
-    card('Ancient Task', 'Jan 5, 11:59 PM', true),
-    card('Far Future Task', 'Jun 1, 11:59 PM', false),
-    '<div>No classes found</div>',
-  ].join('');
-  const client = new SchoolDataClient({
-    fetch: async (site, url) => {
-      if (url.includes('/student/classes/my')) return response(coursesPage);
-      if (url.includes('/units')) return response(unitsPage);
-      if (url.includes('/core_tasks')) return response(tasksPage);
-      throw new Error('unexpected ' + url);
-    },
-    now: () => new Date(2026, 8, 15, 10, 0),
-    pause: async () => {},
-  });
-  const result = await client.syncManageBac();
-  const titles = result.tasks.map((task) => task.title);
-  assert.ok(titles.includes('Recent Task'), 'within 14 days is kept');
-  assert.ok(titles.includes('Far Future Task'), 'future within a year is kept');
-  assert.ok(!titles.includes('Ancient Task'), 'older than 14 days is filtered out');
-});
-
-test('tasks view hides DDL older than 14 days even from stale cached snapshots', async () => {
-  const old = new Date(Date.now() - 40 * 86400000).toISOString();
-  const recent = new Date(Date.now() - 2 * 86400000).toISOString();
-  const upcoming = new Date(Date.now() + 5 * 86400000).toISOString();
-  const snapshot = { edupage: null, managebac: { fetchedAt: fixedNow().toISOString(), courses: [{ id: '21', name: 'Biology HL', grade: null }], tasks: [
-    { id: 't1', title: 'Ancient Homework', course: 'Biology HL', dueAt: old, dueText: 'Aug 9, 11:59 PM' },
-    { id: 't2', title: 'Recent Past Homework', course: 'Biology HL', dueAt: recent, dueText: 'Sep 13, 11:59 PM' },
-    { id: 't3', title: 'Upcoming Homework', course: 'Biology HL', dueAt: upcoming, dueText: 'Sep 20, 11:59 PM' },
-  ], warnings: [] }, preferences: {} };
-  const harness = schoolUiHarness(snapshot);
-  harness.context.window.schoolUI.mount(); await settleUi();
-  harness.context.window.schoolUI.open('courses'); await settleUi();
-  harness.click('[data-course-tab="tasks"]'); await settleUi();
-  const page = harness.document.querySelector('#schoolPage').textContent;
-  assert.match(page, /Recent Past Homework/);
-  assert.match(page, /Upcoming Homework/);
-  assert.doesNotMatch(page, /Ancient Homework/, 'DDL older than 14 days must not render');
 });
