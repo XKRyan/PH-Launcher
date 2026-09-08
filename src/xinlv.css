@@ -2,7 +2,7 @@
    Layout mirrors the mail and school modules: ivory cards, green accents,
    quiet borders, no third-party widget styling. */
 
-#xinlvPage { display: flex; flex-direction: column; gap: 18px; }
+#xinlvPage.active { display: flex; flex-direction: column; gap: 18px; }
 
 .xinlv-hero {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;
