@@ -31,6 +31,7 @@ function readUrl(site, raw, method = 'GET') {
   const params = url.searchParams;
   if (site === 'managebac' && method === 'GET') {
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
+    if (path === '/student/tasks_and_deadlines' && [...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
     if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
@@ -81,11 +82,7 @@ function parseManageBacCourses(html) {
     const name = text(title || node, null, 160);
     if (!id || !name || ignore.test(name)) continue;
     const priority = title || /^\/student\/classes\/\d+\/?$/.test(new URL(url).pathname) ? 2 : 1;
-    const card = node.closest('[data-class-id], .fusion-card-item');
-    const cardIds = card ? [...card.querySelectorAll('a[href]')].map(link => safeSourceUrl('managebac', link.getAttribute('href')).match(/\/classes\/(\d+)/)?.[1]).filter(Boolean) : [];
-    const teacherNames = card && (!card.getAttribute('data-class-id') || card.getAttribute('data-class-id') === id) && cardIds.length && cardIds.every(value => value === id)
-      ? [...new Set([...card.querySelectorAll('[data-teacher-name], .teacher-name')].map(item => clean(item.getAttribute('data-teacher-name') || item.textContent, 100)).filter(Boolean))].slice(0, 8) : [];
-    if (!courses.has(id) || priority > courses.get(id).priority) courses.set(id, { id, name, url: `${ORIGINS.managebac}/student/classes/${id}/units`, priority, ...(teacherNames.length ? { teachers: teacherNames } : {}) });
+    if (!courses.has(id) || priority > courses.get(id).priority) courses.set(id, { id, name, url: `${ORIGINS.managebac}/student/classes/${id}/units`, priority });
   }
   const empty = /No classes found/i.test(doc.documentElement?.textContent || '');
   return { courses: [...courses.values()].map(({ priority, ...course }) => course), recognized: links.length > 0 || empty, empty };
@@ -113,10 +110,39 @@ function exactDueDate(node) {
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return '';
 }
-function parseManageBacTasks(html, course = {}) {
+function parseManageBacTasks(html, course = {}, { reference = new Date() } = {}) {
   const doc = htmlDocument(html);
   const tasks = new Map();
   const cards = doc.querySelectorAll('.fusion-card-item.short-assignment, [data-task-id]');
+  // Hello! Pinghe mechanism: the date badge gives month/day, the due-date
+  // line gives the time, and the past-due badge picks the year direction.
+  // This resolves a concrete date for nearly every card, which is what the
+  // 14-day filter needs to actually work.
+  const inferDue = (card, pastDue, dueText) => {
+    const exact = exactDueDate(card);
+    if (exact) return exact;
+    const monthTxt = text(card, '.date-badge .month', 12) || text(card, '.date-badge', 12);
+    const dayTxt = text(card, '.date-badge .day', 4) || '';
+    const month = MB_MONTHS[String(monthTxt).slice(0, 3).toUpperCase()];
+    const day = /^\d+$/.test(String(dayTxt)) ? parseInt(dayTxt, 10) : NaN;
+    if (!month || !Number.isInteger(day)) return '';
+    const timeMatch = String(dueText || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    let hour = timeMatch ? parseInt(timeMatch[1], 10) % 12 : 23;
+    const minute = timeMatch ? parseInt(timeMatch[2], 10) : 59;
+    if (timeMatch && timeMatch[3].toUpperCase() === 'PM') hour += 12;
+    const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+    const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+      .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+      .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+    if (!candidates.length) return '';
+    const sorted = candidates.sort((a, b) => a - b);
+    if (pastDue) {
+      const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+      return (older.length ? older[older.length - 1] : sorted[sorted.length - 1]).toISOString();
+    }
+    const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+    return (newer.length ? newer[0] : sorted[sorted.length - 1]).toISOString();
+  };
   for (const card of cards) {
     const link = card.querySelector('.title a[href], h3 a[href], h4 a[href], a[href*="/core_tasks/"]');
     const url = safeSourceUrl('managebac', link?.getAttribute('href'));
@@ -125,12 +151,14 @@ function parseManageBacTasks(html, course = {}) {
     const title = text(link, null, 200);
     if (!title) continue;
     const id = `managebac:${ids[1]}:${ids[2]}`;
+    const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160);
+    const pastDue = Boolean(card.querySelector('.past-due'));
     tasks.set(id, {
       id, title, courseId: ids[1], course: clean(course.name, 160), url,
-      dueText: text(card, '.due-date', 160) || text(card, '.date-badge', 160),
-      dueAt: exactDueDate(card), status: text(card, '.badge-label', 80),
+      dueText,
+      dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge-label', 80),
       score: text(card, '.assessment.task-score', 80),
-      pastDue: Boolean(card.querySelector('.past-due')),
+      pastDue,
     });
   }
   return { tasks: [...tasks.values()].slice(0, 500), recognized: cards.length > 0 || /No (?:tasks|assignments|records)|暂无作业/i.test(doc.documentElement?.textContent || '') };
@@ -177,6 +205,77 @@ function discussionAttachments(node, courseId, discussionId, limit = 8) {
   }
   return [...items.values()].slice(0, limit);
 }
+// Tasks & Deadlines page is a plain-text flow: each due line ("Sep 12, 11:59 PM")
+// follows its title, and the following lines carry the course name and status.
+// The page has no year information; the year is inferred from the reference date
+// (upcoming: earliest year >= today; other views: latest year <= today) and the
+// raw due text is always preserved so users can verify against the site.
+const MB_MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+const DDL_DUE_LINE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2}),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
+const DDL_STATUS_LINE = /^(Pending|Submitted|Late|Missing|Overdue|Not Submitted|Not Assessed Yet|Complete|Completed|Returned|Excused)$/i;
+const DDL_PSEUDO_TITLE = /^(?:Upcoming|Past|Overdue|Show More|Guides|Privacy)\b|^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),/i;
+
+function parseDueLineValue(line, reference, category) {
+  const match = String(line).trim().match(DDL_DUE_LINE);
+  if (!match) return null;
+  const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+  const day = parseInt(match[2], 10);
+  let hour = parseInt(match[3], 10) % 12;
+  const minute = parseInt(match[4], 10);
+  if (match[5].toUpperCase() === 'PM') hour += 12;
+  const year = reference.getFullYear();
+  let dt = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (dt.getDate() !== day || dt.getMonth() !== month - 1) return null;
+  const refStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+  const dtStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime();
+  if (category === 'upcoming' && dtStart < refStart && month < reference.getMonth() + 1) dt = new Date(year + 1, month - 1, day, hour, minute, 0, 0);
+  else if (category !== 'upcoming' && dt.getTime() > reference.getTime() + 45 * 86400000) dt = new Date(year - 1, month - 1, day, hour, minute, 0, 0);
+  return dt;
+}
+
+// Each text node becomes one line - the equivalent of BeautifulSoup's
+// get_text('\n') used by the upstream implementation.
+function collectTextLines(node, out) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      const value = child.nodeValue.replace(/\u00a0/g, ' ').trim();
+      if (value) out.push(value);
+    } else if (child.nodeType === 1) {
+      if (String(child.localName || '').toLowerCase() === 'br') { out.push(''); continue; }
+      collectTextLines(child, out);
+    }
+  }
+}
+
+function parseManageBacDeadlines(html, { category = 'upcoming', sourceUrl = '', reference = new Date() } = {}) {
+  const doc = htmlDocument(html);
+  const lines = [];
+  collectTextLines(doc.body || doc.documentElement, lines);
+  const dueDates = lines.map((line) => parseDueLineValue(line, reference, category));
+  const dueIndexes = dueDates.map((dt, index) => (dt ? index : -1)).filter((index) => index >= 0);
+  const items = [];
+  for (const [position, dueIndex] of dueIndexes.entries()) {
+    const title = dueIndex >= 1 ? lines[dueIndex - 1] : '';
+    const dueAt = dueDates[dueIndex];
+    if (!title || !dueAt) continue;
+    if (DDL_PSEUDO_TITLE.test(title)) continue;
+    const nextDue = position + 1 < dueIndexes.length ? dueIndexes[position + 1] : lines.length;
+    const block = lines.slice(dueIndex + 1, nextDue);
+    const course = block.length && !DDL_STATUS_LINE.test(block[0]) ? block[0] : '';
+    const status = block.find((line) => DDL_STATUS_LINE.test(line)) || '';
+    items.push({
+      title: title.slice(0, 200),
+      course: course.slice(0, 120),
+      dueAt: dueAt.toISOString(),
+      dueText: lines[dueIndex],
+      status,
+      category,
+      sourceUrl,
+    });
+  }
+  return { items, recognized: dueIndexes.length > 0 };
+}
+
 function parseManageBacDiscussions(html, courseId) {
   const cid = validatedId(courseId);
   const doc = htmlDocument(html); const discussions = [];
@@ -328,7 +427,14 @@ function eduRows(dates, identity, requestedDates) {
       const cancelled = Boolean(item.removed) || ['absent', ''].includes(item.type);
       const id = `edupage:${digest(`${identity.accountKey}|${date}|${start}|${end}|${groupKey}|${room}`)}`;
       lessons.push({ id, date, start, end, course, teacher, room, groups, groupKey, cancelled, period: /^\d+$/.test(String(item.uniperiod)) ? Number(item.uniperiod) : null });
-      options.set(groupKey, { key: groupKey, course, teacher, groups, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · ') });
+      const timeLabel = `${date.slice(5)} ${start}–${end}`;
+      const existingOption = options.get(groupKey);
+      if (!existingOption) {
+        options.set(groupKey, { key: groupKey, course, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · '), rooms: room ? [room] : [], times: [timeLabel] });
+      } else {
+        if (room && !existingOption.rooms.includes(room)) existingOption.rooms.push(room);
+        if (!existingOption.times.includes(timeLabel)) { existingOption.times.push(timeLabel); existingOption.times.sort(); }
+      }
     }
   }
   return { lessons: [...new Map(lessons.map((item) => [item.id, item])).values()].sort((a, b) => `${a.date}${a.start}${a.course}`.localeCompare(`${b.date}${b.start}${b.course}`)), options: [...options.values()], skipped };
@@ -406,7 +512,46 @@ class SchoolDataClient {
       }
       await this.pause(120);
     }
-    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: [...tasks.values()].slice(0, 1000), warnings: warnings.slice(0, 30) };
+    // Filter tasks: show only 14 days ago to 1 year ahead. Task cards carry
+    // month/day text without a year, so when dueAt is absent we resolve the
+    // date from dueText (handles "Due Sep 12, 11:59 PM", "Sep 12" and
+    // date-badge forms) using the card's past-due badge for year direction.
+    const reference = this.now();
+    const cutoff = reference.getTime() - 14 * 86400000;
+    const futureLimit = reference.getTime() + 365 * 86400000;
+    const resolveTaskDue = (task) => {
+      if (task.dueAt) {
+        const ts = Date.parse(task.dueAt);
+        return Number.isFinite(ts) ? new Date(ts) : null;
+      }
+      const raw = String(task.dueText || '').replace(/^due\s*[:\-]?\s*/i, '').trim();
+      const match = raw.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:,?\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i);
+      if (!match) return null;
+      const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+      const day = parseInt(match[2], 10);
+      let hour = match[3] ? parseInt(match[3], 10) % 12 : 23;
+      const minute = match[4] ? parseInt(match[4], 10) : 59;
+      if (match[5] && match[5].toUpperCase() === 'PM') hour += 12;
+      const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+      const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+        .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+        .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+      if (!candidates.length) return null;
+      const sorted = candidates.sort((a, b) => a - b);
+      if (task.pastDue) {
+        const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+        return older.length ? older[older.length - 1] : sorted[sorted.length - 1];
+      }
+      const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+      return newer.length ? newer[0] : sorted[0];
+    };
+    const filteredTasks = [...tasks.values()].filter((task) => {
+      const resolved = resolveTaskDue(task);
+      if (!resolved) return true; // unparseable: keep, never silently drop work
+      const ts = resolved.getTime();
+      return ts >= cutoff && ts <= futureLimit;
+    });
+    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), warnings: warnings.slice(0, 30) };
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
@@ -456,6 +601,31 @@ class SchoolDataClient {
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
     return { kind, ...parseCoreOverview(await this.request('managebac', path), kind), url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
   }
+  async getDeadlines({ views = ['upcoming', 'overdue'], daysBefore = 14, daysAhead = 365 } = {}) {
+    const items = []; const seen = new Set(); const warnings = [];
+    for (const view of views) {
+      const path = `/student/tasks_and_deadlines?view=${view}`;
+      const html = await this.request('managebac', path);
+      const parsed = parseManageBacDeadlines(html, { category: view, sourceUrl: `${ORIGINS.managebac}${path}`, reference: this.now() });
+      if (!parsed.recognized) warnings.push(`未从 ${view} 栏目识别到截止日期，请在原网页核对`);
+      for (const item of parsed.items) {
+        const key = `${item.title.toLowerCase()}|${item.course}|${item.dueText}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(item);
+      }
+      await this.pause(120);
+    }
+    items.sort((a, b) => (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity));
+    const ageCutoff = Date.now() - daysBefore * 86400000;
+    const futureLimit = Date.now() + daysAhead * 86400000;
+    const filtered = items.filter((item) => {
+      if (!item.dueAt) return true;
+      const ts = Date.parse(item.dueAt);
+      return ts >= ageCutoff && ts <= futureLimit;
+    });
+    return { items: filtered.slice(0, 60), warnings, fetchedAt: this.now().toISOString() };
+  }
   async syncEduPage({ weekStart } = {}) {
     if (!validDate(weekStart)) fail('INVALID_DATE', '请选择正确的课表日期');
     const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -491,4 +661,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };

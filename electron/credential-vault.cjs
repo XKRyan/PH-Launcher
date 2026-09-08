@@ -53,20 +53,28 @@ function maskUsername(username) {
   return `${value.slice(0, 1)}${value.length > 1 ? '•••' : ''}`;
 }
 
-function normalizeStoredRecord(record) {
+function normalizeStoredRecord(record, siteId) {
   if (!record || typeof record !== 'object') return null;
   try {
     const username = normalizeUsername(record.username);
-    const password = normalizePassword(record.password, { required: true });
+    // Mail records may hold either the client authcode, the web password,
+    // or both; at least one secret must be present. School records never
+    // carry an authcode.
+    const isMail = siteId === 'mail';
+    const authcode = isMail ? normalizePassword(record.authcode || '', { required: false }) : '';
+    const password = normalizePassword(record.password, { required: false });
+    if (!password && !authcode) throw new Error('empty credential record');
     const updatedAtDate = new Date(record.updatedAt || '');
     const updatedAt = Number.isNaN(updatedAtDate.getTime()) ? '' : updatedAtDate.toISOString();
-    return {
+    const entry = {
       username,
       password,
       autoFill: record.autoFill !== false,
       autoLogin: record.autoLogin === true,
       updatedAt,
     };
+    if (isMail) entry.authcode = authcode;
+    return entry;
   } catch {
     return null;
   }
@@ -132,7 +140,7 @@ class CredentialVault {
         throw new Error('unsupported credential vault');
       }
       for (const siteId of this.siteIds) {
-        const record = normalizeStoredRecord(parsed.records[siteId]);
+        const record = normalizeStoredRecord(parsed.records[siteId], siteId);
         if (Object.hasOwn(parsed.records, siteId) && !record) throw new Error('invalid credential record');
         if (record) this.records[siteId] = record;
       }
@@ -216,23 +224,34 @@ class CredentialVault {
     if (!this.siteIds.has(siteId)) throw new Error('此网站不支持保存密码');
     const existing = this.records[siteId];
     const username = normalizeUsername(input?.username);
-    const suppliedPassword = normalizePassword(input?.password, { required: !existing });
-    const password = suppliedPassword || existing.password;
-    return { siteId, username, password, autoFill: input?.autoFill !== false, autoLogin: siteId !== 'mail' && input?.autoLogin === true };
+    const isMail = siteId === 'mail';
+    // Mail uses the NetEase client authcode for IMAP/SMTP (recommended); the
+    // web password is only a fallback. At least one secret must exist.
+    const suppliedPassword = normalizePassword(input?.password, { required: false });
+    const suppliedAuthcode = isMail ? normalizePassword(input?.authcode, { required: false }) : '';
+    const password = suppliedPassword || (existing ? existing.password : '');
+    const authcode = suppliedAuthcode || (existing ? existing.authcode : '') || '';
+    if (!password && !authcode) {
+      throw new Error(isMail ? '请填写客户端授权码（推荐）或网页密码' : '密码不能为空');
+    }
+    return { siteId, username, password, authcode, autoFill: input?.autoFill !== false, autoLogin: !isMail && input?.autoLogin === true };
   }
 
   saveCredential(input) {
-    const { siteId, username, password, autoFill, autoLogin } = this.validateCredential(input);
+    const { siteId, username, password, authcode, autoFill, autoLogin } = this.validateCredential(input);
     const now = this.now();
     const updatedAt = now instanceof Date && !Number.isNaN(now.getTime()) ? now.toISOString() : new Date().toISOString();
-    const nextRecords = { ...this.records, [siteId]: {
+    const record = {
       username,
       password,
       autoFill,
       // Existing autofill consent never authorizes submitting a login form.
       autoLogin,
       updatedAt,
-    } };
+    };
+    // Only mail stores the NetEase client authcode.
+    if (siteId === 'mail') record.authcode = authcode || '';
+    const nextRecords = { ...this.records, [siteId]: record };
     this.persistRecords(nextRecords);
     this.records = nextRecords;
     return this.status();
@@ -258,7 +277,9 @@ class CredentialVault {
     if (!this.availability().supported || this.loadError || !this.siteIds.has(siteId)) return null;
     const record = this.records[siteId];
     if (!record || (!allowDisabled && !record.autoFill)) return null;
-    return { username: record.username, password: record.password };
+    const entry = { username: record.username, password: record.password };
+    if (siteId === 'mail') entry.authcode = record.authcode || '';
+    return entry;
   }
 
   getForLogin(siteId) {

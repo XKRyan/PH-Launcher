@@ -19,6 +19,8 @@ function harness({ siteId = 'edupage', saveError, connectError, connected = true
     ['credentialPassword', { value: 'fixture-secret' }],
     ['credentialAutoFill', { checked: true }],
     ['credentialAutoLogin', { checked: false }],
+    ['credentialAuthcode', { value: 'fixture-authcode' }],
+    ['credentialConnectStatus', { hidden: true, className: '', textContent: '' }],
     ['credentialDialog', { open: true, close() { this.open = false; } }],
   ]);
   const calls = [];
@@ -88,8 +90,9 @@ test('connection failure is reported after saving, without claiming a successful
 test('mail saves first, then hands off to the native mail client without schoolUI.connect', async () => {
   const ui = harness({ siteId: 'mail' });
   await ui.context.submitCredential({ preventDefault() {} });
-  assert.deepEqual(ui.calls, ['save', 'render', 'mail-connect']);
+  assert.deepEqual(ui.calls, ['save', 'render', 'mail-connect', 'render']);
   assert.match(ui.toasts.at(-1).message, /已登录并同步最近邮件/);
+  assert.equal(ui.nodes.credentialConnectStatus.className, 'credential-connect-status ok');
 });
 
 test('app exposes the school account dialog and keeps automatic re-login opt-in', () => {

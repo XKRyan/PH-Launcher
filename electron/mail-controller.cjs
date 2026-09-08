@@ -33,6 +33,7 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
     list: (options) => getClient().list(options || {}),
     read: (uid) => getClient().read(uid),
     contacts: () => getClient().contacts({ limit: 300 }),
+    harvestContacts: (options) => getClient().harvestContacts(options || {}),
     async openLink(input) {
       if (openingLink) return { canceled: true };
       openingLink = true;
