@@ -3004,4 +3004,8 @@ async function init() {
   if (skipButton) skipButton.addEventListener('click', () => document.body.classList.add('loaded'));
 }
 
+// Safety net: if init() errors out before adding the loaded class (e.g. corrupt
+// user data), the splash screen stays forever.  Force it visible after a hard cap.
+setTimeout(() => { if (!document.body.classList.contains('loaded')) document.body.classList.add('loaded'); }, 8000);
+
 document.addEventListener('DOMContentLoaded', init);
