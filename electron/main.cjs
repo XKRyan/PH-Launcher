@@ -3016,7 +3016,12 @@ function createWindow() {
       });
     }
   });
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  // Bypass the Chromium cache for bundled app files: after an update the
+  // renderer must always load the freshly packaged sources, never stale JS.
+  mainWindow.webContents.session.clearCache().catch(() => {})
+    .finally(() => {
+      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'), { query: { v: app.getVersion() } });
+    });
 }
 
 // Headless checks use a temporary profile and must not be blocked by a student
