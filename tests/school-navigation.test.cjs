@@ -101,16 +101,18 @@ test('平和邮箱通过原生页面打开，不再进入内置网页', () => {
   assert.equal(document.querySelector('#siteToolbar').classList.contains('hidden'), true);
 });
 
-test('心理模块作为独立内嵌站点打开，不混入学校账号设置', () => {
+test('心履通过原生页面打开，不再进入内置网页', () => {
   const { document, calls, runtime } = appHarness();
-  const button = document.querySelector('[data-site="psychology"]');
-  assert.ok(button, '侧栏应提供心理模块');
+  const button = document.querySelector('[data-route="psychology"]');
+  assert.ok(button, '侧栏应提供心履模块');
   runtime.handleBodyClick({ target: button });
-  assert.deepEqual(calls.opened, ['psychology']);
-  assert.equal(runtime.state.activeSite, 'psychology');
-  assert.equal(document.querySelector('#siteToolbar').classList.contains('hidden'), true, '心理模块不显示浏览器地址栏');
+  assert.deepEqual(calls.opened, [], '心履不应再打开内嵌网页');
+  assert.equal(runtime.state.activeSite, null);
+  assert.equal(document.querySelector('#xinlvPage').classList.contains('active'), true);
+  assert.equal(document.querySelector('#siteToolbar').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#internalTopActions').classList.contains('hidden'), false);
-  assert.equal(document.querySelector('#topTitle').textContent, '心理');
+  assert.equal(document.querySelector('#topTitle').textContent, '心履');
+  assert.equal(document.querySelector('.primary-nav [data-site="psychology"]'), null);
 });
 
 test('首次使用引导覆盖学校账号、可选 AI 与心理模块', () => {

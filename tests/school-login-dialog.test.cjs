@@ -95,8 +95,26 @@ test('mail saves first, then hands off to the native mail client without schoolU
   assert.equal(ui.nodes.credentialConnectStatus.className, 'credential-connect-status ok');
 });
 
+test('xinlv login is routed to its own API handler instead of the website credential vault', async () => {
+  const ui = harness({ siteId: 'xinlv' });
+  ui.context.saveXinlvLoginFromDialog = async () => { ui.calls.push('xinlv-login'); return true; };
+  await ui.context.submitCredential({ preventDefault() {} });
+  assert.deepEqual(ui.calls, ['xinlv-login'], 'xinlv must never write to the website credential vault');
+  assert.equal(ui.nodes.credentialPassword.value, 'fixture-secret', 'the API handler owns clearing the field');
+});
+
 test('app exposes the school account dialog and keeps automatic re-login opt-in', () => {
   assert.match(appSource, /window\.openSchoolAccount\s*=\s*openCredentialDialog/);
   assert.match(appSource, /autoLogin:\s*\$\('#credentialSiteId'\)\.value !== 'mail' && \$\('#credentialAutoLogin'\)\.checked/);
   assert.match(indexSource, /id="credentialAutoLogin" type="checkbox"\/>/);
+});
+
+test('the shared account list includes the native Xinlv login card', () => {
+  assert.match(appSource, /function xinlvCredentialCard\(\)/);
+  assert.match(appSource, /data-edit-xinlv/);
+  assert.match(appSource, /data-connect-xinlv/);
+  assert.match(appSource, /data-remove-xinlv/);
+  assert.match(appSource, /\.join\(''\) \+ xinlvCredentialCard\(\)/, 'the Xinlv card renders in the same list as mail and ManageBac');
+  assert.match(appSource, /function openXinlvLoginDialog\(\)/);
+  assert.match(appSource, /credentialAuthcodeRow'\)\.hidden = true/, 'Xinlv needs no mail auth code');
 });
