@@ -2743,6 +2743,12 @@ async function init() {
   setInterval(() => { updateClock(); refreshVocabularyBadge(); }, 60_000);
   setInterval(updateTimerUi, 500);
   document.body.dataset.initialized = 'true';
+  // Splash visibility floor: on a warm machine init finishes in under 200ms,
+  // which would make the logo and progress bars unreadable. Hold the splash
+  // for at least 2.2s from first paint before fading into the main UI.
+  const splashStartedAt = Number(window.__phSplashStartedAt) || Date.now();
+  const splashHold = Math.max(0, 2200 - (Date.now() - splashStartedAt));
+  await new Promise((resolve) => setTimeout(resolve, splashHold));
   document.body.classList.add('loaded');
   if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
   // Splash progress bars are pure CSS animations; the skip button forces

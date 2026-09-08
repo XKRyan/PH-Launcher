@@ -3016,17 +3016,20 @@ function createWindow() {
       });
     }
   });
-  // Bypass Chromium caches for bundled app files: after an update the
-  // renderer must always load the freshly packaged sources. clearCache()
-  // clears the HTTP cache; clearCodeCache() clears the V8 code cache that
-  // otherwise keeps executing stale bytecode of the previous build.
+  // Clear the HTTP + V8 code caches before loading (they hold stale
+  // bytecode of previous builds). The cache APIs can hang in some
+  // environments, so a 1.5s cap guarantees the window always loads; a
+  // single loadFile is used — double-loading aborts the first request.
   const appSession = mainWindow.webContents.session;
-  Promise.all([
-    appSession.clearCache(),
-    typeof appSession.clearCodeCache === 'function' ? appSession.clearCodeCache() : Promise.resolve(),
-  ]).catch(() => {})
+  const cacheClear = Promise.all([
+    appSession.clearCache().catch(() => {}),
+    typeof appSession.clearCodeCache === 'function' ? appSession.clearCodeCache().catch(() => {}) : Promise.resolve(),
+  ]);
+  Promise.race([cacheClear, new Promise((resolve) => setTimeout(resolve, 1500))])
+    .catch(() => {})
     .finally(() => {
-      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html')).catch(() => {});
     });
 }
 

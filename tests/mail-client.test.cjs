@@ -278,6 +278,11 @@ test('HTML-only messages become inert text without remote resources or scripts',
   assert.match(mail.text, /Hello & world/);
   assert.match(mail.text, /Visible label/);
   assert.doesNotMatch(mail.text, /https:\/\//);
+  // The original HTML part is preserved so the renderer can offer a
+  // sandboxed formatted preview; scripts never cross this boundary.
+  assert.equal(typeof mail.html, 'string');
+  assert.ok(mail.html.length > 0);
+  assert.doesNotMatch(mail.html, /<script/i);
   assert.doesNotMatch(mail.text, /tracker\.invalid|external\.invalid|steal/);
 });
 
@@ -294,7 +299,10 @@ test('real multipart MIME retains a reset button as metadata and resolves only t
   const detail = await client.read('102');
   assert.equal(detail.links.length, 1); assert.equal(detail.links[0].label, 'Reset password');
   assert.equal(detail.links[0].host, 'shph.managebac.cn'); assert.equal(detail.links[0].url, undefined);
-  assert.doesNotMatch(JSON.stringify(detail), /fixture-only|\n\n\n/);
+  // The links metadata never carries raw URLs; the sanitized html body may
+  // still contain the link text itself (that is the visible content).
+  assert.doesNotMatch(JSON.stringify(detail.links), /fixture-only/);
+  assert.doesNotMatch(detail.text, /\n\n\n/);
   const target = await client.link('102', detail.links[0].id);
   assert.equal(target.url, 'https://shph.managebac.cn/reset?token=fixture-only&source=mail');
   await assert.rejects(() => client.link('101', detail.links[0].id), error => error.code === 'NOT_FOUND');

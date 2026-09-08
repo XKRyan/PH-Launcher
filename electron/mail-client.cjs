@@ -548,6 +548,19 @@ class SchoolMailClient {
     let text = parsed.text ? cleanBody(parsed.text) : htmlToPlainText(parsed.html);
     if (utf8Size(text) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     text = text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n');
+    // Keep the original HTML part so the renderer can show formatted mail
+    // in a sandboxed iframe; text remains the universal fallback. Strip
+    // scripts and event handlers here as defense in depth — the iframe is
+    // sandboxed anyway, but sanitized data must never carry live code.
+    let html = parsed.html ? cleanBody(parsed.html) : '';
+    if (html) {
+      html = html
+        .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+        .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/javascript\s*:/gi, '');
+    }
+    if (html && utf8Size(html) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     const links = extractMailLinks(normalizedUid, parsed);
     const attachments = messageAttachments(normalizedUid, parsed);
     const contactCandidates = uniqueAddresses([from, to, cc]).filter((entry) => entry.address !== context.username);
@@ -559,6 +572,7 @@ class SchoolMailClient {
       date: safeDate(parsed.date),
       subject: cleanInline(parsed.subject || '(无主题)', 500) || '(无主题)',
       text,
+      html,
       links: links.map(({ id, label, host }) => ({ id, label, host })),
       attachments: attachments.map(({ id, name, size }) => ({ id, name, size })),
       contactCandidates,
