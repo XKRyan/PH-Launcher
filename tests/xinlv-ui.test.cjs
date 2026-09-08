@@ -33,7 +33,7 @@ function harness({ configured = true, loginFails = false, recommendFails = false
       recommend: async (mood) => {
         calls.recommend.push(mood);
         if (recommendFails) { const error = new Error('连不上心履服务器，请检查网络'); error.code = 'xinlv_offline'; throw error; }
-        return { mood, info: { title: '焦虑的时候', text: '先做三次深呼吸。' }, tips: ['写下来'], activities: ['散步 10 分钟'], songs: [{ title: '安静的歌', artist: '某人', url: 'https://example.test/song' }, { title: '坏链接', url: 'javascript:alert(1)' }], practice: '4-7-8 呼吸', video: null };
+        return { mood, info: { title: '焦虑的时候', text: '先做三次深呼吸。' }, tips: [{ title: '写下来', content: '把担心的事写下来', source: '心履' }], activities: ['散步 10 分钟'], songs: [{ title: '安静的歌', artist: '某人', url: 'https://example.test/song' }, { title: '坏链接', url: 'javascript:alert(1)' }], practice: '4-7-8 呼吸', video: null };
       },
       catalog: async () => {
         calls.catalog += 1;
@@ -143,6 +143,8 @@ test('xinlv recommendations render server content as text and only open http lin
   assert.deepEqual(ui.calls.recommend, ['anxious']);
   const page = ui.document.querySelector('#xinlvPage');
   assert.match(page.textContent, /先做三次深呼吸/);
+  assert.match(page.textContent, /把担心的事写下来/, 'tip content and source are rendered');
+  assert.match(page.textContent, /出处：心履/);
   assert.match(page.textContent, /散步 10 分钟/);
   const songButtons = [...page.querySelectorAll('[data-xinlv-open-url]')];
   assert.equal(songButtons.length, 1, 'a javascript: URL must not become a clickable button');

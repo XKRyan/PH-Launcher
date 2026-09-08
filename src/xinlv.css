@@ -151,6 +151,11 @@
 .xinlv-block h4 { margin: 0 0 8px; font-size: .8125rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
 .xinlv-block ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .xinlv-block li { font-size: .875rem; color: var(--ink-2); line-height: 1.6; }
+.xinlv-tip-list { display: flex; flex-direction: column; gap: 10px; }
+.xinlv-tip { padding: 12px 14px; border-radius: var(--radius); background: var(--ivory-50); border: 1px solid var(--border); }
+.xinlv-tip strong { display: block; font-size: .9375rem; color: var(--ink); margin-bottom: 4px; }
+.xinlv-tip p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.65; white-space: pre-wrap; }
+.xinlv-tip small { display: block; margin-top: 6px; font-size: .75rem; color: var(--ink-3); }
 .xinlv-chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .xinlv-suggest-chip { padding: 6px 12px; border-radius: 999px; background: var(--gold-100); color: #6b4f1c; font-size: .8125rem; }
 .xinlv-practice { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.7; white-space: pre-wrap; }

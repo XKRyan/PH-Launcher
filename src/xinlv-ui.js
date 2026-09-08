@@ -238,7 +238,14 @@
       ${data ? `<section class="xinlv-card">
         <header class="xinlv-card-head"><div><span class="section-kicker">FOR ${esc(String(data.mood || mood).toUpperCase())}</span><h3>${esc(moodLabel(data.mood || mood))}的时候</h3></div></header>
         ${data.info?.title || data.info?.text ? `<div class="xinlv-info"><strong>${esc(data.info.title || '')}</strong><p>${esc(data.info.text || data.info.description || '')}</p></div>` : ''}
-        ${Array.isArray(data.tips) && data.tips.length ? `<section class="xinlv-block"><h4>可以试试</h4><ul>${data.tips.map((tip) => `<li>${esc(typeof tip === 'string' ? tip : tip?.text || tip?.title || '')}</li>`).join('')}</ul></section>` : ''}
+        ${Array.isArray(data.tips) && data.tips.length ? `<section class="xinlv-block"><h4>可以试试</h4><div class="xinlv-tip-list">${data.tips.map((tip) => {
+          if (typeof tip === 'string') return `<article class="xinlv-tip"><p>${esc(tip)}</p></article>`;
+          const title = esc(tip?.title || tip?.text || '');
+          const content = esc(tip?.content || tip?.description || '');
+          const source = esc(tip?.source || '');
+          if (!title && !content) return '';
+          return `<article class="xinlv-tip">${title ? `<strong>${title}</strong>` : ''}${content ? `<p>${content}</p>` : ''}${source ? `<small>出处：${source}</small>` : ''}</article>`;
+        }).join('')}</div></section>` : ''}
         ${Array.isArray(data.activities) && data.activities.length ? `<section class="xinlv-block"><h4>活动建议</h4><div class="xinlv-chip-list">${data.activities.map((item) => `<span class="xinlv-suggest-chip">${esc(typeof item === 'string' ? item : item?.title || item?.name || '')}</span>`).join('')}</div></section>` : ''}
         ${data.practice ? `<section class="xinlv-block"><h4>练习</h4><p class="xinlv-practice">${esc(data.practice)}</p></section>` : ''}
         ${Array.isArray(data.songs) && data.songs.length ? `<section class="xinlv-block"><h4>音乐</h4><div class="xinlv-song-list">${data.songs.map((song) => {
