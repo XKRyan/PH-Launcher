@@ -160,6 +160,9 @@ contextBridge.exposeInMainWorld('ph', {
     openUrl: (url) => ipcRenderer.invoke('system:open-url', url),
     showData: () => ipcRenderer.invoke('system:show-data'),
     notify: (payload) => ipcRenderer.invoke('system:notify', payload),
+    splashState: () => ipcRenderer.invoke('system:splash-state'),
+    onSplashProgress: (callback) => on('splash:progress', callback),
+    onSplashDone: (callback) => on('splash:done', callback),
   },
   shortcuts: {
     register: () => ipcRenderer.invoke('shortcuts:register'),

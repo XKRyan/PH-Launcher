@@ -258,11 +258,10 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .splash-bar-row { display: flex; align-items: center; gap: 12px; }
 .splash-bar-label { width: 110px; text-align: right; color: var(--ink-3); font-size: .8125rem; }
 .splash-bar { flex: 1; height: 5px; background: rgba(0,0,0,.08); border-radius: 999px; overflow: hidden; position: relative; }
-.splash-bar-fill { width: 0%; height: 100%; background: var(--green-800); border-radius: 999px; transition: width .5s ease; }
-.splash-bar-fill[data-bar="school"] { animation: splashFill 1.2s ease-out .2s both; }
-.splash-bar-fill[data-bar="mail"] { animation: splashFill 1.2s ease-out .8s both; }
-.splash-bar-fill[data-bar="preload"] { animation: splashFill 1.2s ease-out 1.4s both; }
-@keyframes splashFill { from { width: 0% } to { width: 100% } }
+/* Real progress from the main process, not a decorative animation. */
+.splash-bar-fill { width: 0%; height: 100%; background: var(--green-800); border-radius: 999px; transition: width .35s cubic-bezier(.22,.61,.36,1), background .3s ease; }
+.splash-bar-fill.is-done { background: var(--green-700); }
+.splash-bar-row.is-active .splash-bar-label { color: var(--green-800); font-weight: 600; }
 .splash-hint { color: var(--ink-3); font-size: .875rem; }
 .splash-skip { position: absolute; bottom: 36px; color: var(--ink-3); font-size: .8125rem; background: none; border: none; cursor: pointer; opacity: .7; }
 .splash-skip:hover { opacity: 1; text-decoration: underline; }

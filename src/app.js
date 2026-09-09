@@ -2984,19 +2984,21 @@ async function init() {
   // Keep the home cards honest: re-project the school snapshot every minute.
   setInterval(() => { if (state.route === 'today') void window.dashboardData?.refresh(); }, 60_000);
   document.body.dataset.initialized = 'true';
-  // Splash visibility floor: hold the logo and progress bars for at least
-  // 2.2s from first paint before fading into the main UI.
-  const splashStartedAt = Number(window.__phSplashStartedAt) || Date.now();
-  const splashHold = Math.max(0, 2200 - (Date.now() - splashStartedAt));
-  await new Promise((resolve) => setTimeout(resolve, splashHold));
-  document.body.classList.add('loaded');
-  if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
-  const skipButton = $('#splashSkip');
-  if (skipButton) skipButton.addEventListener('click', () => document.body.classList.add('loaded'));
+  // The splash overlay is owned by splash-ui: it waits for the real preload
+  // bars (school data, mail, page preload) before revealing the app, so no
+  // page has to show its own spinner after entry.
+  const reveal = () => {
+    // Repaint from the now-populated cache; this reads memory, not the network.
+    if (window.schoolUI?.refresh) void window.schoolUI.refresh().catch(() => {});
+    void window.dashboardData?.refresh();
+    void window.mailUI?.open?.();
+  };
+  if (window.splashUI) window.splashUI.ready(reveal);
+  else document.body.classList.add('loaded');
 }
 
-// Safety net: if init() errors out before adding the loaded class (e.g. corrupt
-// user data), the splash screen stays forever. Force it visible after a short cap.
-setTimeout(() => { if (!document.body.classList.contains('loaded')) document.body.classList.add('loaded'); }, 3000);
+// Safety net: if init() errors out before the splash is released (e.g. corrupt
+// user data), the overlay stays forever. Force it visible after a hard cap.
+setTimeout(() => { if (!document.body.classList.contains('loaded')) document.body.classList.add('loaded'); }, 26000);
 
 document.addEventListener('DOMContentLoaded', init);

@@ -80,6 +80,7 @@ const { SchoolDataClient, SchoolDataError, readUrl: schoolReadUrl } = require('.
 const { createSchoolFetch } = require('./school-transport.cjs');
 const { SchoolAuthenticator, SchoolAuthError } = require('./school-auth.cjs');
 const { SchoolCache } = require('./school-cache.cjs');
+const { SchoolStore } = require('./school-store.cjs');
 const calendar = require('./calendar.cjs');
 const { ReminderScheduler } = require('./reminders.cjs');
 const { createReminderWindowManager } = require('./reminder-window.cjs');
@@ -498,7 +499,8 @@ let schoolClient = null;
 let schoolAuthenticator = null;
 let schoolMailClient = null;
 let xinlvService = null;
-const schoolState = new SchoolCache();
+let schoolStore = null;
+const schoolState = new SchoolCache({ onChange: (payload) => schoolStore?.save(payload) });
 const schoolCache = schoolState.current;
 const schoolSessionMutations = new Set();
 let offlineDictionary = null;
@@ -760,6 +762,155 @@ function publishDataChange() {
   const data = secureStore.forRenderer();
   sendToRenderer('data:changed', data);
   return data;
+}
+
+// ---------------------------------------------------------------- splash boot
+// The three splash bars report real work: school data, mail service and the
+// preloading of local interfaces/pages. The renderer reads the latest state on
+// mount, so progress emitted before it subscribes is never lost.
+const splashProgress = { school: { percent: 0, label: '等待开始' }, mail: { percent: 0, label: '等待开始' }, preload: { percent: 0, label: '等待开始' } };
+let splashFinished = false;
+
+function setSplashProgress(bar, percent, label = '') {
+  if (!Object.hasOwn(splashProgress, bar)) return;
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  splashProgress[bar] = { percent: value, label: label || splashProgress[bar].label };
+  sendToRenderer('splash:progress', { bar, ...splashProgress[bar] });
+}
+
+function splashState() {
+  return { finished: splashFinished, bars: structuredClone(splashProgress) };
+}
+
+function finishSplash() {
+  if (splashFinished) return;
+  splashFinished = true;
+  sendToRenderer('splash:done', splashState());
+}
+
+// Everything the user used to watch spinning inside the app is fetched here,
+// while the splash is still on screen. A phase that exceeds the budget is
+// reported as "continuing in the background" instead of holding the splash:
+// the cached snapshot is already on screen, so nothing spins after entry.
+const SPLASH_BUDGET_MS = 6000;
+
+function withSplashBudget(work, bar, timeoutLabel) {
+  return Promise.race([
+    work,
+    new Promise((resolve) => setTimeout(() => {
+      setSplashProgress(bar, 100, timeoutLabel);
+      resolve('budget');
+    }, SPLASH_BUDGET_MS)),
+  ]);
+}
+
+async function runSplashPreload() {
+  const saved = credentialStatus().sites || {};
+  const weekStart = currentSchoolWeek();
+  const jobs = [];
+
+  // School data: a snapshot from the previous launch is already in memory, so
+  // the bar completes immediately and the refresh continues in the background.
+  // Only a cold profile waits for the first download.
+  if (saved.edupage?.saved || saved.managebac?.saved) {
+    const cachedSnapshot = schoolState.snapshot({ weekStart });
+    const hasCached = Boolean(cachedSnapshot.edupage) || Boolean(cachedSnapshot.managebac);
+    const refreshSchool = async (report) => {
+      const sources = [saved.edupage?.saved ? 'edupage' : null, saved.managebac?.saved ? 'managebac' : null].filter(Boolean);
+      let done = 0;
+      for (const source of sources) {
+        try {
+          await syncSchool(source, { force: false, ...(source === 'edupage' ? { weekStart } : {}) });
+          done += 1;
+          report(15 + (85 * done) / sources.length, source === 'edupage' ? '课表已更新' : '课程已更新');
+        } catch {
+          done += 1;
+          report(15 + (85 * done) / sources.length, '同步未完成，可在页面重试');
+        }
+      }
+      report(100, '学校数据已就绪');
+      startupMark('splash-school-done');
+    };
+    if (hasCached) {
+      setSplashProgress('school', 100, '已载入本地数据，正在后台更新');
+      // Deliberately not awaited: cached data is on screen, freshness follows.
+      void refreshSchool((percent, label) => { if (percent >= 100) setSplashProgress('school', 100, '学校数据已更新'); else setSplashProgress('school', 100, label); })
+        .catch(() => {});
+    } else {
+      jobs.push(withSplashBudget((async () => {
+        setSplashProgress('school', 15, '读取本地缓存');
+        await refreshSchool((percent, label) => setSplashProgress('school', percent, label));
+      })(), 'school', '学校数据稍后在后台更新'));
+    }
+  } else {
+    setSplashProgress('school', 100, '未保存学校账号，跳过');
+  }
+
+  // Mail: connect once during the splash so the inbox is not empty on entry.
+  if (saved.mail?.saved) {
+    jobs.push(withSplashBudget((async () => {
+      setSplashProgress('mail', 20, '连接邮箱');
+      try {
+        const mailbox = getSchoolMailClient();
+        await mailbox.list({ unread: false, limit: 60 });
+        setSplashProgress('mail', 100, '收件箱已同步');
+      } catch {
+        setSplashProgress('mail', 100, '邮箱未连接，可在页面重试');
+      }
+      startupMark('splash-mail-done');
+    })(), 'mail', '邮箱稍后在后台同步'));
+  } else {
+    setSplashProgress('mail', 100, '未保存邮箱账号，跳过');
+  }
+
+  // Preload: warm the saved school pages in their persistent partitions and
+  // open the local databases, so entering a page is instant.
+  jobs.push(withSplashBudget((async () => {
+    setSplashProgress('preload', 10, '准备本地界面');
+    const targets = ['edupage', 'managebac'].filter((siteId) => saved[siteId]?.saved);
+    if (!targets.length) { setSplashProgress('preload', 100, '没有需要预载的学校页面'); return; }
+    let done = 0;
+    await Promise.all(targets.map(async (siteId) => {
+      try {
+        await preloadSiteView(siteId);
+      } catch { /* a page that cannot preload still loads on demand */ }
+      done += 1;
+      setSplashProgress('preload', 10 + (90 * done) / targets.length, `${siteId === 'edupage' ? '课表' : '课程'}页面已预载`);
+    }));
+    setSplashProgress('preload', 100, '界面已预载');
+    startupMark('splash-pages-done');
+  })(), 'preload', '页面稍后在后台预载'));
+
+  await Promise.allSettled(jobs);
+  // A short floor keeps the splash from flashing; the renderer enforces it too.
+  finishSplash();
+}
+
+function currentSchoolWeek() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const date = new Date(`${parts.year}-${parts.month}-${parts.day}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+// Load the site's home page in its persistent partition without showing it.
+function preloadSiteView(siteId) {
+  const entry = createSiteView(siteId);
+  if (!entry || entry.disposed || entry.view.webContents.isDestroyed()) return Promise.resolve(false);
+  if (entry.hasLoaded) return Promise.resolve(true);
+  const site = getSiteDefinition(siteId);
+  if (!site) return Promise.resolve(false);
+  const target = siteLastUrls.get(siteId) || site.url;
+  return new Promise((resolve) => {
+    const contents = entry.view.webContents;
+    const timer = setTimeout(() => { cleanup(); resolve(false); }, 20000);
+    const cleanup = () => { clearTimeout(timer); contents.off('did-finish-load', onDone); contents.off('did-fail-load', onFail); };
+    const onDone = () => { cleanup(); resolve(true); };
+    const onFail = () => { cleanup(); resolve(false); };
+    contents.once('did-finish-load', onDone);
+    contents.once('did-fail-load', onFail);
+    contents.loadURL(target).catch(() => { cleanup(); resolve(false); });
+  });
 }
 
 function credentialStatus() {
@@ -2581,6 +2732,7 @@ function registerIpc() {
   ipcMain.handle('dictionary:lookup', (_event, query) => offlineDictionary.lookup(query));
   ipcMain.handle('ib:command-catalog', () => commandTermCatalog());
   ipcMain.handle('system:version', () => app.getVersion());
+  ipcMain.handle('system:splash-state', (event) => { assertMainRenderer(event); return splashState(); });
   ipcMain.handle('system:hardware', () => getHardwareProfile());
   ipcMain.handle('system:open-url', (_event, rawUrl) => {
     const parsed = safeHttpUrl(rawUrl, true);
@@ -3265,6 +3417,12 @@ function createWindow() {
     selfTestStage('ui-loaded');
     startupMark('ui-loaded');
     sendToRenderer('app:ready', { sites: SITES, shortcuts: DEFAULT_SHORTCUTS });
+    // Fetch and preload while the splash is still on screen. Headless checks
+    // drive their own fixtures and must not race this.
+    if (!IS_HEADLESS && !IS_CAPTURE && !CAPTURE_SITE) {
+      startupMark('splash-preload-start');
+      void runSplashPreload().then(() => startupMark('splash-preload-done')).catch(() => finishSplash());
+    }
     if (IS_CAPTURE) {
       runCapture().catch((error) => {
         console.error(`CAPTURE_ERROR ${error.message}`);
@@ -3339,6 +3497,11 @@ app.whenReady().then(() => {
   armSelfTestTimeout();
   secureStore = new SecureStore(path.join(app.getPath('userData'), 'ph-launcher.secure'));
   secureStore.load();
+  // Restore last session's school snapshots before any window paints, so the
+  // UI never starts empty and no download is needed just to show the data.
+  schoolStore = new SchoolStore({ filePath: path.join(app.getPath('userData'), 'ph-launcher.school'), safeStorage });
+  const restoredSchool = schoolState.hydrate(schoolStore.load());
+  if (restoredSchool) startupMark(`school-hydrated-${restoredSchool}`);
   selfTestStage('store-ready');
   startupMark('store-ready');
   credentialVault = new CredentialVault({

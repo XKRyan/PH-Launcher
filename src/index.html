@@ -31,9 +31,9 @@
         </svg>
       </div>
       <div class="splash-bars">
-        <div class="splash-bar-row"><span class="splash-bar-label">连接学校数据</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="school"></div></div></div>
-        <div class="splash-bar-row"><span class="splash-bar-label">加载邮件服务</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="mail"></div></div></div>
-        <div class="splash-bar-row"><span class="splash-bar-label">预载学习界面</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="preload"></div></div></div>
+        <div class="splash-bar-row" data-bar="school"><span class="splash-bar-label">连接学校数据</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="school"></div></div></div>
+        <div class="splash-bar-row" data-bar="mail"><span class="splash-bar-label">加载邮件服务</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="mail"></div></div></div>
+        <div class="splash-bar-row" data-bar="preload"><span class="splash-bar-label">预载学习界面</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="preload"></div></div></div>
       </div>
       <p class="splash-hint" id="splashHint">正在启动 PH Launcher…</p>
       <button class="splash-skip" id="splashSkip" type="button">跳过</button>
@@ -128,7 +128,7 @@
       </header>
 
       <main class="content" id="content">
-        <section class="page active" data-page="today"><p id="startupSyncStatus" class="startup-sync-status" role="status"></p>
+        <section class="page active" data-page="today">
           <div class="hero-row">
             <div>
               <span class="section-kicker" id="greetingKicker">A CALM START</span>
@@ -302,8 +302,8 @@
     <script src="./xinlv-ui.js"></script>
     <script src="./dashboard-data.js"></script>
     <script src="./course-order.js"></script>
+    <script src="./splash-ui.js"></script>
     <script src="./appearance-ui.js"></script>
-    <script src="./startup-ui.js"></script>
     <script src="./agent-ui.js"></script>
     <script src="./api-confirm.js"></script>
     <script src="./app.js"></script>
