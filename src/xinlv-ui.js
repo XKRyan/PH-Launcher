@@ -318,7 +318,13 @@
         ${data ? `<div class="xinlv-profile-detail">
           ${data.bio ? `<p>${esc(data.bio)}</p>` : ''}
           ${data.dateJoined ? `<p class="xinlv-muted">注册于 ${esc(String(data.dateJoined).slice(0, 10))}</p>` : ''}
-          ${Array.isArray(data.badges) && data.badges.length ? `<section class="xinlv-block"><h4>徽章</h4><div class="xinlv-chip-list">${data.badges.map((badge) => `<span class="xinlv-suggest-chip">${esc(typeof badge === 'string' ? badge : badge?.name || badge?.title || '')}</span>`).join('')}</div></section>` : ''}
+          ${Array.isArray(data.badges) && data.badges.length ? `<section class="xinlv-block"><h4>徽章</h4><div class="xinlv-badge-list">${data.badges.map((badge) => {
+            const days = typeof badge === 'object' ? (badge.days || badge.streak || badge.threshold) : null;
+            const name = typeof badge === 'string' ? badge : (badge.name || badge.title || badge.label || '');
+            const desc = typeof badge === 'object' ? (badge.desc || badge.description || '') : '';
+            const imgSrc = days ? `assets/xinlv/badges/badge_${days}.png` : '';
+            return `<article class="xinlv-badge-item">${imgSrc ? `<img src="${esc(imgSrc)}" alt="${esc(name)}" class="xinlv-badge-img" width="64" height="64" loading="lazy"/>` : `<span class="xinlv-badge-placeholder">${esc(name || '徽章')}</span>`}<div class="xinlv-badge-text"><strong>${esc(name)}</strong><p>${esc(desc)}</p></div></article>`;
+          }).join('')}</div></section>` : ''}
         </div>` : ''}
       </section>
       <section class="xinlv-card xinlv-about">

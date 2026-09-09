@@ -200,6 +200,13 @@
 .xinlv-profile-detail { display: flex; flex-direction: column; gap: 10px; }
 .xinlv-profile-detail p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.65; }
 .xinlv-about p { margin: 0; font-size: .875rem; color: var(--ink-2); line-height: 1.7; }
+.xinlv-badge-list { display: flex; flex-wrap: wrap; gap: 12px; }
+.xinlv-badge-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--radius); background: var(--ivory-50); border: 1px solid var(--border); }
+.xinlv-badge-img { width: 56px; height: 56px; object-fit: contain; border-radius: 10px; }
+.xinlv-badge-text { display: flex; flex-direction: column; gap: 2px; }
+.xinlv-badge-text strong { font-size: .9375rem; color: var(--ink); }
+.xinlv-badge-text p { margin: 0; font-size: .8125rem; color: var(--ink-3); }
+.xinlv-badge-placeholder { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 10px; background: var(--green-50); color: var(--green-800); font-size: 1.5rem; }
 
 /* ------------------------------------------------------------------ animations */
 
