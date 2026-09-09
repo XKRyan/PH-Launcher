@@ -175,4 +175,5 @@ contextBridge.exposeInMainWorld('ph', {
     close: () => ipcRenderer.send('window:close'),
   },
   onReady: (callback) => on('app:ready', callback),
+  onTrayNavigate: (callback) => on('tray:navigate', callback),
 });

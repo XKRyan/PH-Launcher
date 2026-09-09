@@ -2909,6 +2909,10 @@ async function init() {
     if ($('#onboardingDialog')?.open) renderOnboarding();
   });
   window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
+  // Tray quick entries focus the existing window and ask it to jump to a page.
+  window.ph.onTrayNavigate?.((route) => {
+    if (route && (ROUTE_META[route] || ROUTE_ALIASES[route])) navigate(route);
+  });
   window.ph.shortcuts.onAction((action) => {
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);

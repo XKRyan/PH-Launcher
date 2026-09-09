@@ -1564,10 +1564,33 @@ function applyWindowTheme() {
 }
 
 function createTray() {
+  // Re-creating a tray without destroying the previous one left a duplicate
+  // (and stale) icon in the notification area.
+  if (tray && !tray.isDestroyed()) tray.destroy();
   tray = new Tray(createTrayImage());
   tray.setToolTip('PH Launcher');
   refreshTrayMenu();
   tray.on('click', toggleMainWindow);
+  tray.on('right-click', () => { if (tray && !tray.isDestroyed()) tray.popUpContextMenu(); });
+}
+
+function destroyTray() {
+  if (!tray) return;
+  try { if (!tray.isDestroyed()) tray.destroy(); } catch { /* already gone */ }
+  tray = null;
+}
+
+// Quick entries: show the window and jump straight to the page the user picked.
+function openRouteFromTray(route) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    mainWindow?.webContents.once('did-finish-load', () => sendToRenderer('tray:navigate', route));
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  sendToRenderer('tray:navigate', route);
 }
 
 function refreshTrayMenu() {
@@ -1575,6 +1598,7 @@ function refreshTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate(require('./tray-menu.cjs').trayMenu({
     language: secureStore.data.settings.language,
     open: () => { mainWindow?.show(); mainWindow?.focus(); },
+    openRoute: openRouteFromTray,
     quit: () => { isQuitting = true; app.quit(); },
   })));
 }
@@ -3494,9 +3518,15 @@ const gotLock = IS_HEADLESS || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else if (!IS_HEADLESS) {
-  app.on('second-instance', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
+  // A second launch must never open a duplicate window: restore and focus the
+  // existing one, and honour an optional --route= request from a shortcut.
+  app.on('second-instance', (_event, argv = []) => {
+    const requested = argv.find((arg) => arg.startsWith('--route='))?.split('=')[1] || '';
+    if (!mainWindow || mainWindow.isDestroyed()) { createWindow(); return; }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+    if (requested) sendToRenderer('tray:navigate', requested);
   });
 }
 
@@ -3627,6 +3657,9 @@ app.on('before-quit', (event) => {
     });
 });
 app.on('will-quit', () => {
+  // Destroy the tray explicitly: a killed process leaves a ghost icon in the
+  // notification area until the user hovers it.
+  destroyTray();
   reminderScheduler?.dispose();
   reminderWindows?.dispose();
   vocabularyStudy?.cancel();

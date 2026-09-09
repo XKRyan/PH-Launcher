@@ -346,8 +346,28 @@
       : inference.status === 'suggestion'
         ? `<div class="school-callout">ManageBac 课程名称唯一匹配到 ${inference.keys.length} 个教学组，但课程名称不是个人选课证明。${btn('勾选这些建议', 'apply-group-suggestions')}</div>`
         : '<div class="school-callout">当前授权数据没有明确的个人教学组名单。请按老师、教学组和上课时间人工确认。</div>';
-    const subjects = [...new Set(data.options.map((option) => option.course || option.label.split(' · ')[0]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
-    showDialog('选择自己的教学组', `<p>只勾选你实际参加的课程组。相似课名可能对应不同老师或不同时间。</p>${inferenceNote}<div class="school-group-filters"><input type="search" data-school-field="group-query" placeholder="搜索课程、教学组或老师" aria-label="搜索教学组"><select data-school-field="group-subject" aria-label="按科目筛选"><option value="">全部科目</option>${subjects.map((subject) => `<option value="${esc(subject)}">${esc(subject)}</option>`).join('')}</select></div><div class="school-group-tools"><span class="school-group-count" role="status"></span><button type="button" class="school-text-button" data-school-action="groups-all">勾选当前结果</button><button type="button" class="school-text-button" data-school-action="groups-none">清空当前结果</button></div><div class="school-group-list">${data.options.map((option) => { const subject = option.course || option.label.split(' · ')[0]; const roomLine = (option.rooms || []).filter(Boolean).join('、'); const timeLine = (option.times || []).filter(Boolean).join('、'); const meta = [roomLine && `教室：${roomLine}`, timeLine && `时间：${timeLine}`].filter(Boolean); return `<label data-school-group-option data-subject="${esc(subject)}" data-search="${esc([option.label,roomLine,timeLine].filter(Boolean).join(" ").toLocaleLowerCase())}"><input type="checkbox" name="school-group" value="${esc(option.key)}" ${selected.includes(option.key) || inferred.includes(option.key) ? 'checked' : ''}/><span>${esc(option.label)}${meta.length ? `<small class="school-group-meta">${esc(meta.join(' · '))}</small>` : ''}</span></label>`; }).join('')}</div><p class="school-group-no-results" hidden>没有符合条件的教学组。</p>`, `${btn('取消', 'close')}${btn('保存选择', 'save-groups', '', true)}`);
+    // Group the options by subject so a long timetable stays readable. Native
+    // language courses and homeroom (班会) are checked by default on a fresh
+    // profile; saved selections always win.
+    const bySubject = new Map();
+    for (const option of data.options) {
+      const subject = option.course || option.label.split(' · ')[0] || '未命名课程';
+      if (!bySubject.has(subject)) bySubject.set(subject, []);
+      bySubject.get(subject).push(option);
+    }
+    const subjectEntries = [...bySubject.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'));
+    const isDefaultOn = (option) => /(?:^|[^a-z])native|班会|homeroom|class\s*meeting/i.test(`${option.course || ''} ${(option.groups || []).join(' ')} ${option.label || ''}`);
+    const hasSavedSelection = selected.length > 0 || inferred.length > 0;
+    const checkedFor = (option) => selected.includes(option.key) || inferred.includes(option.key) || (!hasSavedSelection && isDefaultOn(option));
+    const groupBody = subjectEntries.map(([subject, options]) => `<details class="school-subject-group" data-school-subject-group data-subject="${esc(subject)}"><summary><strong>${esc(subject)}</strong><span class="school-subject-count" data-school-subject-count="${esc(subject)}"></span></summary><div class="school-subject-options">${options.map((option) => {
+      const roomLine = (option.rooms || []).filter(Boolean).join('、');
+      const timeLine = (option.times || []).filter(Boolean).join('、');
+      const title = (option.groups || []).filter(Boolean).join(' / ') || option.teacher || '教学组';
+      const meta = [option.teacher, roomLine && `教室 ${roomLine}`, timeLine && `时间 ${timeLine}`].filter(Boolean);
+      const searchText = [subject, option.label, option.teacher, roomLine, timeLine].filter(Boolean).join(' ').toLocaleLowerCase();
+      return `<label data-school-group-option data-subject="${esc(subject)}" data-search="${esc(searchText)}"><input type="checkbox" name="school-group" value="${esc(option.key)}" ${checkedFor(option) ? 'checked' : ''}/><span><strong>${esc(title)}</strong>${meta.length ? `<small class="school-group-meta">${esc(meta.join(' · '))}</small>` : ''}</span></label>`;
+    }).join('')}</div></details>`).join('');
+    showDialog('选择自己的教学组', `<p>按学科展开，勾选你实际参加的教学组。相似课名可能对应不同老师或不同时间。</p>${inferenceNote}<div class="school-group-filters"><input type="search" data-school-field="group-query" placeholder="搜索学科、教学组或老师" aria-label="搜索教学组"><button type="button" class="school-text-button" data-school-action="groups-expand">展开全部</button><button type="button" class="school-text-button" data-school-action="groups-collapse">收起全部</button></div><div class="school-group-tools"><span class="school-group-count" role="status"></span><button type="button" class="school-text-button" data-school-action="groups-all">勾选当前结果</button><button type="button" class="school-text-button" data-school-action="groups-none">清空当前结果</button></div><div class="school-group-list">${groupBody}</div><p class="school-group-no-results" hidden>没有符合条件的教学组。</p>`, `${btn('取消', 'close')}${btn('保存选择', 'save-groups', '', true)}`);
     modal.schoolGroupAccount = data.accountKey;
     modal.schoolGroupEpochs = JSON.stringify(state.epochs);
     filterGroupOptions();
@@ -355,11 +375,20 @@
   function filterGroupOptions() {
     if (!modal?.open) return;
     const query = (modal.querySelector('[data-school-field="group-query"]')?.value || '').trim().toLocaleLowerCase();
-    const subject = modal.querySelector('[data-school-field="group-subject"]')?.value || '';
     let visibleCount = 0;
     for (const option of modal.querySelectorAll('[data-school-group-option]')) {
-      option.hidden = Boolean((query && !option.dataset.search.includes(query)) || (subject && option.dataset.subject !== subject));
+      option.hidden = Boolean(query && !option.dataset.search.includes(query));
       if (!option.hidden) visibleCount += 1;
+    }
+    // Search opens matching subjects and hides empty ones, so the user never
+    // stares at a collapsed section that actually has results.
+    for (const group of modal.querySelectorAll('[data-school-subject-group]')) {
+      const visible = [...group.querySelectorAll('[data-school-group-option]')].filter((option) => !option.hidden);
+      if (query) group.open = visible.length > 0;
+      const checked = visible.filter((option) => option.querySelector('input')?.checked).length;
+      const counter = group.querySelector('[data-school-subject-count]');
+      if (counter) counter.textContent = visible.length ? `${visible.length} 个教学组${checked ? ` · 已选 ${checked}` : ''}` : '无匹配';
+      group.hidden = visible.length === 0;
     }
     const chosen = modal.querySelectorAll('[name="school-group"]:checked').length;
     const status = modal.querySelector('.school-group-count');
@@ -419,6 +448,9 @@
       });
       if (action === 'apply-group-suggestions') { const inference = teachingGroupInference(currentWeek()); modal.querySelectorAll('[name="school-group"]').forEach((input) => { if (inference.keys.includes(input.value)) { input.checked = true; input.setAttribute('checked', ''); } }); filterGroupOptions(); }
       if (action === 'groups-all' || action === 'groups-none') { modal.querySelectorAll('[data-school-group-option]').forEach((option) => { if (!option.hasAttribute('hidden')) { const input = option.querySelector('[name="school-group"]'); input.checked = action === 'groups-all'; input.toggleAttribute('checked', action === 'groups-all'); } }); filterGroupOptions(); }
+      if (action === 'groups-expand' || action === 'groups-collapse') {
+        modal.querySelectorAll('[data-school-subject-group]').forEach((group) => { group.open = action === 'groups-expand'; });
+      }
       if (action === 'save-groups') {
         if (currentWeek()?.accountKey !== modal.schoolGroupAccount || JSON.stringify(state.epochs) !== modal.schoolGroupEpochs) {
           modal.close(); state.error = '学校账号已变化，请重新识别选课。'; render(); return;
