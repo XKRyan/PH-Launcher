@@ -208,7 +208,16 @@
       const ts = Date.parse(task.dueAt);
       return Number.isFinite(ts) ? ts >= dueCutoff && ts <= dueFutureLimit : true;
     });
-    items.sort((a, b) => state.taskSort === 'name' ? a.title.localeCompare(b.title, 'zh-CN') : (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity) || a.title.localeCompare(b.title, 'zh-CN'));
+    items.sort((a, b) => {
+      if (state.taskSort === 'name') return a.title.localeCompare(b.title, 'zh-CN');
+      const now = Date.now();
+      const tsA = a.dueAt ? Date.parse(a.dueAt) : Infinity;
+      const tsB = b.dueAt ? Date.parse(b.dueAt) : Infinity;
+      const overdueA = tsA < now ? 1 : 0;
+      const overdueB = tsB < now ? 1 : 0;
+      if (overdueA !== overdueB) return overdueA - overdueB;
+      return tsA - tsB || a.title.localeCompare(b.title, 'zh-CN');
+    });
     return `${syncSummary('managebac')}<div class="school-section-head"><div><span class="section-kicker">TASKS & DEADLINES</span><h2>${state.showHidden ? '已隐藏' : '课程作业'} <small>${items.length}</small></h2></div><button type="button" class="school-text-button" data-school-action="toggle-hidden">${state.showHidden ? '返回作业列表' : `查看已隐藏 (${data.tasks.filter((task) => hidden.has(task.id)).length})`}</button></div><div class="school-task-filters"><input type="search" value="${esc(state.query)}" data-school-field="query" placeholder="搜索作业或课程" aria-label="搜索作业或课程"/><select data-school-field="task-sort" aria-label="作业排序"><option value="due" ${state.taskSort === 'due' ? 'selected' : ''}>明确截止时间优先</option><option value="name" ${state.taskSort === 'name' ? 'selected' : ''}>作业名称</option></select></div><div class="school-task-list">${taskRows(items) || '<div class="school-empty"><h3>这里暂时没有作业</h3><p>试试其他关键词，或在原网页核对最新安排。</p></div>'}</div><p class="school-footnote">没有完整日期的作业保留原文，不擅自推断年份。点击作业查看详情。隐藏或恢复不会修改学校网站。</p>`;
   }
   function core() {

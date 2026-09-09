@@ -84,9 +84,11 @@
 .school-warnings ul { margin-bottom:0; padding-left:20px; line-height:1.8; }
 .school-inline-label { display:flex; align-items:center; gap:9px; color:var(--ink-3); font-size: 1rem; }
 .school-inline-label select,.school-task-filters select,.school-task-filters input { background:var(--ivory-50); border:1px solid var(--border); border-radius:10px; padding:9px 12px; min-height:40px; }
-.school-course-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
-.school-course-card { background:var(--ivory-50); border:1px solid var(--border); border-radius:17px; padding:23px; text-align:left; transition:transform .15s,box-shadow .15s; }
-.school-course-card:hover { transform:translateY(-2px); box-shadow:var(--shadow-sm); }
+.school-course-grid { display:flex; flex-direction:column; gap:8px; }
+.school-course-card { display:flex; align-items:center; gap:16px; background:var(--ivory-50); border:1px solid var(--border); border-left:4px solid var(--school-color); border-radius:10px; padding:14px 18px; text-align:left; transition:transform .15s,box-shadow .15s; cursor:pointer; }
+.school-course-card:hover { transform:translateX(2px); box-shadow:var(--shadow-sm); }
+.school-course-card>div:first-child { flex:1; min-width:0; }
+.school-course-card h3 { font-size: .9375rem; margin:0; overflow-wrap:anywhere; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .school-course-mark { width:37px; height:37px; display:grid; place-items:center; border-radius:11px; color:var(--school-color); background:var(--school-tint); font-size: 1.125rem; font-weight:700; }
 .school-course-card h3 { font-size: 1.0625rem; min-height:47px; line-height:1.4; margin:17px 0; overflow-wrap:anywhere; }
 .school-course-card>div { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 0; border-top:1px solid var(--border); }

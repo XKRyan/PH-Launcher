@@ -87,6 +87,11 @@
 }
 
 /* HTML mail preview (sandboxed iframe) and collapsible recipients */
+.mail-attach-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.mail-attach-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 9px; border: 1px dashed var(--border); background: var(--ivory-50); color: var(--ink-2); cursor: pointer; font-size: .8125rem; transition: border-color .16s, background .16s; }
+.mail-attach-button:hover { border-color: var(--green-700); background: var(--green-50); }
+.mail-attach-button svg { width: 16px; height: 16px; }
+.mail-attach-count { font-size: .75rem; color: var(--ink-3); }
 .mail-preview-frame { width: 100%; min-height: 360px; max-height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: var(--white); }
 .mail-recipient-row.mail-recipient-extra { display: none; }
 .mail-recipient-toggle { background: none; border: none; color: var(--green-800); cursor: pointer; font-size: .8125rem; padding: 4px 0; text-decoration: underline; }
