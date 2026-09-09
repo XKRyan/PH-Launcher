@@ -37,7 +37,7 @@
     return message || fallback;
   };
   const TTL = { edupage: 120000, managebac: 180000 };
-  const state = { snapshot: { edupage: null, managebac: null, preferences: {}, status: {} }, weeks: new Map(), epochs: {}, route: 'timetable', courseTab: 'courses', week: monday(), showWeekend: false, busy: new Set(), error: '', notice: '', query: '', courseSort: 'name', taskSort: 'due', showHidden: false, consent: new Set(), refreshId: 0, syncIds: { edupage: 0, managebac: 0 }, autoTimer: null };
+  const state = { snapshot: { edupage: null, managebac: null, preferences: {}, status: {} }, weeks: new Map(), epochs: {}, route: 'timetable', courseTab: 'courses', week: monday(), showWeekend: false, busy: new Set(), error: '', notice: '', query: '', courseSort: 'manual', taskSort: 'due', showHidden: false, consent: new Set(), refreshId: 0, syncIds: { edupage: 0, managebac: 0 }, autoTimer: null };
   let root;
   let modal;
   const authBlocked = new Set();
@@ -184,9 +184,11 @@
   function courses() {
     const data = state.snapshot.managebac;
     if (!data) return syncSummary('managebac') + noData('课程、成绩和作业，一处查看', '登录 ManageBac 后同步课程。成绩保留网站原始表述，不推算 GPA。', 'managebac');
-    let items = [...data.courses];
-    items.sort((a, b) => state.courseSort === 'grade' ? String(b.grade || '').localeCompare(String(a.grade || ''), 'zh-CN', { numeric: true }) || a.name.localeCompare(b.name) : a.name.localeCompare(b.name, 'zh-CN'));
-    return `${syncSummary('managebac')}<div class="school-section-head"><div><span class="section-kicker">MY COURSES</span><h2>${items.length} 门课程</h2></div><label class="school-inline-label">排序<select data-school-field="course-sort"><option value="name" ${state.courseSort === 'name' ? 'selected' : ''}>课程名称</option><option value="grade" ${state.courseSort === 'grade' ? 'selected' : ''}>总评原文</option></select></label></div><div class="school-course-grid">${items.map((course) => `<button class="school-course-card school-color-${color(course.id)}" type="button" data-school-action="course" data-id="${esc(course.id)}"><span class="school-course-mark" aria-hidden="true">${esc(course.name.slice(0, 1))}</span><h3>${esc(course.name)}</h3><div><span>总评</span><strong>${course.grade ? esc(course.grade) : '暂未读取到'}</strong></div><small>单元 · 作业 · 文件 · 日历 →</small></button>`).join('')}</div>${items.length ? '' : '<div class="school-empty"><h3>没有识别到课程</h3><p>请在 ManageBac 原网页核对课程列表。</p></div>'}${warnings(data)}`;
+    const order = Array.isArray(prefs().courseOrder) ? prefs().courseOrder : [];
+    const items = window.courseOrder
+      ? window.courseOrder.apply(data.courses, order, state.courseSort)
+      : [...data.courses].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    return `${syncSummary('managebac')}<div class="school-section-head"><div><span class="section-kicker">MY COURSES</span><h2>${items.length} 门课程</h2></div><label class="school-inline-label">排序<select data-school-field="course-sort"><option value="manual" ${state.courseSort === 'manual' ? 'selected' : ''}>自定义（拖拽）</option><option value="name" ${state.courseSort === 'name' ? 'selected' : ''}>课程名称</option><option value="grade" ${state.courseSort === 'grade' ? 'selected' : ''}>总评原文</option></select></label></div><p class="school-drag-hint">拖动课程卡片可调整顺序，顺序会保存在本机。</p><div class="school-course-grid">${items.map((course) => `<button class="school-course-card school-color-${color(course.id)}" type="button" draggable="true" data-school-drag data-school-action="course" data-id="${esc(course.id)}"><span class="school-course-grip" aria-hidden="true">⠿</span><span class="school-course-mark" aria-hidden="true">${esc(course.name.slice(0, 1))}</span><h3>${esc(course.name)}</h3><div><span>总评</span><strong>${course.grade ? esc(course.grade) : '暂未读取到'}</strong></div><small>单元 · 作业 · 文件 · 日历 →</small></button>`).join('')}</div>${items.length ? '' : '<div class="school-empty"><h3>没有识别到课程</h3><p>请在 ManageBac 原网页核对课程列表。</p></div>'}${warnings(data)}`;
   }
   function taskRows(items, compact = false) {
     return items.map((task) => {
@@ -476,6 +478,50 @@
   function normalizeRoute(route) {
     return ['timetable', 'class-timetable', 'courses'].includes(route) ? route : 'timetable';
   }
+  // Drag-to-reorder for the course list. The order is stored locally in the
+  // school preferences so it survives re-syncs, and the animation is pure CSS.
+  function bindCourseDrag() {
+    let draggingId = '';
+    const clearMarkers = () => root.querySelectorAll('.is-drop-before, .is-drop-after').forEach((node) => node.classList.remove('is-drop-before', 'is-drop-after'));
+    root.addEventListener('dragstart', (event) => {
+      const card = event.target.closest?.('[data-school-drag]');
+      if (!card) return;
+      draggingId = card.dataset.id || '';
+      card.classList.add('is-dragging');
+      if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; try { event.dataTransfer.setData('text/plain', draggingId); } catch {} }
+    });
+    root.addEventListener('dragover', (event) => {
+      const card = event.target.closest?.('[data-school-drag]');
+      if (!card || !draggingId) return;
+      event.preventDefault();
+      clearMarkers();
+      if (card.dataset.id === draggingId) return;
+      const rect = card.getBoundingClientRect();
+      card.classList.add(event.clientY > rect.top + rect.height / 2 ? 'is-drop-after' : 'is-drop-before');
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    });
+    root.addEventListener('drop', (event) => {
+      const card = event.target.closest?.('[data-school-drag]');
+      if (!card || !draggingId || card.dataset.id === draggingId) { clearMarkers(); return; }
+      event.preventDefault();
+      const rect = card.getBoundingClientRect();
+      const after = event.clientY > rect.top + rect.height / 2;
+      const current = [...root.querySelectorAll('[data-school-drag]')].map((node) => node.dataset.id);
+      const next = window.courseOrder?.move(current, draggingId, card.dataset.id, after) || current;
+      clearMarkers();
+      draggingId = '';
+      state.courseSort = 'manual';
+      // Paint the new order immediately, then persist it in the background.
+      const grid = root.querySelector('.school-course-grid');
+      if (grid) {
+        const cards = [...grid.querySelectorAll('[data-school-drag]')];
+        for (const id of next) { const node = cards.find((card) => card.dataset.id === id); if (node) grid.append(node); }
+      }
+      savePreferences({ courseOrder: next }).catch(() => { state.error = '课程顺序未能保存，下次打开会恢复默认顺序'; render(); });
+    });
+    root.addEventListener('dragend', () => { draggingId = ''; clearMarkers(); root.querySelectorAll('.is-dragging').forEach((node) => node.classList.remove('is-dragging')); });
+  }
+
   function mount() {
     if (root) return;
     root = document.getElementById('schoolPage'); if (!root) return;
@@ -491,6 +537,7 @@
       const position = event.target.selectionStart; state.query = event.target.value; render();
       const input = root.querySelector('[data-school-field="query"]'); input?.focus(); if (input && typeof position === 'number') try { input.setSelectionRange(position, position); } catch {}
     });
+    bindCourseDrag();
     setInterval(updateTimeLine, 30000);
     state.autoTimer = setInterval(() => autoRefresh(), 300000);
     document.addEventListener('visibilitychange', () => autoRefresh());
