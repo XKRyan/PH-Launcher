@@ -77,7 +77,7 @@
 .school-color-3 { --school-color:#356779; --school-tint:#e5eff2; }
 .school-color-4 { --school-color:#994e44; --school-tint:#f5e8e3; }
 .school-color-5 { --school-color:#465b97; --school-tint:#e9edf7; }
-.school-now-line { position:absolute; left:0; right:0; border-top:2px solid var(--wine-700); z-index:2; pointer-events:none; }
+.school-now-line { position:absolute; left:62px; right:0; border-top:2px solid var(--wine-700); z-index:2; pointer-events:none; }
 .school-now-line::before { content:''; display:block; width:7px; height:7px; border-radius:50%; background:var(--wine-700); margin:-4.5px 0 0 -3px; }
 .school-warnings { margin:14px 0; padding:10px 14px; color:var(--ink-2); background:var(--ivory-50); border:1px solid var(--border); border-radius:10px; font-size: 1rem; }
 .school-warnings summary { cursor:pointer; }

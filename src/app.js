@@ -235,7 +235,7 @@ function updateClock() {
   const hour = now.getHours();
   const greeting = hour < 5 ? '夜深了' : hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
   const name = state.data?.settings?.studentName?.trim();
-  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天先做哪件事？`;
+  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天过的怎么样？`;
   $('#greetingKicker').textContent = hour < 12 ? 'A CALM START' : hour < 18 ? 'KEEP THE RHYTHM' : 'A CLEAR FINISH';
 }
 
@@ -2547,6 +2547,12 @@ function handleBodyClick(event) {
 
 function bindEvents() {
   document.body.addEventListener('click', handleBodyClick);
+  // Close any dialog when clicking the gray backdrop (the dialog element itself).
+  // Use mousedown instead of click to match the standard UI pattern and avoid
+  // race conditions where the dialog opens and immediately closes.
+  document.addEventListener('mousedown', (event) => {
+    if (event.target.tagName === 'DIALOG' && event.target.open) event.target.close();
+  });
   $('#taskForm').addEventListener('submit', saveTaskFromDialog);
   $('#lessonForm').addEventListener('submit', saveLessonFromDialog);
   $('#deleteTask').addEventListener('click', () => deleteTask($('#taskId').value));

@@ -183,21 +183,6 @@
         </form>
       </section>
 
-      <section class="xinlv-card xinlv-overview">
-        <header class="xinlv-card-head"><div><span class="section-kicker">OVERVIEW</span><h3>最近的状态</h3></div></header>
-        <div class="xinlv-metrics">
-          <div class="xinlv-metric"><strong>${state.entries.length}</strong><span>累计记录</span></div>
-          <div class="xinlv-metric"><strong>${weekCount}</strong><span>最近 7 天</span></div>
-          <div class="xinlv-metric"><strong>${topMood && topMood.count ? esc(topMood.label) : '—'}</strong><span>出现最多</span></div>
-        </div>
-        <div class="xinlv-mood-bars">
-          ${counts.map((mood) => {
-            const percent = state.entries.length ? Math.round((mood.count / state.entries.length) * 100) : 0;
-            return `<div class="xinlv-mood-bar xinlv-mood-${mood.key}"><i style="--fill:${percent}%"></i><span>${esc(mood.label)}</span><b>${mood.count}</b></div>`;
-          }).join('')}
-        </div>
-      </section>
-
       <section class="xinlv-card xinlv-timeline">
         <header class="xinlv-card-head"><div><span class="section-kicker">TIMELINE</span><h3>心情时间线</h3></div><small>${state.entries.length ? '按日期从近到远' : ''}</small></header>
         ${state.loading ? '<div class="empty-row">正在读取记录…</div>' : dates.length ? dates.map((date) => `<div class="xinlv-day">
@@ -492,6 +477,7 @@
     const date = String(form.date || state.form.date);
     const intensity = INTENSITY.find((item) => item.level === Number(state.form.intensityLevel)) || INTENSITY[1];
     if (!mood) return;
+    const isEditing = Boolean(state.editingUuid);
     state.busy = true;
     state.error = '';
     render();
@@ -508,6 +494,7 @@
       await loadStatus();
       await loadEntries();
       scheduleSync();
+      if (!isEditing && mood) { state.tab = 'recommend'; state.recommend.data = null; await loadRecommend(mood); }
     } catch (error) {
       state.error = safeError(error, '保存记录失败');
     } finally {

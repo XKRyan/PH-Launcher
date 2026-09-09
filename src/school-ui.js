@@ -172,11 +172,11 @@
     const visibleDays = state.showWeekend ? days : days.slice(0, 5);
     const columnClass = state.showWeekend ? 'school-days-7' : 'school-days-5';
     const header = `<div class="school-grid-header ${columnClass}"><span class="school-zone">上海时间</span>${visibleDays.map((day, index) => `<div class="${shift(start, index) === today ? 'is-today' : ''}"><strong>${day}</strong><span>${shift(start, index).slice(5)}</span></div>`).join('')}</div>`;
-    const grid = `<div class="school-timetable-scroll"><div class="school-timetable ${columnClass}">${header}<div class="school-grid-body ${columnClass}" style="height:${height}px"><div class="school-time-axis">${labels.join('')}</div>${visibleDays.map((day, index) => {
+    const grid = `<div class="school-timetable-scroll"><div class="school-timetable ${columnClass}">${header}<div class="school-grid-body ${columnClass}" style="height:${height}px"><div class="school-time-axis">${labels.join('')}</div><div class="school-now-line" hidden aria-label="当前时间"></div>${visibleDays.map((day, index) => {
       const date = shift(start, index);
       const dayLessons = layoutDayLessons(lessons.filter((lesson) => lesson.date === date));
       const missing = data.missingDates?.includes(date);
-      return `<div class="school-day-column ${date === today ? 'is-today' : ''}" data-date="${date}" data-floor="${floor}" data-ceiling="${maxTime}">${labels.map((_, i) => `<div class="school-hour-line" style="top:${i * 60 * SCHOOL_MINUTE_HEIGHT}px"></div>`).join('')}${PHL_PERIODS.map((p) => { const top = (p.start - floor) * SCHOOL_MINUTE_HEIGHT; const bot = (p.end - floor) * SCHOOL_MINUTE_HEIGHT; return `<div class="school-period-zone school-period-${p.label === '午餐' ? 'lunch' : p.label === '晚自习' ? 'evening' : 'class'}" style="top:${top}px;height:${bot - top}px"></div>`; }).join('')}${missing ? '<p class="school-day-empty">未能同步<br>请查原网页</p>' : !dayLessons.length ? '<p class="school-day-empty">未识别到课程</p>' : ''}${dayLessons.map((lesson) => lessonButton(lesson, floor)).join('')}<div class="school-now-line" hidden aria-label="当前时间"></div></div>`;
+      return `<div class="school-day-column ${date === today ? 'is-today' : ''}" data-date="${date}" data-floor="${floor}" data-ceiling="${maxTime}">${labels.map((_, i) => `<div class="school-hour-line" style="top:${i * 60 * SCHOOL_MINUTE_HEIGHT}px"></div>`).join('')}${PHL_PERIODS.map((p) => { const top = (p.start - floor) * SCHOOL_MINUTE_HEIGHT; const bot = (p.end - floor) * SCHOOL_MINUTE_HEIGHT; return `<div class="school-period-zone school-period-${p.label === '午餐' ? 'lunch' : p.label === '晚自习' ? 'evening' : 'class'}" style="top:${top}px;height:${bot - top}px"></div>`; }).join('')}${missing ? '<p class="school-day-empty">未能同步<br>请查原网页</p>' : !dayLessons.length ? '<p class="school-day-empty">未识别到课程</p>' : ''}${dayLessons.map((lesson) => lessonButton(lesson, floor)).join('')}</div>`;
     }).join('')}</div></div></div>`;
     return toolbar + syncSummary('edupage') + selectionNotice + grid + warnings(data) + '<p class="school-footnote">点击课程可查看详情、标记重点。不同教学组使用固定颜色；临时调课与停课请以 EduPage 原网页为准。</p>';
   }
@@ -234,14 +234,16 @@
   function updateTimeLine() {
     if (!root) return;
     const now = new Date();
-    // All school times are Asia/Shanghai regardless of the device's time zone.
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).map((part) => [part.type, part.value]));
     const date = `${parts.year}-${parts.month}-${parts.day}`; const time = Number(parts.hour) * 60 + Number(parts.minute);
-    for (const column of root.querySelectorAll('.school-day-column')) {
-      const line = column.querySelector('.school-now-line'); const floor = Number(column.dataset.floor); const ceiling = Number(column.dataset.ceiling);
-      line.hidden = column.dataset.date !== date || time < floor || time > ceiling;
-      if (!line.hidden) { line.style.top = `${(time - floor) * SCHOOL_MINUTE_HEIGHT}px`; line.setAttribute('aria-label', `当前时间 ${parts.hour}:${parts.minute}`); }
-    }
+    const gridBody = root.querySelector('.school-grid-body');
+    if (!gridBody) return;
+    const line = gridBody.querySelector('.school-now-line');
+    if (!line) return;
+    const floor = Math.floor(PHL_FLOOR / 60) * 60;
+    const visible = time >= PHL_FLOOR && time <= PHL_CEILING;
+    line.hidden = !visible;
+    if (visible) { line.style.top = `${(time - floor) * SCHOOL_MINUTE_HEIGHT}px`; line.setAttribute('aria-label', `当前时间 ${parts.hour}:${parts.minute}`); }
   }
   function showDialog(title, body, footer = '') {
     if (!modal) { modal = document.createElement('dialog'); modal.className = 'modal school-dialog'; document.body.append(modal); modal.addEventListener('click', onClick); modal.addEventListener('input', onModalField); modal.addEventListener('change', onModalField); modal.addEventListener('close', () => { if (!modal.open) modal.replaceChildren(); }); }

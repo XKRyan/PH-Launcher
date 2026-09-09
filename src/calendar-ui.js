@@ -3,7 +3,7 @@
   const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
   const colors = { green: '松绿', wine: '莓红', gold: '暖金', blue: '湖蓝', purple: '紫藤', slate: '石灰' };
   const englishColors = { green: 'Pine green', wine: 'Berry red', gold: 'Warm gold', blue: 'Lake blue', purple: 'Wisteria', slate: 'Slate' };
-  const calendar = { host: null, dialog: null, events: [], dialogAttachments: [], view: 'month', anchor: noon(new Date()), selected: dateKey(new Date()), request: 0, busy: false, notice: '', error: '', languageListener: false };
+  const calendar = { host: null, dialog: null, events: [], dialogAttachments: [], view: 'week', anchor: noon(new Date()), selected: dateKey(new Date()), request: 0, busy: false, notice: '', error: '', languageListener: false };
   const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const safeColor = (value) => Object.hasOwn(colors, value) ? value : 'green';
   const english = () => window.i18n?.locale() === 'en';
