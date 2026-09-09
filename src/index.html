@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -139,20 +139,29 @@
           </div>
 
           <div class="dashboard-cards">
-            <article class="dashboard-card" data-route="timetable">
-              <div class="dashboard-card-icon green"><svg><use href="#i-calendar"/></svg></div>
-              <div class="dashboard-card-body"><span>课表</span><strong id="nextClassName">尚未添加课程</strong><small id="nextClassMeta">在"我的课表"查看学校课程</small></div>
-              <button data-route="timetable" aria-label="查看课表"><svg><use href="#i-arrow"/></svg></button>
+            <article class="dashboard-card dashboard-card-tall" data-route="timetable">
+              <div class="dashboard-card-head">
+                <div class="dashboard-card-icon green"><svg><use href="#i-calendar"/></svg></div>
+                <div class="dashboard-card-title"><span>课表</span><strong id="nextClassName">尚未添加课程</strong><small id="nextClassMeta">在"我的课表"查看学校课程</small></div>
+              </div>
+              <div class="dashboard-card-detail" id="dashboardTimetable"><p>同步 EduPage 并选择教学组后，这里会显示今天和接下来的课程。</p></div>
+              <button class="dashboard-card-open" data-route="timetable" aria-label="查看课表">打开我的课表<svg><use href="#i-arrow"/></svg></button>
             </article>
-            <article class="dashboard-card" data-route="courses">
-              <div class="dashboard-card-icon wine"><svg><use href="#i-check"/></svg></div>
-              <div class="dashboard-card-body"><span>课程与作业</span><strong id="todayTaskMetric">0 项任务</strong><small id="overdueMetric">没有逾期任务</small></div>
-              <button data-route="courses" aria-label="查看课程"><svg><use href="#i-arrow"/></svg></button>
+            <article class="dashboard-card dashboard-card-tall" data-route="courses">
+              <div class="dashboard-card-head">
+                <div class="dashboard-card-icon wine"><svg><use href="#i-check"/></svg></div>
+                <div class="dashboard-card-title"><span>课程与作业</span><strong id="todayTaskMetric">尚未同步</strong><small id="overdueMetric">来自 ManageBac 的作业与截止</small></div>
+              </div>
+              <div class="dashboard-card-detail" id="dashboardDeadlines"><p>同步 ManageBac 后，这里会列出未来 14 天的作业与截止时间。</p></div>
+              <button class="dashboard-card-open" data-route="courses" aria-label="查看课程">打开我的课程<svg><use href="#i-arrow"/></svg></button>
             </article>
-            <article class="dashboard-card" data-route="mail">
-              <div class="dashboard-card-icon gold"><svg><use href="#i-mail"/></svg></div>
-              <div class="dashboard-card-body"><span>邮箱</span><strong id="unreadMailCount">0 封未读</strong><small>收件箱与校园通知</small></div>
-              <button data-route="mail" aria-label="查看邮箱"><svg><use href="#i-arrow"/></svg></button>
+            <article class="dashboard-card dashboard-card-tall" data-route="mail">
+              <div class="dashboard-card-head">
+                <div class="dashboard-card-icon gold"><svg><use href="#i-mail"/></svg></div>
+                <div class="dashboard-card-title"><span>邮箱</span><strong id="unreadMailCount">邮箱尚未同步</strong><small>未读邮件与校园通知</small></div>
+              </div>
+              <div class="dashboard-card-detail"><p>打开邮箱即可读取最近 100 封邮件，未读数量会同步到首页。</p></div>
+              <button class="dashboard-card-open" data-route="mail" aria-label="查看邮箱">打开平和邮箱<svg><use href="#i-arrow"/></svg></button>
             </article>
           </div>
             <section class="custom-sites-dashboard">
@@ -291,6 +300,8 @@
     <script src="./calendar-ui.js"></script>
     <script src="./mail-ui.js"></script>
     <script src="./xinlv-ui.js"></script>
+    <script src="./dashboard-data.js"></script>
+    <script src="./course-order.js"></script>
     <script src="./appearance-ui.js"></script>
     <script src="./startup-ui.js"></script>
     <script src="./agent-ui.js"></script>

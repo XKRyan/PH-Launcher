@@ -371,7 +371,8 @@ function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
   const nav = $(navSelector);
   if (!badge || !nav) return;
   const count = Math.max(0, Math.floor(Number(rawCount) || 0));
-  badge.textContent = count > 99 ? '99+' : String(count);
+  // A hidden badge must not contribute text to its parent's textContent.
+  badge.textContent = count === 0 ? '' : count > 99 ? '99+' : String(count);
   badge.dataset.count = String(count);
   badge.classList.toggle('hidden', count === 0);
   nav.setAttribute('aria-label', count ? `${label}，${count} 项待处理` : label);
@@ -380,8 +381,6 @@ function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
 function updateMailBadge(count) {
   state.mailUnread = count;
   setNavCountBadge('#navMailCount', '#mailNav', '平和邮箱', count);
-  const unreadEl = $('#unreadMailCount');
-  if (unreadEl) unreadEl.textContent = `${count || 0} 封未读`;
 }
 
 function updateVocabularyBadge(payload) {
@@ -406,20 +405,7 @@ function renderDashboard() {
   if (!state.data) return;
   updateClock();
   const openTasks = state.data.tasks.filter((task) => !task.done);
-  const todayTasks = openTasks.filter((task) => isToday(task.dueAt));
-  const overdue = openTasks.filter(isOverdue);
-  $('#todayTaskMetric').textContent = `${todayTasks.length} 项待办`;
-  $('#overdueMetric').textContent = overdue.length ? `${overdue.length} 项已逾期` : '没有逾期任务';
-  $('#overdueMetric').style.color = overdue.length ? 'var(--wine-700)' : '';
-
-  const upcoming = nextLesson();
-  $('#nextClassName').textContent = upcoming?.lesson.course || '尚未添加课程';
-  $('#nextClassMeta').textContent = upcoming
-    ? `${formatCountdown(upcoming.date)} · ${upcoming.lesson.start}${upcoming.lesson.room ? ` · ${upcoming.lesson.room}` : ''}`
-    : '在“我的课表”查看学校课程';
-
-  const unreadEl = $('#unreadMailCount');
-  if (unreadEl) unreadEl.textContent = `${state.mailUnread || 0} 封未读`;
+  void window.dashboardData?.refresh();
   const count = openTasks.length;
   setNavCountBadge('#navTaskCount', '#planNav', '计划', count);
   renderCustomSites();
@@ -2865,7 +2851,13 @@ async function init() {
   window.schoolUI?.mount();
   window.calendarUI?.mount();
   window.mailUI?.mount();
-  window.mailUI?.onUnreadChange?.((count) => updateMailBadge(state.route === 'mail' ? 0 : count));
+  window.mailUI?.onUnreadChange?.((count) => {
+    // The dashboard card always shows the real unread total; the nav badge
+    // reads zero while the user is inside the mail page itself.
+    const cardEl = $('#unreadMailCount');
+    if (cardEl) cardEl.textContent = count == null ? '邮箱尚未同步' : `${count} 封未读`;
+    updateMailBadge(state.route === 'mail' ? 0 : (count || 0));
+  });
   $('#dictionaryResult').addEventListener('click', (event) => {
     if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
   });
@@ -2989,6 +2981,8 @@ async function init() {
   });
   setInterval(() => { updateClock(); refreshVocabularyBadge(); void window.mailUI?.open?.(); }, 60_000);
   setInterval(updateTimerUi, 500);
+  // Keep the home cards honest: re-project the school snapshot every minute.
+  setInterval(() => { if (state.route === 'today') void window.dashboardData?.refresh(); }, 60_000);
   document.body.dataset.initialized = 'true';
   // Splash visibility floor: hold the logo and progress bars for at least
   // 2.2s from first paint before fading into the main UI.

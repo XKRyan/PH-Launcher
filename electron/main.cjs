@@ -3042,11 +3042,21 @@ async function runSelfTest() {
     navigate('calendar');
     await window.calendarUI.refresh();
     const calendarRendered = document.querySelector('#calendarPage')?.textContent.includes('日程');
+    navigate('today');
+    await window.dashboardData?.refresh?.();
+    const dashboardCards = [...document.querySelectorAll('.dashboard-cards .dashboard-card')];
+    const dashboardRendered = dashboardCards.length === 3
+      && dashboardCards.every((card) => Boolean(card.querySelector('.dashboard-card-detail')))
+      && typeof window.dashboardData?.refresh === 'function'
+      && Boolean(document.querySelector('#dashboardTimetable')) && Boolean(document.querySelector('#dashboardDeadlines'));
     navigate('school');
     await window.schoolUI.refresh();
     const schoolRendered = Boolean(document.querySelector('#schoolPage')?.textContent.includes('EduPage'));
     const schoolNavItems = [...document.querySelectorAll('.primary-nav .nav-item')].slice(1, 6);
-    const schoolNavigation = JSON.stringify(schoolNavItems.map((item) => item.textContent.trim())) === JSON.stringify(['我的课表', '我的日程', '班级课表', '我的课程', '平和邮箱'])
+    // Read the visible label span: count badges live inside the item but are
+    // dynamic content and must not affect the navigation structure check.
+    const schoolNavLabels = schoolNavItems.map((item) => item.querySelector('span')?.textContent.trim() || item.textContent.trim());
+    const schoolNavigation = JSON.stringify(schoolNavLabels) === JSON.stringify(['我的课表', '我的日程', '班级课表', '我的课程', '平和邮箱'])
       && !document.querySelector('.primary-nav [data-site="edupage"], .primary-nav [data-site="managebac"]');
     navigate('class-timetable');
     await window.schoolUI.refresh();
@@ -3107,8 +3117,10 @@ async function runSelfTest() {
       fontPreferenceSaved,
       calendarSaved,
       calendarRendered,
+      dashboardRendered,
       schoolRendered,
       schoolNavigation,
+      schoolNavLabels,
       classTimetableRendered,
       coursesRendered,
       nativeMailRendered,

@@ -71,6 +71,7 @@
           : '<div class="mail-empty"><h3>选择一封邮件</h3><p>邮件将以纯文本显示，不加载外部图片。</p></div>';
     const compose = mail.compose ? `<div class="mail-compose-overlay" data-mail-compose-overlay><section class="mail-compose"><div class="mail-compose-head"><div><span class="section-kicker">NEW MESSAGE</span><h3>写信</h3></div><button type="button" class="mail-close-compose" data-mail-compose-close aria-label="关闭写信">×</button></div><form data-mail-compose-form><label><span>收件人</span><input name="to" type="text" required maxlength="2000" list="mailContacts" autocomplete="off" placeholder="输入邮箱地址" value="${esc(mail.draft.to)}"/></label><label><span>抄送（可选）</span><input name="cc" type="text" maxlength="2000" list="mailContacts" autocomplete="off" placeholder="多个地址用逗号分隔" value="${esc(mail.draft.cc)}"/></label><label><span>主题</span><input name="subject" type="text" required maxlength="500" placeholder="邮件主题" value="${esc(mail.draft.subject)}"/></label><label class="mail-compose-body"><span>正文</span><textarea name="text" rows="10" required maxlength="200000" placeholder="写下想说的话…">${esc(mail.draft.text)}</textarea></label><div class="mail-attach-row"><label class="mail-attach-button"><svg><use href="#i-upload"/></svg><span>添加附件</span><input type="file" name="attachments" multiple accept="*/*" data-mail-attach hidden/></label>${(mail.draft.attachFiles || []).length ? `<span class="mail-attach-count">${mail.draft.attachFiles.length} 个文件</span>` : ''}</div><p class="mail-form-error" role="alert">${esc(mail.composeError)}</p><div class="mail-compose-actions"><span>发送前会由系统再次确认。</span><button class="primary-button" type="submit"${mail.sending ? ' disabled' : ''}>${mail.sending ? '正在发送…' : '发送邮件'}</button></div></form></section></div>` : '';
     mail.root.innerHTML = `<header class="mail-page-head"><div><span class="section-kicker">SCHOOL MAIL</span><h2>平和邮箱</h2><p>最近 100 封邮件 · 只显示纯文本，不加载外部图片。</p></div><div class="mail-head-actions">${mail.needsLogin ? '<button type="button" class="primary-button" data-mail-login>账号登录</button>' : `<button type="button" class="secondary-button" data-mail-login>更换登录</button><button type="button" class="secondary-button" data-mail-refresh${mail.busy ? ' disabled' : ''}>${mail.busy ? '正在同步…' : '刷新'}</button><button type="button" class="secondary-button" data-mail-harvest${mail.harvesting ? ' disabled' : ''}>${mail.harvesting ? '正在收割…' : '收割联系人'}</button><button type="button" class="primary-button" data-mail-compose>写信</button>`}</div></header><p class="mail-status${mail.error ? ' error' : ''}" role="status">${esc(statusLine())}</p><div class="mail-layout"><aside class="mail-list-pane"><div class="mail-filter" role="group" aria-label="邮件筛选"><button type="button" data-mail-filter="all" class="${mail.filter === 'all' ? 'active' : ''}">全部 <span>${mail.items.length}</span></button><button type="button" data-mail-filter="unread" class="${mail.filter === 'unread' ? 'active' : ''}">未读 <span>${mail.items.filter((item) => item.unread).length}</span></button></div><p class="mail-contact-note">联系人来自已读取的邮件头与收割扫描（收件箱+已发送），不是全校通讯录。</p><div class="mail-list">${list}</div></aside><main class="mail-read-pane">${detail}</main></div>${compose}<datalist id="mailContacts">${mail.contacts.map((contact) => `<option value="${esc(contact.address)}">${esc(contact.name || contact.address)}</option>`).join('')}</datalist>`;
+    notifyUnread();
   }
 
   function formatBytes(value) {
@@ -279,5 +280,17 @@
     mail.error = '邮箱账号已清除，请重新登录。'; mail.notice = ''; mail.compose = false; mail.composeError = ''; mail.draft = {}; mail.needsLogin = true;
     render();
   }
-  window.mailUI = { mount, open, connect, clear };
+  const unreadListeners = new Set();
+  let lastUnread = null;
+  function notifyUnread() {
+    const count = mail.needsLogin ? null : mail.items.filter((item) => item.unread).length;
+    if (count === lastUnread) return;
+    lastUnread = count;
+    for (const listener of unreadListeners) { try { listener(count); } catch { /* listener errors must not break mail */ } }
+  }
+  window.mailUI = {
+    mount, open, connect, clear,
+    unreadCount: () => (mail.needsLogin ? null : mail.items.filter((item) => item.unread).length),
+    onUnreadChange: (listener) => { if (typeof listener === 'function') { unreadListeners.add(listener); return () => unreadListeners.delete(listener); } return () => {}; },
+  };
 })();
