@@ -235,7 +235,7 @@
     const data = state.snapshot[source];
     const page = isClassTimetable() ? { title: '班级课表', description: '查看当前账号所属班级的课程与教室安排。' } : state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
     const automatic = `<label class="school-auto-sync"><input type="checkbox" data-school-action="auto-sync" ${prefs().autoSync ? 'checked' : ''}/><span><strong>自动更新课表与课程</strong><small>${prefs().autoSync ? '已开启：仅在当前页面打开且窗口可见时检查更新。' : '默认关闭。开启前会请你确认读取范围。'}</small></span></label>`;
-    root.innerHTML = `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div><div class="school-refresh-preference">${automatic}<span>手动刷新始终可用；学校账号可在“设置 → 网站”中选择保存登录。</span></div>${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${state.route === 'courses' && data ? `<div class="school-sync-line"><span>最近同步 ${esc(stamp(data.fetchedAt))} · 内容仅在本次打开期间保留</span>${btn(state.busy.has('managebac') ? '正在同步…' : '刷新课程与作业', 'sync', `data-source="managebac" ${state.busy.has('managebac') ? 'disabled' : ''}`)}</div>` : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
+    root.innerHTML = `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div><div class="school-refresh-preference">${automatic}<span>手动刷新始终可用；学校账号可在“设置 → 网站”中选择保存登录。</span></div>${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size && !data ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${state.route === 'courses' && data ? `<div class="school-sync-line"><span>最近同步 ${esc(stamp(data.fetchedAt))} · 内容仅在本次打开期间保留</span>${btn(state.busy.has('managebac') ? '正在同步…' : '刷新课程与作业', 'sync', `data-source="managebac" ${state.busy.has('managebac') ? 'disabled' : ''}`)}</div>` : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
     if (state.error) {
       const challenge = /验证码|双重验证|额外验证/.test(state.error);
       root.querySelector('[role="alert"]')?.insertAdjacentHTML('afterend', `<div class="school-actions">${btn('修改登录账号', 'account', `data-site="${source}"`)}${challenge ? btn('完成学校验证', 'login', `data-site="${source}"`, true) : ''}</div>`);
@@ -553,8 +553,9 @@
       if (changed) { state.error = ''; state.notice = ''; }
       // Returning from a website or settings may have changed accounts, even
       // when the route is unchanged. Reconcile authoritative local epochs
-      // before rendering or starting any optional network refresh.
-      root.textContent = '正在读取本地记录…';
+      // before rendering or starting any optional network refresh. Cached data
+      // stays on screen; only an empty workspace shows the placeholder text.
+      if (!state.snapshot[activeSource()]) root.textContent = '正在读取本地记录…';
       return refresh();
     }
   }

@@ -47,6 +47,35 @@ function harness(initial, { wrongWeek = false, getResult, syncError, loginResult
   return { context, document, calls, click };
 }
 
+test('cached data renders immediately without a loading notice', async () => {
+  const weekStart = monday();
+  const snapshot = {
+    edupage: { weekStart, accountKey: 'acc-1', fetchedAt: old, options: [], missingDates: [], warnings: [], lessons: [{ id: 'l1', date: weekStart, start: '08:00', end: '08:45', course: 'Mathematics', room: 'A301', groupKey: 'g1', groups: ['A'], cancelled: false }] },
+    managebac: null,
+    preferences: { autoSync: true, accountKey: 'acc-1', groups: ['g1'] },
+    status: { edupage: { state: 'stale', updatedAt: old } },
+  };
+  const ui = harness(snapshot);
+  ui.context.window.schoolUI.mount();
+  await settle();
+  // A background refresh may still be in flight; the cached lesson must be
+  // visible and no "正在读取学校数据" banner may appear once data is shown.
+  assert.match(ui.document.querySelector('#schoolPage').textContent, /Mathematics/);
+  assert.doesNotMatch(ui.document.querySelector('#schoolPage').textContent, /正在读取学校数据/);
+  await settle();
+  assert.match(ui.document.querySelector('#schoolPage').textContent, /Mathematics/);
+  assert.doesNotMatch(ui.document.querySelector('#schoolPage').textContent, /正在读取学校数据/);
+});
+
+test('an empty workspace still explains the wait', async () => {
+  const weekStart = monday();
+  const snapshot = { edupage: null, managebac: null, preferences: {}, status: { edupage: { state: 'stale', updatedAt: old } } };
+  const ui = harness(snapshot);
+  ui.context.window.schoolUI.mount();
+  // No cached snapshot means there is nothing to show, so the notice is useful.
+  assert.match(ui.document.querySelector('#schoolPage').textContent, /先登录 EduPage|先选择你的教学组|正在读取学校数据/);
+});
+
 test('automatic school refresh is opt-in, explicitly consented, and uses non-forced sync', async () => {
   const weekStart = monday();
   const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: {}, status: { edupage: { state: 'stale', updatedAt: old } } };
