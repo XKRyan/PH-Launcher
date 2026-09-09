@@ -328,7 +328,7 @@ body.loaded .app-shell { opacity: 1; }
 .dashboard-lesson-line strong { color: var(--green-800); white-space: nowrap; }
 .dashboard-lesson-line span { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-lesson-line.is-now { background: var(--green-50); border-color: rgba(42, 114, 90, .3); }
-.dashboard-card-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink-2); font-size: .8125rem; cursor: pointer; align-self: flex-start; transition: background .18s, color .18s, border-color .18s; }
+.dashboard-card-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink-2); font-size: .8125rem; cursor: pointer; align-self: flex-start; white-space: nowrap; flex: 0 0 auto; width: auto; height: auto; transition: background .18s, color .18s, border-color .18s; }
 .dashboard-card-open svg { width: 14px; height: 14px; }
 /* Entry animations only run when an element first appears (new content),
    never on re-render of unchanged siblings. Chromium supports @starting-style. */
@@ -346,8 +346,6 @@ body.loaded .app-shell { opacity: 1; }
   dialog[open].modal { transition: opacity .2s ease, transform .2s cubic-bezier(.22,.61,.36,1), border-color .2s ease; }
   .modal::backdrop { transition: background .2s ease; }
 }
-.dashboard-card > button { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink-3); display: grid; place-items: center; flex-shrink: 0; cursor: pointer; }
-.dashboard-card > button:hover { background: var(--green-50); color: var(--green-800); border-color: var(--green-700); }
 .primary-button, .secondary-button, .ghost-button {
   display: inline-flex;
   align-items: center;

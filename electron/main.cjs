@@ -3049,6 +3049,15 @@ async function runSelfTest() {
       && dashboardCards.every((card) => Boolean(card.querySelector('.dashboard-card-detail')))
       && typeof window.dashboardData?.refresh === 'function'
       && Boolean(document.querySelector('#dashboardTimetable')) && Boolean(document.querySelector('#dashboardDeadlines'));
+    // Measure the real layout: a collapsed button wrapped its label one
+    // character per line in a 36px box, which CSS-text checks cannot catch.
+    const openButtons = [...document.querySelectorAll('.dashboard-card-open')];
+    const dashboardOpenButtons = openButtons.length === 3 && openButtons.every((button) => {
+      const box = button.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      return box.width >= 90 && box.height <= 52 && style.whiteSpace === 'nowrap'
+        && button.scrollWidth <= Math.ceil(box.width) + 1;
+    });
     navigate('school');
     await window.schoolUI.refresh();
     const schoolRendered = Boolean(document.querySelector('#schoolPage')?.textContent.includes('EduPage'));
@@ -3118,6 +3127,7 @@ async function runSelfTest() {
       calendarSaved,
       calendarRendered,
       dashboardRendered,
+      dashboardOpenButtons,
       schoolRendered,
       schoolNavigation,
       schoolNavLabels,
