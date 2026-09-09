@@ -296,17 +296,17 @@ body.loaded .app-shell { opacity: 1; }
 .hero-row p, .page-intro p { margin: 0; color: var(--ink-2); font-size: 1rem; }
 .page-intro { margin-bottom: 24px; }
 .dashboard-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
-.dashboard-card { display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .18s, transform .15s; }
+.dashboard-card { display: flex; align-items: center; gap: 16px; padding: 24px 28px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .18s, transform .15s; min-height: 100px; }
 .dashboard-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.dashboard-card-icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; flex-shrink: 0; }
+.dashboard-card-icon { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; flex-shrink: 0; }
 .dashboard-card-icon.green { background: var(--green-50); color: var(--green-800); }
 .dashboard-card-icon.wine { background: var(--wine-100); color: var(--wine-700); }
 .dashboard-card-icon.gold { background: var(--gold-100); color: #6b4f1c; }
-.dashboard-card-icon svg { width: 24px; height: 24px; }
-.dashboard-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dashboard-card-body span { font-size: .8125rem; color: var(--ink-3); }
-.dashboard-card-body strong { font-size: 1.125rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dashboard-card-body small { font-size: .75rem; color: var(--ink-3); }
+.dashboard-card-icon svg { width: 28px; height: 28px; }
+.dashboard-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dashboard-card-body span { font-size: .875rem; color: var(--ink-3); }
+.dashboard-card-body strong { font-size: 1.25rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dashboard-card-body small { font-size: .8125rem; color: var(--ink-3); }
 .dashboard-card > button { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink-3); display: grid; place-items: center; flex-shrink: 0; cursor: pointer; }
 .dashboard-card > button:hover { background: var(--green-50); color: var(--green-800); border-color: var(--green-700); }
 .primary-button, .secondary-button, .ghost-button {

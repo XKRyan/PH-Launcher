@@ -1,4 +1,4 @@
-﻿const $ = (selector, root = document) => root.querySelector(selector);
+const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const localizedConfirm = message => window.confirmAction(message);
 
@@ -69,6 +69,7 @@ const state = {
   dictionaryResult: null,
   dictionaryLoading: false,
   dictionaryRequestId: 0,
+  mailUnread: 0,
   hardware: null,
   hardwareLoading: false,
   aiDeployment: null,
@@ -377,7 +378,10 @@ function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
 }
 
 function updateMailBadge(count) {
+  state.mailUnread = count;
   setNavCountBadge('#navMailCount', '#mailNav', '平和邮箱', count);
+  const unreadEl = $('#unreadMailCount');
+  if (unreadEl) unreadEl.textContent = `${count || 0} 封未读`;
 }
 
 function updateVocabularyBadge(payload) {
@@ -404,7 +408,7 @@ function renderDashboard() {
   const openTasks = state.data.tasks.filter((task) => !task.done);
   const todayTasks = openTasks.filter((task) => isToday(task.dueAt));
   const overdue = openTasks.filter(isOverdue);
-  $('#todayTaskMetric').textContent = `${todayTasks.length} 项任务`;
+  $('#todayTaskMetric').textContent = `${todayTasks.length} 项待办`;
   $('#overdueMetric').textContent = overdue.length ? `${overdue.length} 项已逾期` : '没有逾期任务';
   $('#overdueMetric').style.color = overdue.length ? 'var(--wine-700)' : '';
 
