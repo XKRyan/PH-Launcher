@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -138,38 +138,24 @@
             <button class="primary-button" data-action="quick-task"><svg><use href="#i-plus"/></svg>添加任务</button>
           </div>
 
-          <div class="metric-grid">
-            <article class="metric-card next-class-card">
-              <div class="metric-icon green"><svg><use href="#i-calendar"/></svg></div>
-              <div><span>下一节课</span><strong id="nextClassName">尚未添加课程</strong><small id="nextClassMeta">在“我的课表”查看学校课程</small></div>
-              <button data-route="plan" aria-label="查看课程"><svg><use href="#i-arrow"/></svg></button>
+          <div class="dashboard-cards">
+            <article class="dashboard-card" data-route="timetable">
+              <div class="dashboard-card-icon green"><svg><use href="#i-calendar"/></svg></div>
+              <div class="dashboard-card-body"><span>课表</span><strong id="nextClassName">尚未添加课程</strong><small id="nextClassMeta">在"我的课表"查看学校课程</small></div>
+              <button data-route="timetable" aria-label="查看课表"><svg><use href="#i-arrow"/></svg></button>
             </article>
-            <article class="metric-card">
-              <div class="metric-icon wine"><svg><use href="#i-check"/></svg></div>
-              <div><span>今天到期</span><strong id="todayTaskMetric">0 项任务</strong><small id="overdueMetric">没有逾期任务</small></div>
-              <button data-route="plan" aria-label="查看任务"><svg><use href="#i-arrow"/></svg></button>
+            <article class="dashboard-card" data-route="courses">
+              <div class="dashboard-card-icon wine"><svg><use href="#i-check"/></svg></div>
+              <div class="dashboard-card-body"><span>课程与作业</span><strong id="todayTaskMetric">0 项任务</strong><small id="overdueMetric">没有逾期任务</small></div>
+              <button data-route="courses" aria-label="查看课程"><svg><use href="#i-arrow"/></svg></button>
             </article>
-            <article class="metric-card">
-              <div class="metric-icon gold"><svg><use href="#i-clock"/></svg></div>
-              <div><span>本周专注</span><strong id="weekFocusMetric">0 分钟</strong><small id="weekSessionMetric">从一次 25 分钟开始</small></div>
-              <button data-action="open-focus" aria-label="开始专注"><svg><use href="#i-arrow"/></svg></button>
-            </article>
-          </div>
-
-          <div class="section-heading"><div><span class="section-kicker">SCHOOL APPS</span><h3>学校应用</h3></div><span>登录状态由每个网站独立保存</span></div>
-          <div class="site-card-grid">
-            <article class="site-card mail-card" data-route="mail">
-              <div class="site-card-icon"><svg><use href="#i-mail"/></svg></div><div><span>学校邮箱</span><h4>收件箱与校园通知</h4><p>在学习桌面内阅读、保存附件和写信。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
-            </article>
-            <article class="site-card managebac-card" data-site="managebac">
-              <div class="site-card-icon"><svg><use href="#i-grid"/></svg></div><div><span>ManageBac</span><h4>课程、作业与 IB 进度</h4><p>独立登录空间，文件下载与原网站功能保留。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
-            </article>
-            <article class="site-card edupage-card" data-site="edupage">
-              <div class="site-card-icon"><svg><use href="#i-calendar"/></svg></div><div><span>EduPage</span><h4>课表与校园安排</h4><p>查看学校课程与校园安排。</p></div><button>打开<svg><use href="#i-arrow"/></svg></button>
+            <article class="dashboard-card" data-route="mail">
+              <div class="dashboard-card-icon gold"><svg><use href="#i-mail"/></svg></div>
+              <div class="dashboard-card-body"><span>邮箱</span><strong id="unreadMailCount">0 封未读</strong><small>收件箱与校园通知</small></div>
+              <button data-route="mail" aria-label="查看邮箱"><svg><use href="#i-arrow"/></svg></button>
             </article>
           </div>
-
-          <section class="custom-sites-dashboard">
+            <section class="custom-sites-dashboard">
             <div class="section-heading"><div><span class="section-kicker">MY WEBSITES</span><h3>我的网页</h3></div><button class="text-button" type="button" data-action="add-custom-site"><svg><use href="#i-plus"/></svg>添加网页</button></div>
             <div class="site-card-grid custom-site-card-grid" id="customSiteCards"></div>
           </section>

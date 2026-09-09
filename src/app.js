@@ -1,4 +1,4 @@
-const $ = (selector, root = document) => root.querySelector(selector);
+﻿const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const localizedConfirm = message => window.confirmAction(message);
 
@@ -414,21 +414,8 @@ function renderDashboard() {
     ? `${formatCountdown(upcoming.date)} · ${upcoming.lesson.start}${upcoming.lesson.room ? ` · ${upcoming.lesson.room}` : ''}`
     : '在“我的课表”查看学校课程';
 
-  const weekSessions = getWeekSessions();
-  const weekMinutes = weekSessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
-  $('#weekFocusMetric').textContent = `${weekMinutes} 分钟`;
-  $('#weekSessionMetric').textContent = weekSessions.length ? `完成 ${weekSessions.length} 次专注` : '从一次 25 分钟开始';
-
-  const dashboardTasks = [...openTasks]
-    .sort((a, b) => (a.dueAt ? new Date(a.dueAt) : Infinity) - (b.dueAt ? new Date(b.dueAt) : Infinity))
-    .slice(0, 4);
-  $('#todayTaskList').innerHTML = dashboardTasks.length
-    ? dashboardTasks.map((task) => `
-      <div class="compact-task" data-task-row="${escapeHtml(task.id)}">
-        <button class="task-check" data-toggle-task="${escapeHtml(task.id)}" aria-label="完成任务">${icon('i-check')}</button>
-        <div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject || '通用')}${task.dueAt ? ` · ${escapeHtml(formatDateTime(task.dueAt, true))}` : ''}</span></div>
-      </div>`).join('')
-    : '<div class="empty-row">今天没有待处理任务。<br/>给自己留一点从容。</div>';
+  const unreadEl = $('#unreadMailCount');
+  if (unreadEl) unreadEl.textContent = `${state.mailUnread || 0} 封未读`;
   const count = openTasks.length;
   setNavCountBadge('#navTaskCount', '#planNav', '计划', count);
   renderCustomSites();
