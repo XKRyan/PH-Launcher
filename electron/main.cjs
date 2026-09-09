@@ -111,7 +111,10 @@ const IS_HEADLESS = IS_SMOKE_TEST || IS_CAPTURE || IS_SELF_TEST || Boolean(CAPTU
 const CAPTURE_ROUTE = process.argv.find((arg) => arg.startsWith('--capture-route='))?.split('=')[1] || 'today';
 const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-variant='))?.split('=')[1] || '';
 let headlessUserData = '';
-if (IS_HEADLESS) {
+// A preview run may deliberately point at a real profile to check how cached
+// data renders; every other headless run must stay isolated.
+const CAPTURE_KEEPS_PROFILE = (IS_CAPTURE || Boolean(CAPTURE_SITE)) && process.argv.some((arg) => arg.startsWith('--user-data-dir='));
+if (IS_HEADLESS && !CAPTURE_KEEPS_PROFILE) {
   headlessUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-headless-'));
   // userData isolation does not isolate macOS Keychain: its service name is
   // based on app.name. Source and ad-hoc packaged tests must not access each
@@ -2861,7 +2864,11 @@ async function runCapture() {
   }
   if (['today', 'plan', 'notes', 'dictionary', 'vocabulary', 'school', 'timetable', 'class-timetable', 'courses', 'calendar', 'mail', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
     await mainWindow.webContents.executeJavaScript(`navigate(${JSON.stringify(CAPTURE_ROUTE)})`);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // The first-run onboarding dialog is modal and would hide every preview; it
+    // is scheduled with a timer, so wait it out before dismissing.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await mainWindow.webContents.executeJavaScript(`(() => { try { state.onboardingPending = false; } catch {} const dialog = document.getElementById('onboardingDialog'); if (dialog && dialog.open) dialog.close(); return true; })()`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
   if (CAPTURE_VARIANT === 'interface') {
     await require('./interface-visual-check.cjs').checkInterfaces(mainWindow, app.getAppPath());
@@ -3422,6 +3429,9 @@ function createWindow() {
     if (!IS_HEADLESS && !IS_CAPTURE && !CAPTURE_SITE) {
       startupMark('splash-preload-start');
       void runSplashPreload().then(() => startupMark('splash-preload-done')).catch(() => finishSplash());
+    } else if (IS_CAPTURE || CAPTURE_SITE) {
+      // Preview and site-capture runs need the app visible immediately.
+      finishSplash();
     }
     if (IS_CAPTURE) {
       runCapture().catch((error) => {

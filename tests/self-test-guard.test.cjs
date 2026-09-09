@@ -13,7 +13,10 @@ test('macOS diagnostic runs isolate real Keychain identity without changing ordi
       const calls = [];
       vm.runInNewContext(block, {
         IS_HEADLESS: headless,
-        process: { platform },
+        IS_CAPTURE: false,
+        CAPTURE_SITE: '',
+        CAPTURE_KEEPS_PROFILE: false,
+        process: { platform, argv: [] },
         fs: { mkdtempSync: () => '/tmp/ph-launcher-headless-fixture' },
         os: { tmpdir: () => '/tmp' },
         path: path.posix,
@@ -25,6 +28,24 @@ test('macOS diagnostic runs isolate real Keychain identity without changing ordi
     }
   }
   assert.doesNotMatch(block, /mock-keychain|setUsePlainTextEncryption|delete-generic-password/);
+});
+
+test('only an explicit preview run may keep a real profile', () => {
+  const block = source.slice(source.indexOf("let headlessUserData = ''"), source.indexOf('// School portals'));
+  const calls = [];
+  vm.runInNewContext(block, {
+    IS_HEADLESS: true,
+    IS_CAPTURE: true,
+    CAPTURE_SITE: '',
+    process: { platform: 'win32', argv: ['electron', '.', '--capture-ui', '--user-data-dir=/tmp/profile'] },
+    fs: { mkdtempSync: () => '/tmp/ph-launcher-headless-fixture' },
+    os: { tmpdir: () => '/tmp' },
+    path: path.posix,
+    app: { setName: (name) => calls.push(['name', name]), setPath: (...args) => calls.push(['path', ...args]) },
+  });
+  assert.equal(calls.length, 0, 'a preview with --user-data-dir keeps the requested profile');
+  assert.match(source, /const CAPTURE_KEEPS_PROFILE = \(IS_CAPTURE \|\| Boolean\(CAPTURE_SITE\)\) && process\.argv\.some\(\(arg\) => arg\.startsWith\('--user-data-dir='\)\)/,
+    'the escape hatch is limited to capture runs with an explicit profile');
 });
 
 test('self-test failures are bounded, diagnostic, and isolated from normal launches', () => {
