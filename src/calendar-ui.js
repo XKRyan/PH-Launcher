@@ -112,9 +112,12 @@
     if (calendar.busy || !/^\d{4}-\d{2}-\d{2}$/.test(key) || !supported(fromKey(key))) return;
     calendar.selected = key;
     const existing = calendar.events.find((event) => event.id === eventId);
-    const value = draft || existing || { title: '', date: key, start: '', end: '', notes: '', color: 'green', reminderMinutes: null, repeatWeekdays: [] };
+    const defaultStart = (() => { const now = new Date(); const hour = now.getHours() + (now.getMinutes() >= 30 ? 1 : 0); return `${String((hour + 1) % 24).padStart(2, '0')}:00`; })();
+    const defaultEnd = (() => { const hour = (Number(defaultStart.slice(0, 2)) + 1) % 24; return `${String(hour).padStart(2, '0')}:00`; })();
+    const value = draft || existing || { title: '', date: key, start: defaultStart, end: defaultEnd, notes: '', color: 'green', reminderMinutes: null, repeatWeekdays: [] };
     const editing = Boolean(eventId);
-    const allDay = draft ? draft.allDay : !value.start;
+    // New events default to a timed slot; all-day stays an explicit choice.
+    const allDay = draft ? draft.allDay : Boolean(existing) && !value.start;
     const reminder = draft ? String(draft.reminderMinutes) : String(value.reminderMinutes ?? '');
     const items = eventsFor(key);
     const dialog = calendar.dialog;
