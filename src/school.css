@@ -50,10 +50,15 @@
 .school-grid-body { display:grid; margin-top:14px; }
 .school-time-axis,.school-day-column { position:relative; }
 .school-time-axis { color:var(--ink-3); }
-.school-axis-time { position:absolute; width:100%; text-align:center; font-size: 0.9375rem; font-variant-numeric:tabular-nums; transform:translateY(-7px); }
+.school-axis-time { position:absolute; width:100%; text-align:center; font-size: 0.9375rem; font-variant-numeric:tabular-nums; transform:translateY(-7px); display:flex; flex-direction:column; align-items:center; }
+.school-axis-time small { font-size:.75rem; color:var(--ink-3); }
 .school-day-column { border-left:1px solid var(--border); }
 .school-day-column.is-today { background:color-mix(in srgb,var(--gold-100) 22%,transparent); }
-.school-hour-line { position:absolute; left:0; right:0; border-top:1px solid var(--border); }
+.school-period-zone { position:absolute; left:0; right:0; border-radius:6px; pointer-events:none; }
+.school-period-zone.school-period-class { background: rgba(42, 114, 90, .03); }
+.school-period-zone.school-period-lunch { background: rgba(197, 160, 90, .06); }
+.school-period-zone.school-period-evening { background: rgba(91, 91, 214, .04); }
+.school-hour-line { position:absolute; left:0; right:0; border-top:1px dashed rgba(24,35,30,.06); }
 .school-day-empty { color:var(--ink-3); text-align:center; font-size: 0.9375rem; margin:30px 4px; line-height:1.8; }
 .school-lesson { position:absolute; display:flex; flex-direction:column; align-items:flex-start; padding:6px 8px; border-radius:9px; text-align:left; gap:2px; border-left:4px solid var(--school-color); background:var(--school-tint); color:var(--school-color); min-width:0; overflow:hidden; box-shadow:0 2px 4px #18231e06; transition:filter .15s,box-shadow .15s; }
 .school-lesson:hover { filter:brightness(.98); box-shadow:0 3px 9px #18231e17; z-index:2; }

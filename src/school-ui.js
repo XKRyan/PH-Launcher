@@ -5,6 +5,21 @@
   // Short lessons still need room for their course, room and teacher at the
   // largest supported display size. Keep the timeline and cards on one scale.
   const SCHOOL_MINUTE_HEIGHT = 4.8;
+  // PHL period schedule: each period maps to its start/end in minutes.
+  const PHL_PERIODS = [
+    { label: 'P1', start: 8 * 60, end: 8 * 60 + 45 },
+    { label: 'P2', start: 8 * 60 + 55, end: 9 * 60 + 40 },
+    { label: 'P3', start: 9 * 60 + 50, end: 10 * 60 + 35 },
+    { label: 'P4', start: 10 * 60 + 45, end: 11 * 60 + 30 },
+    { label: '午餐', start: 11 * 60 + 45, end: 12 * 60 + 45 },
+    { label: 'P5', start: 12 * 60 + 55, end: 13 * 60 + 40 },
+    { label: 'P6', start: 13 * 60 + 50, end: 14 * 60 + 35 },
+    { label: 'P7', start: 14 * 60 + 45, end: 15 * 60 + 30 },
+    { label: 'P8', start: 15 * 60 + 45, end: 16 * 60 + 30 },
+    { label: '晚自习', start: 18 * 60, end: 20 * 60 + 30 },
+  ];
+  const PHL_FLOOR = PHL_PERIODS[0].start; // 08:00
+  const PHL_CEILING = PHL_PERIODS[PHL_PERIODS.length - 1].end; // 20:30
   const localDate = (date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
   const shift = (date, amount) => new Date(Date.parse(`${date}T12:00:00Z`) + amount * 86400000).toISOString().slice(0, 10);
   const monday = () => { const date = localDate(); return shift(date, -(new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7); };
@@ -145,12 +160,14 @@
       const configured = Array.isArray(selected);
       return toolbar + syncSummary('edupage') + `<div class="school-selection-empty"><span class="school-empty-symbol" aria-hidden="true">✓</span><h3>${configured ? '当前没有选择教学组' : '先选择你的教学组'}</h3><p>${configured ? '个人课表保持为空，不会用班级课程代替。' : '班级课表包含所有可选课程。请按科目搜索并勾选你实际参加的教学组，系统不会替你猜测。'}</p>${btn(configured ? '重新选择教学组' : '开始选择教学组', 'groups', '', true)}</div>` + warnings(data);
     }
-    const minTime = Math.min(8 * 60, ...lessons.map((lesson) => minutes(lesson.start)));
-    const maxTime = Math.max(17 * 60, ...lessons.map((lesson) => minutes(lesson.end)));
+    const minTime = Math.min(PHL_FLOOR, ...lessons.map((lesson) => minutes(lesson.start)));
+    const maxTime = Math.max(PHL_CEILING, ...lessons.map((lesson) => minutes(lesson.end)));
     const floor = Math.floor(minTime / 60) * 60;
     const height = (maxTime - floor + 15) * SCHOOL_MINUTE_HEIGHT;
     const labels = [];
-    for (let value = floor; value <= maxTime; value += 60) labels.push(`<span class="school-axis-time" style="top:${(value - floor) * SCHOOL_MINUTE_HEIGHT}px">${timeLabel(value)}</span>`);
+    for (const period of PHL_PERIODS) {
+      if (period.end <= maxTime + 60) labels.push(`<span class="school-axis-time" style="top:${(period.start - floor) * SCHOOL_MINUTE_HEIGHT}px">${esc(period.label)}<small>${timeLabel(period.start)}–${timeLabel(period.end)}</small></span>`);
+    }
     const today = localDate();
     const visibleDays = state.showWeekend ? days : days.slice(0, 5);
     const columnClass = state.showWeekend ? 'school-days-7' : 'school-days-5';
@@ -159,7 +176,7 @@
       const date = shift(start, index);
       const dayLessons = layoutDayLessons(lessons.filter((lesson) => lesson.date === date));
       const missing = data.missingDates?.includes(date);
-      return `<div class="school-day-column ${date === today ? 'is-today' : ''}" data-date="${date}" data-floor="${floor}" data-ceiling="${maxTime}">${labels.map((_, i) => `<div class="school-hour-line" style="top:${i * 60 * SCHOOL_MINUTE_HEIGHT}px"></div>`).join('')}${missing ? '<p class="school-day-empty">未能同步<br>请查原网页</p>' : !dayLessons.length ? '<p class="school-day-empty">未识别到课程</p>' : ''}${dayLessons.map((lesson) => lessonButton(lesson, floor)).join('')}<div class="school-now-line" hidden aria-label="当前时间"></div></div>`;
+      return `<div class="school-day-column ${date === today ? 'is-today' : ''}" data-date="${date}" data-floor="${floor}" data-ceiling="${maxTime}">${labels.map((_, i) => `<div class="school-hour-line" style="top:${i * 60 * SCHOOL_MINUTE_HEIGHT}px"></div>`).join('')}${PHL_PERIODS.map((p) => { const top = (p.start - floor) * SCHOOL_MINUTE_HEIGHT; const bot = (p.end - floor) * SCHOOL_MINUTE_HEIGHT; return `<div class="school-period-zone school-period-${p.label === '午餐' ? 'lunch' : p.label === '晚自习' ? 'evening' : 'class'}" style="top:${top}px;height:${bot - top}px"></div>`; }).join('')}${missing ? '<p class="school-day-empty">未能同步<br>请查原网页</p>' : !dayLessons.length ? '<p class="school-day-empty">未识别到课程</p>' : ''}${dayLessons.map((lesson) => lessonButton(lesson, floor)).join('')}<div class="school-now-line" hidden aria-label="当前时间"></div></div>`;
     }).join('')}</div></div></div>`;
     return toolbar + syncSummary('edupage') + selectionNotice + grid + warnings(data) + '<p class="school-footnote">点击课程可查看详情、标记重点。不同教学组使用固定颜色；临时调课与停课请以 EduPage 原网页为准。</p>';
   }
