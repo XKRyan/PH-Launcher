@@ -538,6 +538,18 @@ function selfTestStage(stage) {
   if (IS_SELF_TEST) console.log(`SELF_TEST_STAGE ${stage}`);
 }
 
+// Startup timing: written only with --debug-log so normal launches stay clean.
+const PROCESS_STARTED_AT = Date.now();
+const IS_DEBUG_LOG = process.argv.includes('--debug-log');
+function startupMark(stage) {
+  if (!IS_DEBUG_LOG) return;
+  try {
+    const file = path.join(app.getPath('userData'), 'logs', 'startup.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${JSON.stringify({ stage, ms: Date.now() - PROCESS_STARTED_AT })}\n`);
+  } catch { /* timing must never break startup */ }
+}
+
 function failSelfTest(error) {
   if (!IS_SELF_TEST || selfTestSettled) return;
   selfTestSettled = true;
@@ -3182,7 +3194,9 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     ...(applicationIcon ? { icon: applicationIcon } : {}),
-    show: IS_CAPTURE || CAPTURE_SITE ? true : !IS_HEADLESS,
+    // The window is shown as soon as the splash has painted (ready-to-show),
+    // so the user never stares at an empty frame while services start.
+    show: IS_CAPTURE || CAPTURE_SITE ? true : false,
     backgroundColor: theme.paper,
     title: 'PH Launcher',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
@@ -3224,12 +3238,32 @@ function createWindow() {
   });
   mainWindow.webContents.on('did-fail-load', (_event, code, description, _validatedUrl, isMainFrame) => {
     if (IS_SELF_TEST && isMainFrame) failSelfTest(new Error(`main renderer load failed (${code}): ${description || 'unknown'}`));
+    // A transient load failure must not leave a blank window on screen: retry
+    // once, then surface the window so the user sees an actionable state.
+    if (isMainFrame && code !== -3 && !mainWindow.isDestroyed()) {
+      startupMark(`load-failed-${code}`);
+      setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html')).catch(() => {}); }, 250);
+      mainWindow.show();
+    }
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     if (IS_SELF_TEST) failSelfTest(new Error(`main renderer crashed: ${details?.reason || 'unknown'}`));
   });
+  // Show the window on the first paint of the splash screen. The fallback
+  // guarantees a visible window even if that event never arrives.
+  mainWindow.once('ready-to-show', () => {
+    startupMark('ready-to-show');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+  });
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !IS_HEADLESS) {
+      startupMark('window-show-fallback');
+      mainWindow.show();
+    }
+  }, 1200);
   mainWindow.webContents.on('did-finish-load', () => {
     selfTestStage('ui-loaded');
+    startupMark('ui-loaded');
     sendToRenderer('app:ready', { sites: SITES, shortcuts: DEFAULT_SHORTCUTS });
     if (IS_CAPTURE) {
       runCapture().catch((error) => {
@@ -3250,21 +3284,40 @@ function createWindow() {
       });
     }
   });
-  // Clear the HTTP + V8 code caches before loading (they hold stale
-  // bytecode of previous builds). The cache APIs can hang in some
-  // environments, so a 1.5s cap guarantees the window always loads; a
-  // single loadFile is used — double-loading aborts the first request.
-  const appSession = mainWindow.webContents.session;
-  const cacheClear = Promise.all([
-    appSession.clearCache().catch(() => {}),
-    typeof appSession.clearCodeCache === 'function' ? appSession.clearCodeCache().catch(() => {}) : Promise.resolve(),
-  ]);
-  Promise.race([cacheClear, new Promise((resolve) => setTimeout(resolve, 1500))])
-    .catch(() => {})
-    .finally(() => {
+  // Load the splash page immediately: waiting for a cache sweep delayed the
+  // first paint by up to 1.5s and left the user looking at an empty window.
+  // Stale HTTP/V8 bytecode is cleared right after the window is visible, and
+  // only when the build changed (see clearRendererCachesAfterStartup).
+  startupMark('loadfile-called');
+  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html')).catch(() => {});
+  scheduleRendererCacheSweep();
+}
+
+// Caches hold bytecode of the previous build. Sweeping them on every launch
+// slowed startup and raced with the first load, which showed up as a randomly
+// blank window. Sweep once per build version, after the UI is already visible.
+function scheduleRendererCacheSweep() {
+  if (IS_HEADLESS) return;
+  try {
+    const markerPath = path.join(app.getPath('userData'), 'renderer-cache-version');
+    const stamp = (() => { try { return fs.statSync(path.join(__dirname, 'main.cjs')).mtimeMs; } catch { return 0; } })();
+    const version = `${app.getVersion()}-${app.isPackaged ? 'packaged' : 'dev'}-${stamp}`;
+    let previous = '';
+    try { previous = fs.readFileSync(markerPath, 'utf8').trim(); } catch { /* first run */ }
+    if (previous === version) { startupMark('cache-sweep-skipped'); return; }
+    setTimeout(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html')).catch(() => {});
-    });
+      startupMark('cache-sweep-start');
+      const appSession = mainWindow.webContents.session;
+      Promise.all([
+        appSession.clearCache().catch(() => {}),
+        typeof appSession.clearCodeCache === 'function' ? appSession.clearCodeCache().catch(() => {}) : Promise.resolve(),
+      ]).then(() => {
+        try { fs.writeFileSync(markerPath, version, { encoding: 'utf8', mode: 0o600 }); } catch { /* best effort */ }
+        startupMark('cache-sweep-done');
+      });
+    }, 4000);
+  } catch { /* cache sweeping is an optimisation and must never block startup */ }
 }
 
 // Headless checks use a temporary profile and must not be blocked by a student
@@ -3282,10 +3335,12 @@ if (!gotLock) {
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.whenReady().then(() => {
   selfTestStage('app-ready');
+  startupMark('app-ready');
   armSelfTestTimeout();
   secureStore = new SecureStore(path.join(app.getPath('userData'), 'ph-launcher.secure'));
   secureStore.load();
   selfTestStage('store-ready');
+  startupMark('store-ready');
   credentialVault = new CredentialVault({
     filePath: path.join(app.getPath('userData'), 'ph-launcher.credentials'),
     safeStorage,
@@ -3355,9 +3410,12 @@ app.whenReady().then(() => {
     },
     emit: (deployment) => sendToRenderer('ai:deployment-state', deployment),
   });
+  startupMark('services-ready');
   configureApplicationMenu();
   registerIpc();
+  startupMark('ipc-ready');
   createWindow();
+  startupMark('window-created');
   if (!IS_HEADLESS) {
     reminderWindows = createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow: () => mainWindow,
       getAppearance: () => secureStore.data.settings.appearance, getLanguage: () => secureStore.data.settings.language,
