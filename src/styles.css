@@ -296,7 +296,15 @@ body.loaded .app-shell { opacity: 1; }
 .hero-row p, .page-intro p { margin: 0; color: var(--ink-2); font-size: 1rem; }
 .page-intro { margin-bottom: 24px; }
 .dashboard-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 24px; }
-.dashboard-card { display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .18s, transform .15s, border-color .18s; min-height: 240px; position: relative; overflow: hidden; }
+.dashboard-card { display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .18s, transform .18s cubic-bezier(.22,.61,.36,1), border-color .18s, opacity .3s ease; min-height: 240px; position: relative; overflow: hidden; }
+/* Cards rise into place when the page appears, with a small stagger. The cards
+   are static markup, so this plays on page entry, not on data refreshes. */
+@keyframes dashboardCardIn { from { opacity: 0; transform: translateY(12px); } }
+@media (prefers-reduced-motion: no-preference) {
+  .dashboard-card { animation: dashboardCardIn .34s cubic-bezier(.22,.61,.36,1) backwards; }
+  .dashboard-card:nth-child(2) { animation-delay: .06s; }
+  .dashboard-card:nth-child(3) { animation-delay: .12s; }
+}
 .dashboard-card:hover { box-shadow: var(--shadow-md); transform: translateY(-3px); border-color: rgba(31, 90, 70, .25); }
 .dashboard-card:hover .dashboard-card-icon { transform: scale(1.08) rotate(-3deg); }
 .dashboard-card:hover .dashboard-card-open { background: var(--green-800); color: var(--ivory-50); border-color: var(--green-800); }
