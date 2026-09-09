@@ -53,11 +53,21 @@ function harness({ snapshot, unread = 3, failSnapshot = false } = {}) {
     + '<strong id="unreadMailCount"></strong>'
     + '<div id="dashboardDeadlines"></div><div id="dashboardTimetable"></div>'
     + '</main></body></html>');
-  window.ph = { school: { get: async () => { if (failSnapshot) throw new Error('boom'); return snapshot; } } };
+  const calls = { get: [] };
+  window.ph = { school: { get: async (options) => { calls.get.push(options); if (failSnapshot) throw new Error('boom'); return snapshot; } } };
   window.mailUI = { unreadCount: () => unread };
   vm.runInNewContext(source, { window, document: window.document, console, setTimeout, clearTimeout, Promise, Date, Number, Object, Array, String, Math, RegExp, JSON, Map, Set, Intl });
-  return { window, document: window.document };
+  return { window, document: window.document, calls };
 }
+
+test('the dashboard asks for the current week instead of an empty snapshot', async () => {
+  const ui = harness({ snapshot: schoolSnapshot() });
+  await ui.window.dashboardData.refresh();
+  await settle();
+  assert.equal(ui.calls.get.length, 1);
+  assert.match(ui.calls.get[0].weekStart, /^\d{4}-\d{2}-\d{2}$/, 'a concrete week is requested');
+  assert.equal(new Date(`${ui.calls.get[0].weekStart}T12:00:00Z`).getUTCDay(), 1, 'and it is a Monday');
+});
 
 test('dashboard fills timetable card with today lessons and marks the ongoing class', async () => {
   const ui = harness({ snapshot: schoolSnapshot() });

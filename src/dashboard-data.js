@@ -31,12 +31,21 @@
     const node = document.getElementById(id);
     if (node && node.textContent !== value) node.textContent = value;
   };
+  // The main process only returns the week it last selected, so ask for this
+  // week explicitly; otherwise the home cards stay empty until the timetable
+  // page has been opened once.
+  function currentWeekStart(now = Date.now()) {
+    const key = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(now));
+    const date = new Date(`${key}T12:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+    return date.toISOString().slice(0, 10);
+  }
   async function refresh() {
     if (!window.ph?.school?.get) return;
     const id = ++request;
     try {
       const now = Date.now();
-      const snapshot = await window.ph.school.get({});
+      const snapshot = await window.ph.school.get({ weekStart: currentWeekStart(now) });
       if (id !== request) return;
       const view = project(snapshot, now);
       set('nextClassName', view.current ? `正在上课：${view.current.course}` : '当前没有课程');
@@ -63,5 +72,5 @@
       set('nextClassMeta', '暂时无法读取已同步数据，请稍后重试');
     }
   }
-  window.dashboardData = {project, refresh};
+  window.dashboardData = {project, refresh, currentWeekStart};
 })();
