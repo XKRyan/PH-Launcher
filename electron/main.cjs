@@ -2991,6 +2991,35 @@ async function runCapture() {
     })()`);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  if (CAPTURE_ROUTE === 'timetable' && CAPTURE_VARIANT === 'groups') {
+    // Seed a realistic week so the picker has subjects with several groups.
+    const fixtureWeek = await mainWindow.webContents.executeJavaScript("(() => { const p=Object.fromEntries(new Intl.DateTimeFormat('en',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(p=>[p.type,p.value])); const d=new Date(Date.UTC(+p.year,+p.month-1,+p.day)); d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7); return d.toISOString().slice(0,10); })()");
+    const fixtureOptions = [
+      { course: 'Mathematics', teacher: 'Ms Chen', groups: ['A'], rooms: ['A301'], times: [`${fixtureWeek} 08:00–08:45`] },
+      { course: 'Mathematics', teacher: 'Mr Liu', groups: ['B'], rooms: ['B202'], times: [`${fixtureWeek} 09:00–09:45`] },
+      { course: 'English Native', teacher: 'Ms Patel', groups: ['N'], rooms: ['C101'], times: [`${fixtureWeek} 10:00–10:45`] },
+      { course: 'Chinese B', teacher: '王老师', groups: ['1'], rooms: ['D204'], times: [`${fixtureWeek} 11:00–11:45`] },
+      { course: '班会', teacher: '李老师', groups: ['H'], rooms: ['A101'], times: [`${fixtureWeek} 13:00–13:40`] },
+    ].map((option, index) => ({ key: `fixture-group-${index}`, ...option, label: [option.course, option.groups.join(' / '), option.teacher].filter(Boolean).join(' · ') }));
+    // Drop any in-flight renderer sync so the fixture is not swallowed by it.
+    schoolState.invalidate('edupage');
+    await schoolState.sync('edupage', { weekStart: fixtureWeek }, async () => ({
+      source: 'edupage', accountKey: 'visual-fixture', weekStart: fixtureWeek, fetchedAt: new Date().toISOString(),
+      className: '示例班级', missingDates: [], warnings: [], options: fixtureOptions,
+      lessons: fixtureOptions.map((option, index) => ({ id: `fixture-lesson-${index}`, groupKey: option.key, date: fixtureWeek, start: option.times[0].slice(-11, -6), end: option.times[0].slice(-5), course: option.course, room: option.rooms[0], teacher: option.teacher, groups: option.groups, cancelled: false })),
+    }));
+    await mainWindow.webContents.executeJavaScript(`(() => { try { void window.schoolUI?.open?.('timetable')?.catch?.(() => {}); } catch {} return true; })()`);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const trigger = document.querySelector('[data-school-action="groups"]');
+      if (trigger) trigger.click();
+      else return false;
+      const first = document.querySelector('[data-school-subject-group]');
+      if (first) first.setAttribute('open', '');
+      return true;
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
   if (CAPTURE_ROUTE === 'settings' && ['websites', 'custom-site', 'school-account'].includes(CAPTURE_VARIANT)) {
     await mainWindow.webContents.executeJavaScript(`(async () => {
       state.data.settings.customSites = [{
