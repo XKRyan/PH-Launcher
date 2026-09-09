@@ -520,6 +520,9 @@ class SchoolMailClient {
     return this._withInbox(async (client, context) => {
       const message = await client.fetchOne(normalizedUid, {
         size: true,
+        // FLAGS must be requested explicitly; relying on unsolicited data left
+        // message.flags undefined, which skipped the server-side \Seen write.
+        flags: true,
         source: { start: 0, maxLength: MAX_RAW_MESSAGE_BYTES + 1 },
       }, { uid: true });
       if (!message || !message.source) fail('NOT_FOUND', '邮件不存在或已被移动');
@@ -535,18 +538,29 @@ class SchoolMailClient {
         fail('PARSE_FAILED', '邮件内容无法解析');
       }
       this._assertCurrent(context);
-      if (markSeen && message.flags instanceof Set && !message.flags.has('\\Seen')) {
-        // Opening a mail marks it read server-side (best effort); the
-        // renderer also flips its local list entry so the dot disappears
-        // immediately without waiting for the next sync.
-        try { await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true }); } catch { /* best-effort */ }
+      let markedSeen = false;
+      let markSeenError = '';
+      if (markSeen) {
+        const alreadySeen = message.flags instanceof Set && message.flags.has('\\Seen');
+        if (alreadySeen) markedSeen = true;
+        else {
+          // STORE +FLAGS is idempotent, so a failure here is reported instead of
+          // being swallowed: a silent miss is exactly why mail stayed unread on
+          // the server and in the web client.
+          try {
+            await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true });
+            markedSeen = true;
+          } catch (error) {
+            markSeenError = String(error?.message || '无法在服务器标记为已读');
+          }
+        }
       }
-      return { parsed: parsed || {}, context, uid: normalizedUid };
+      return { parsed: parsed || {}, context, uid: normalizedUid, markedSeen, markSeenError };
     }, { readOnly: !markSeen });
   }
 
   async read(uid) {
-    const { parsed, context, uid: normalizedUid } = await this._parsedMessage(uid, { markSeen: true });
+    const { parsed, context, uid: normalizedUid, markedSeen, markSeenError } = await this._parsedMessage(uid, { markSeen: true });
     const from = uniqueAddresses(parsed.from);
     const to = uniqueAddresses(parsed.to);
     const cc = uniqueAddresses(parsed.cc);
@@ -582,6 +596,8 @@ class SchoolMailClient {
       links: links.map(({ id, label, host }) => ({ id, label, host })),
       attachments: attachments.map(({ id, name, size }) => ({ id, name, size })),
       contactCandidates,
+      markedSeen,
+      markSeenError,
     };
   }
 

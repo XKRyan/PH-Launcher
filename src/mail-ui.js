@@ -158,12 +158,18 @@
       if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;
       if (!detail || detail.uid !== uid) throw new Error('邮件内容不可用');
       mail.detail = detail;
-      // The main process marked the message \Seen server-side; flip the
-      // local list entry immediately so the bold text and dot disappear
-      // without waiting for the next sync.
       mail.recipientsExpanded = false;
       const listItem = mail.items.find((entry) => String(entry.uid) === String(uid));
-      if (listItem && listItem.unread) { listItem.unread = false; render(); }
+      if (detail.markSeenError) {
+        // The server refused the \Seen write: keep the mail visibly unread so
+        // the list never disagrees with the web client.
+        mail.notice = `这封邮件未能在服务器标记为已读：${detail.markSeenError}`;
+        if (listItem && !listItem.unread) listItem.unread = true;
+      } else if (listItem && listItem.unread) {
+        // Marked read server-side; flip the local entry immediately.
+        listItem.unread = false;
+      }
+      render();
     } catch (error) {
       if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;
       mail.detailError = safeError(error, '无法读取这封邮件');

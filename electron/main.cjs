@@ -881,6 +881,9 @@ function updateSchoolPreferences(input) {
   }
   if (Array.isArray(input.highlights)) next.highlights = input.highlights.filter((x) => typeof x === 'string' && /^[a-f0-9]{20}$/.test(x)).slice(0, 200);
   if (Array.isArray(input.hiddenTasks)) next.hiddenTasks = input.hiddenTasks.filter((x) => typeof x === 'string' && x.length < 100).slice(0, 1000);
+  // Manual course order from drag-and-drop; unknown ids are kept so a course
+  // that is temporarily missing from a sync can still keep its position.
+  if (Array.isArray(input.courseOrder)) next.courseOrder = input.courseOrder.filter((x) => typeof x === 'string' && x.length < 120).slice(0, 500);
   secureStore.data.settings.schoolPreferences = next;
   try { secureStore.save(); } catch (error) { secureStore.data.settings.schoolPreferences = old; throw error; }
   scheduleReminderTick();

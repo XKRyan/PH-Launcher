@@ -119,11 +119,14 @@ class FakeImap {
     const source = this.state.sources.get(String(uid));
     if (!source && !message) return false;
     const size = this.state.reportedSizes.get(String(uid)) ?? source?.length ?? 0;
-    return { uid: Number(uid), size, source, envelope: message?.envelope || null, flags: message?.flags || new Set() };
+    // Real servers may omit FLAGS from a FETCH BODY[] response entirely.
+    const flags = this.state.omitFetchFlags ? undefined : (message?.flags || new Set());
+    return { uid: Number(uid), size, source, envelope: message?.envelope || null, flags };
   }
 
   async messageFlagsAdd(range, flags, options) {
     this.state.messageFlagsAddCalls.push({ range, flags, options });
+    if (this.state.flagError) throw new Error(this.state.flagError);
     return true;
   }
 }
@@ -139,6 +142,8 @@ function createHarness(overrides = {}) {
     searchResults: null,
     fetchAllCalls: [],
     messageFlagsAddCalls: [],
+    omitFetchFlags: overrides.omitFetchFlags === true,
+    flagError: overrides.flagError || '',
     listMailboxes: [
       { path: 'INBOX', name: 'INBOX', specialUse: '' },
       { path: '&XfJT0ZAB-', name: '已发送', specialUse: '\\Sent' },
@@ -276,6 +281,25 @@ test('read parses local MIME, does not mark seen, and returns bounded Buffer att
   assert.equal(state.imaps[0].fetchOneCalls[0].query.source.maxLength, MAX_RAW_MESSAGE_BYTES + 1);
   assert.equal(state.imaps[0].lockOptions[0].readOnly, false, 'read opens the mailbox read-write so \\Seen can be stored');
   assert.deepEqual(state.imaps[0].state.messageFlagsAddCalls.map((entry) => entry.flags), [['\\Seen']], 'opening a mail stores \\Seen server-side');
+  assert.equal(state.imaps[0].fetchOneCalls[0].query.flags, true, 'FLAGS must be requested explicitly or the server-side mark is skipped');
+  assert.equal(mail.markedSeen, true);
+  assert.equal(mail.markSeenError, '');
+});
+
+test('a server that omits FLAGS still gets an explicit \\Seen store', async () => {
+  const { client, state } = createHarness({ omitFetchFlags: true });
+  const mail = await client.read('101');
+  assert.equal(state.imaps[0].state.messageFlagsAddCalls.length, 1, 'missing FLAGS must not skip the store');
+  assert.equal(mail.markedSeen, true);
+  assert.equal(mail.markSeenError, '');
+});
+
+test('a rejected \\Seen store is reported instead of silently ignored', async () => {
+  const { client } = createHarness({ flagError: 'IMAP STORE rejected' });
+  const mail = await client.read('101');
+  assert.equal(mail.markedSeen, false);
+  assert.match(mail.markSeenError, /STORE rejected/);
+  assert.ok(mail.text.length > 0, 'the mail body is still delivered');
 });
 
 test('HTML-only messages become inert text without remote resources or scripts', async () => {
