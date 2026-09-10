@@ -277,13 +277,16 @@ PHL 1.0.7 及更早把数据放在 Electron profile 目录(`%APPDATA%\ph-launche
 |---|---|
 | 数据根解析、目录布局、迁移 | `electron/data-layout.cjs` |
 | `settings.yaml` 块级读写 | `electron/settings-yaml.cjs` |
+| 账号字段映射与导入/写出计划 | `electron/shared-accounts.cjs` |
 | `Schedule` 读写与字段映射 | `electron/shared-schedule.cjs` |
+| 日历与共享日程的同步计划 | `electron/shared-calendar-bridge.cjs` |
 | `agent/` 会话镜像与删除保护 | `electron/shared-sessions.cjs`、`electron/ai-history.cjs` |
 | PHL 私有存储 | `electron/main.cjs`(`SecureStore`)、`electron/school-store.cjs`、`electron/credential-vault.cjs` |
 | 数据位置设置界面 | `src/index.html`、`src/app.js`(`renderDataChoice`)、`electron/preload.cjs` |
 
 对应测试:`tests/data-layout.test.cjs`、`tests/settings-yaml.test.cjs`、
-`tests/shared-schedule.test.cjs`、`tests/shared-sessions.test.cjs`、
+`tests/shared-accounts.test.cjs`、`tests/shared-schedule.test.cjs`、
+`tests/shared-calendar-bridge.test.cjs`、`tests/shared-sessions.test.cjs`、
 `tests/ai-history.test.cjs`。
 
 ---
