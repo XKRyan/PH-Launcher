@@ -2000,7 +2000,12 @@ async function executeAiEffect(action) {
   }
   if (action?.type === 'submit-task') {
     assertSchoolSessionReady('managebac');
-    const bytes = await fs.promises.readFile(action.path);
+    // Re-resolve the file inside the workspace: the path could have been replaced
+    // by a link between the confirmation card and this click.
+    const target = require('./ai-workspace-tools.cjs').resolveInside(action.root, path.relative(action.root, action.path));
+    const stat = await fs.promises.stat(target);
+    if (!stat.isFile() || !stat.size || stat.size > 24 * 1024 * 1024) throw new Error('要提交的文件已不符合要求，请重新生成清单');
+    const bytes = await fs.promises.readFile(target);
     await schoolClient.submitTaskFile(action.courseId, action.taskId, { bytes, filename: action.filename });
     return { ok: true, message: `已提交 ${action.relative}，请到 ManageBac 网页确认是否收到` };
   }
@@ -2556,6 +2561,71 @@ async function createEduPageImportProposal() {
   };
 }
 
+const sharedScheduleApi = require('./shared-schedule.cjs');
+const sharedCalendarBridge = require('./shared-calendar-bridge.cjs');
+
+function sharedScheduleFile() { return dataRoot().schedule; }
+
+/** Writes the { launcherId, sharedId } links back so later edits match. */
+function linkSharedScheduleEvents(links) {
+  if (!Array.isArray(links) || !links.length) return;
+  let touched = false;
+  for (const link of links) {
+    const event = secureStore.data.calendarEvents.find((item) => item.id === link.launcherId);
+    if (!event || event.sharedScheduleId === link.sharedId) continue;
+    event.sharedScheduleId = link.sharedId;
+    touched = true;
+  }
+  // Saved directly, not through saveCalendar: the link must not trigger another
+  // push while the shared file was just written for this change.
+  if (touched) { try { secureStore.save(); } catch { /* the in-memory link still holds */ } }
+}
+
+/**
+ * Mirrors local calendar changes into the shared `data/Schedule`.
+ * Failures are reported in the log only: a shared folder that cannot be written
+ * must never block saving the user's own calendar.
+ */
+function pushCalendarToSharedSchedule(previous, next) {
+  try {
+    const file = sharedScheduleFile();
+    let doc = sharedScheduleApi.readSchedule(file).doc;
+    const removals = sharedCalendarBridge.planRemoval(previous, next, doc);
+    if (removals.length) doc = sharedScheduleApi.removeEvents(file, removals).doc;
+    const { upserts, links } = sharedCalendarBridge.planPush(next, doc);
+    const created = [];
+    if (upserts.length) {
+      doc = sharedScheduleApi.upsertEvents(file, upserts).doc;
+      for (const entry of upserts) {
+        if (entry.matchId) continue;
+        const found = doc.events.find((item) => sharedScheduleApi.sameSharedEvent(item, entry));
+        if (found) created.push({ launcherId: entry.launcherId, sharedId: Number(found.id) });
+      }
+    }
+    linkSharedScheduleEvents([...links, ...created]);
+  } catch (error) {
+    console.warn('Shared schedule sync skipped:', error.message);
+  }
+}
+
+/** Startup pass: add shared entries the calendar has never seen, then link. */
+function reconcileSharedSchedule() {
+  try {
+    const { doc } = sharedScheduleApi.readSchedule(sharedScheduleFile());
+    const events = secureStore.data.calendarEvents;
+    const additions = sharedCalendarBridge.planImport(events, doc);
+    if (additions.length) {
+      events.push(...additions);
+      secureStore.save();
+    }
+    pushCalendarToSharedSchedule([], events);
+    return additions.length;
+  } catch (error) {
+    console.warn('Shared schedule import skipped:', error.message);
+    return 0;
+  }
+}
+
 function registerIpc() {
   const calendarHandle = (name, handler) => ipcMain.handle(`calendar:${name}`, (event, ...args) => { assertMainRenderer(event); return handler(...args); });
   const saveCalendar = (next) => {
@@ -2563,6 +2633,7 @@ function registerIpc() {
     secureStore.data.calendarEvents = next;
     try { secureStore.save(); } catch (error) { secureStore.data.calendarEvents = previous; throw error; }
     scheduleReminderTick();
+    pushCalendarToSharedSchedule(previous, next);
     return next;
   };
   calendarHandle('get', () => secureStore.data.calendarEvents);
@@ -2928,10 +2999,12 @@ function registerIpc() {
   ipcMain.handle('ai:confirm-action', async (event, proposalId) => {
     assertMainRenderer(event);
     if (!isAiControlEnabled()) throw new Error('AI 启动器操作已经关闭，未写入任何内容');
+    const previousCalendar = secureStore.data.calendarEvents;
     const result = pendingAiActions.commit(proposalId, secureStore.data);
     const saved = secureStore.update(result.data);
     scheduleReminderTick();
     sendToRenderer('data:changed', saved);
+    pushCalendarToSharedSchedule(previousCalendar, saved.calendarEvents);
     // Effects run one by one and report their own outcome: a failed submission
     // must never be reported as a completed write.
     const effects = [];
@@ -3636,6 +3709,24 @@ async function runSelfTest() {
     checks.sharedSessionMirrored = true;
     checks.sharedSessionRemoved = true;
   }
+  // Shared Schedule: a local event must reach data/Schedule, remember the link,
+  // and disappear again only while this app still owns the entry.
+  {
+    const file = sharedScheduleFile();
+    const before = secureStore.data.calendarEvents;
+    const seeded = calendar.normalizeCalendarEvents([...before,
+      { id: 'self-test-shared-event', title: '共用作息', date: '2026-09-20', start: '19:00', end: '20:00', notes: '共用验证', color: 'blue' }]);
+    secureStore.data.calendarEvents = seeded;
+    pushCalendarToSharedSchedule(before, seeded);
+    const entry = sharedScheduleApi.readSchedule(file).doc.events.find((item) => item.title === '共用作息');
+    const linked = secureStore.data.calendarEvents.find((item) => item.id === 'self-test-shared-event');
+    checks.sharedSchedulePushed = Boolean(entry) && linked?.sharedScheduleId === Number(entry?.id);
+    const trimmed = secureStore.data.calendarEvents.filter((item) => item.id !== 'self-test-shared-event');
+    secureStore.data.calendarEvents = trimmed;
+    pushCalendarToSharedSchedule(seeded, trimmed);
+    checks.sharedScheduleRemoved = !sharedScheduleApi.readSchedule(file).doc.events.some((item) => item.title === '共用作息');
+    secureStore.data.calendarEvents = before;
+  }
   // Exercise the real file-tool path in a throwaway folder: proposing a document
   // must not write anything, and confirming must produce a readable .docx.
   const workspaceFixture = fs.mkdtempSync(path.join(app.getPath('temp'), 'phl-self-test-workspace-'));
@@ -3864,6 +3955,9 @@ app.whenReady().then(() => {
     siteIds: SITE_IDS,
   });
   credentialVault.load();
+  // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
+  // window paints, so both applications show the same day list.
+  startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
   xinlvService = new XinlvService({
     getData: () => secureStore.xinlvData(),
     updateData: (patch) => {
