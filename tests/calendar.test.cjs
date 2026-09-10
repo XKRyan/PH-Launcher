@@ -119,7 +119,7 @@ function runCalendarDomFixture() {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const seed = { ...event, date: today, title: '<img src=x onerror="window.calendarXss=true">' };
-    await web.executeJavaScript(`window.fixtureEvents = ${JSON.stringify([seed])}; window.confirmAction = async () => true; window.ph = {calendar: {
+    await web.executeJavaScript(`window.fixtureEvents = ${JSON.stringify([seed])}; window.confirmAction = async () => true; window.confirm = () => true; window.ph = {calendar: {
       get: async () => structuredClone(window.fixtureEvents),
       save: async (value) => { const entry = {...value, id: value.id || 'fixture-added'}; window.fixtureEvents = [...window.fixtureEvents.filter(item => item.id !== entry.id), entry]; return structuredClone(window.fixtureEvents); },
       remove: async (id) => { window.fixtureEvents = window.fixtureEvents.filter(item => item.id !== id); return structuredClone(window.fixtureEvents); }
@@ -135,17 +135,21 @@ function runCalendarDomFixture() {
     };
     stage = 'mount-and-escape';
     await run('window.calendarUI.mount()');
-    assert.equal(await run(`document.querySelectorAll('.cal-month-cell').length`), 42);
+    assert.equal(await run(`document.querySelectorAll('.cal-week-day').length`), 7, 'default view should be week');
     assert.equal(await run(`document.querySelectorAll('#calendarPage img').length`), 0);
     assert.equal(await run(`Boolean(window.calendarXss)`), false);
     stage = 'switch-views';
-    await run(`document.querySelector('[data-cal-view=week]').click()`);
-    assert.equal(await run(`document.querySelectorAll('.cal-week-day').length`), 7);
+    await run(`document.querySelector('[data-cal-view=month]').click()`);
+    assert.equal(await run(`document.querySelectorAll('.cal-month-cell').length`), 42);
     await run(`document.querySelector('[data-cal-view=year]').click()`);
     assert.equal(await run(`document.querySelectorAll('.cal-mini-month').length`), 12);
     await run(`document.querySelector('[data-cal-month="${now.getMonth()}"]').click()`);
     assert.equal(await run(`document.querySelectorAll('.cal-month-cell').length`), 42);
+    await run(`document.querySelector('[data-cal-view=week]').click()`);
+    assert.equal(await run(`document.querySelectorAll('.cal-week-day').length`), 7);
     stage = 'create-timed-event';
+    await run(`document.querySelector('[data-cal-view=month]').click()`);
+    assert.equal(await run(`document.querySelectorAll('.cal-month-cell').length`), 42);
     await run(`document.querySelector('.cal-day-number[data-cal-day="${today}"]').click()`);
     assert.equal(await run(`document.getElementById('calendarEventDialog').open`), true);
     await run(`(() => { const form = document.querySelector('[data-cal-form]'); form.elements.title.value = 'Fixture calendar event'; form.elements.allDay.checked = false; form.elements.allDay.dispatchEvent(new Event('change', {bubbles:true})); form.elements.start.value = '13:00'; form.elements.end.value = '14:00'; form.requestSubmit(); })()`);
@@ -164,7 +168,7 @@ function runCalendarDomFixture() {
     process.stdout.write('PH_CALENDAR_DOM_OK\n');
     app.exit(0);
   }).catch((error) => {
-    process.stderr.write(`Calendar DOM fixture failed at ${stage}: ${error.message}\n`);
+    process.stderr.write(`Calendar DOM fixture failed at ${stage}: ${error.message}\n${error.stack || ''}\n`);
     app.exit(1);
   });
 }

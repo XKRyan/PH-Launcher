@@ -106,7 +106,7 @@ function assertTotalSize(data) {
 }
 
 class AiHistoryStore {
-  constructor({ filePath, encrypt, decrypt, now = () => new Date(), fsImpl = fs } = {}) {
+  constructor({ filePath, encrypt, decrypt, now = () => new Date(), fsImpl = fs, sharedDirectory = '' } = {}) {
     if (typeof filePath !== 'string' || !filePath) throw new Error('AI history filePath is required');
     if (typeof encrypt !== 'function' || typeof decrypt !== 'function') throw new Error('AI history encryption callbacks are required');
     if (typeof now !== 'function') throw new Error('AI history now callback is invalid');
@@ -115,6 +115,10 @@ class AiHistoryStore {
     this.decrypt = decrypt;
     this.now = now;
     this.fs = fsImpl;
+    // `data/agent/` is shared with Pinghe Launcher Lite; sessions in it that this
+    // app has never saved appear as read-only records.
+    this.sharedDirectory = typeof sharedDirectory === 'string' && sharedDirectory ? path.resolve(sharedDirectory) : '';
+    this.sharedSessions = new Map();
     this.data = emptyData();
     this.loaded = false;
     this.loadError = '';
@@ -132,6 +136,7 @@ class AiHistoryStore {
       this.data = emptyData();
       this.loaded = true;
       this.loadError = '';
+      this.refreshSharedSessions();
       return this.snapshot();
     }
     const previous = this.data;
@@ -149,6 +154,7 @@ class AiHistoryStore {
       this.data = next;
       this.loaded = true;
       this.loadError = '';
+      this.refreshSharedSessions();
       return this.snapshot();
     } catch {
       this.data = previous;
@@ -164,7 +170,41 @@ class AiHistoryStore {
   }
 
   snapshot() {
-    return clone(this.data);
+    // Foreign transcripts live only in memory: they are never folded into the
+    // encrypted file, so the other application keeps owning its own records.
+    const shared = [...this.sharedSessions.values()];
+    return clone({ ...this.data, sessions: [...this.data.sessions, ...shared] });
+  }
+
+  /** Reads `data/agent/` and keeps the sessions this app has not saved itself. */
+  refreshSharedSessions() {
+    this.sharedSessions.clear();
+    if (!this.sharedDirectory) return 0;
+    let listed = [];
+    try { listed = require('./shared-sessions.cjs').listSharedSessions(this.sharedDirectory); } catch { listed = []; }
+    const own = new Set(this.data.sessions.map((session) => session.id));
+    for (const entry of listed) {
+      if (own.has(entry.id)) continue;
+      this.sharedSessions.set(entry.id, {
+        id: entry.id,
+        title: entry.title,
+        connectionKey: `shared:${entry.app ? entry.app.toLowerCase().replace(/[^a-z0-9._:-]+/g, '-') : 'agent'}`,
+        messages: entry.history,
+        updatedAt: entry.updatedAt,
+        shared: true,
+        sharedApp: entry.app,
+      });
+    }
+    return this.sharedSessions.size;
+  }
+
+  /** Best-effort mirror into the shared folder; a failure never blocks saving. */
+  mirrorSharedSession(session) {
+    if (!this.sharedDirectory) return false;
+    try {
+      const result = require('./shared-sessions.cjs').writeSharedSession(this.sharedDirectory, session, { now: this.now });
+      return result.ok === true;
+    } catch { return false; }
   }
 
   persist(next) {
@@ -209,17 +249,31 @@ class AiHistoryStore {
     const next = { ...this.data, sessions };
     this.persist(next);
     this.data = next;
-    return clone(session);
+    this.mirrorSharedSession(session);
+    this.refreshSharedSessions();
+    return clone({ ...session, shared: true });
   }
 
   removeSession(id) {
     this.ensureLoaded();
     validId(id, '会话 ID');
+    const shared = this.sharedSessions.get(id);
     const sessions = this.data.sessions.filter((item) => item.id !== id);
-    if (sessions.length === this.data.sessions.length) return false;
+    if (sessions.length === this.data.sessions.length) {
+      // A transcript owned by the other application is only hidden locally.
+      if (shared) { this.sharedSessions.delete(id); return true; }
+      return false;
+    }
+    const own = this.data.sessions.find((item) => item.id === id);
     const next = { ...this.data, sessions };
     this.persist(next);
     this.data = next;
+    // Only a shared file whose content still matches this app's own copy is
+    // deleted, so a newer transcript from Lite is never removed.
+    if (this.sharedDirectory && own) {
+      try { require('./shared-sessions.cjs').removeSharedSession(this.sharedDirectory, own); } catch { /* keep the file */ }
+    }
+    this.refreshSharedSessions();
     return true;
   }
 

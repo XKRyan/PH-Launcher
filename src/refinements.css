@@ -57,8 +57,11 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .agent-sidebar .primary-button, .agent-sidebar .secondary-button { width:100%; margin-bottom:12px; }
 .agent-session-list { display:grid; gap:6px; margin:0 0 24px; }
 .agent-session-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; align-items:center; }
-.agent-session-list button { padding:10px; text-align:left; color:var(--ink-2); background:none; border-radius:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.85rem; }
+.agent-session-list button { display:flex; align-items:center; min-width:0; padding:10px; text-align:left; color:var(--ink-2); background:none; border-radius:8px; overflow:hidden; font-size:.85rem; }
 .agent-session-list button.active { background:var(--green-50); color:var(--green-800); }
+/* 标题截断，Lite 徽标保持可见 */
+.agent-session-title { display:block; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-session-badge { flex:0 0 auto; margin-left:6px; padding:1px 6px; border-radius:999px; background:var(--ivory-100,#f2efe7); color:var(--ink-3); font-size:.6875rem; font-weight:600; }
 .agent-session-list .agent-session-delete { padding:7px 9px; text-align:center; color:var(--ink-3); }
 .agent-history-status,.agent-session-notice { margin:-4px 0 10px; color:var(--ink-2); font-size:.78rem; line-height:1.5; }
 .agent-history-status.error,.agent-session-notice { color:var(--wine-700); }
@@ -98,5 +101,20 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .agent-conversation .chat-input-dock .chat-footnote { padding:0; text-align:left; font-size:.875rem; }
 .agent-conversation .chat-input-dock .agent-memory-toggle small:empty { display:none; }
 .ai-choice-list small { font-size:.85rem; }
+/* AI workspace picker: the folder every file tool is confined to. */
+.agent-workspace-picker { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+.agent-workspace-path { margin:0; font-size:.8125rem; color:var(--ink-3); word-break:break-all; }
+.agent-workspace-path.is-set { color:var(--green-800); font-weight:600; }
+.agent-workspace-note { margin:0; font-size:.75rem; color:var(--ink-3); line-height:1.55; }
+.agent-workspace-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
+.agent-workspace-actions button { min-height:32px; padding:0 10px; font-size:.8125rem; white-space:nowrap; }
+/* 侧栏默认给按钮 12px 下边距；这里统一间距，清除以文字按钮靠右。 */
+.agent-sidebar .agent-workspace-actions .secondary-button { width:100%; margin-bottom:0; }
+.agent-workspace-actions .ghost-button { margin-left:auto; }
 @media(max-width:1100px) { .agent-workspace { grid-template-columns:200px minmax(0,1fr); gap:12px; } .agent-sidebar { padding:16px; } }
 @media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .agent-sidebar h3,.agent-sidebar .ai-control-strip,.agent-sidebar .agent-permission-note,.agent-session-list { grid-column:1/-1; } }
+/* Shared data folder: one row that shows what is shared and how to change it. */
+.data-share-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; padding:14px 16px; border:1px solid var(--border); border-radius:14px; background:var(--ivory-50); }
+.data-share-row strong { display:block; font-size:.9375rem; }
+.data-share-row p { margin:4px 0 0; font-size:.8125rem; color:var(--ink-2); line-height:1.6; }
+.data-share-actions { display:flex; flex-wrap:wrap; gap:8px; }

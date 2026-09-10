@@ -9,9 +9,9 @@ const BUILTIN_SITE_META = {
 };
 // Embedded first-party modules are fixed navigation items, but are deliberately
 // kept out of BUILTIN_SITE_META so they never appear in credential settings.
-const FIXED_SITE_META = {
-  psychology: { name: '心理', icon: 'i-spark', url: 'https://xin-lv.com/', eyebrow: 'WELLBEING', embedded: true },
-};
+// Xinlv moved from an embedded webpage to a native API-backed page, so this
+// map is intentionally empty now.
+const FIXED_SITE_META = {};
 const SITE_META = { ...BUILTIN_SITE_META, ...FIXED_SITE_META };
 const CUSTOM_SITE_COLORS = new Set(['green', 'wine', 'gold', 'blue', 'slate']);
 const ROUTE_META = {
@@ -23,6 +23,7 @@ const ROUTE_META = {
   timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
+  psychology: { title: '心履', eyebrow: 'WELLBEING' },
   'class-timetable': { title: '班级课表', eyebrow: 'CLASS TIMETABLE', page: 'school' },
   courses: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
@@ -68,6 +69,7 @@ const state = {
   dictionaryResult: null,
   dictionaryLoading: false,
   dictionaryRequestId: 0,
+  mailUnread: 0,
   hardware: null,
   hardwareLoading: false,
   aiDeployment: null,
@@ -234,7 +236,7 @@ function updateClock() {
   const hour = now.getHours();
   const greeting = hour < 5 ? '夜深了' : hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
   const name = state.data?.settings?.studentName?.trim();
-  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天先做哪件事？`;
+  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天过的怎么样？`;
   $('#greetingKicker').textContent = hour < 12 ? 'A CALM START' : hour < 18 ? 'KEEP THE RHYTHM' : 'A CLEAR FINISH';
 }
 
@@ -278,6 +280,10 @@ function navigate(route) {
     window.mailUI?.markViewed?.();
     const opening = window.mailUI?.open?.();
     Promise.resolve(opening).then(() => { if (state.route === 'mail') window.mailUI?.markViewed?.(); }).catch(() => {});
+  }
+  if (route === 'psychology') {
+    if (typeof window.xinlvUI?.refresh === 'function') window.xinlvUI.refresh();
+    else window.xinlvUI?.mount?.();
   }
   if (route === 'dictionary') {
     renderDictionary();
@@ -365,13 +371,15 @@ function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
   const nav = $(navSelector);
   if (!badge || !nav) return;
   const count = Math.max(0, Math.floor(Number(rawCount) || 0));
-  badge.textContent = count > 99 ? '99+' : String(count);
+  // A hidden badge must not contribute text to its parent's textContent.
+  badge.textContent = count === 0 ? '' : count > 99 ? '99+' : String(count);
   badge.dataset.count = String(count);
   badge.classList.toggle('hidden', count === 0);
   nav.setAttribute('aria-label', count ? `${label}，${count} 项待处理` : label);
 }
 
 function updateMailBadge(count) {
+  state.mailUnread = count;
   setNavCountBadge('#navMailCount', '#mailNav', '平和邮箱', count);
 }
 
@@ -397,33 +405,7 @@ function renderDashboard() {
   if (!state.data) return;
   updateClock();
   const openTasks = state.data.tasks.filter((task) => !task.done);
-  const todayTasks = openTasks.filter((task) => isToday(task.dueAt));
-  const overdue = openTasks.filter(isOverdue);
-  $('#todayTaskMetric').textContent = `${todayTasks.length} 项任务`;
-  $('#overdueMetric').textContent = overdue.length ? `${overdue.length} 项已逾期` : '没有逾期任务';
-  $('#overdueMetric').style.color = overdue.length ? 'var(--wine-700)' : '';
-
-  const upcoming = nextLesson();
-  $('#nextClassName').textContent = upcoming?.lesson.course || '尚未添加课程';
-  $('#nextClassMeta').textContent = upcoming
-    ? `${formatCountdown(upcoming.date)} · ${upcoming.lesson.start}${upcoming.lesson.room ? ` · ${upcoming.lesson.room}` : ''}`
-    : '在“我的课表”查看学校课程';
-
-  const weekSessions = getWeekSessions();
-  const weekMinutes = weekSessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
-  $('#weekFocusMetric').textContent = `${weekMinutes} 分钟`;
-  $('#weekSessionMetric').textContent = weekSessions.length ? `完成 ${weekSessions.length} 次专注` : '从一次 25 分钟开始';
-
-  const dashboardTasks = [...openTasks]
-    .sort((a, b) => (a.dueAt ? new Date(a.dueAt) : Infinity) - (b.dueAt ? new Date(b.dueAt) : Infinity))
-    .slice(0, 4);
-  $('#todayTaskList').innerHTML = dashboardTasks.length
-    ? dashboardTasks.map((task) => `
-      <div class="compact-task" data-task-row="${escapeHtml(task.id)}">
-        <button class="task-check" data-toggle-task="${escapeHtml(task.id)}" aria-label="完成任务">${icon('i-check')}</button>
-        <div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject || '通用')}${task.dueAt ? ` · ${escapeHtml(formatDateTime(task.dueAt, true))}` : ''}</span></div>
-      </div>`).join('')
-    : '<div class="empty-row">今天没有待处理任务。<br/>给自己留一点从容。</div>';
+  void window.dashboardData?.refresh();
   const count = openTasks.length;
   setNavCountBadge('#navTaskCount', '#planNav', '计划', count);
   renderCustomSites();
@@ -1601,9 +1583,9 @@ async function openAiControlDialog(mode = 'confirm') {
   $('#aiControlDialogTitle').textContent = full ? '允许 AI 使用完整权限' : '允许 AI 操作启动器';
   $('#aiControlRiskIntro').textContent = full
     ? state.data.settings.ai.provider === 'api'
-      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改。';
+      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改；若已选择工作区，还可以读写该文件夹内的文件。';
   refreshAiControlAcceptance();
   $('#aiApiRisk').classList.toggle('hidden', state.data.settings.ai.provider !== 'api');
   $('#aiControlDialog').showModal();
@@ -1654,11 +1636,18 @@ function proposalMarkup(proposal) {
   const status = proposal.status === 'committed' ? '已写入' : proposal.status === 'canceled' ? '已取消' : proposal.status === 'working' ? '处理中' : '等待确认';
   const recurrence = (item) => item.repeatWeekdays?.length ? `<small translate="no">${window.i18n?.locale() === 'en' ? 'Weekly: ' : '每周：'}${item.repeatWeekdays.map(day => (window.i18n?.locale() === 'en' ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'] : ['','周一','周二','周三','周四','周五','周六','周日'])[day] || '').join(' / ')}</small>` : '';
   const groups = proposal.groups.map((group) => `<section class="proposal-group"><b>${escapeHtml(group.title)}</b>${(group.items || []).map((item) => `<div class="proposal-item"><strong>${escapeHtml(item.primary)}</strong><span>${escapeHtml(item.secondary)}${recurrence(item)}</span></div>`).join('')}</section>`).join('');
+  // External actions leave the launcher (files, mail, school submissions), so the
+  // card must not promise that confirming only saves local data.
+  const external = proposal.groups.some((group) => ['workspace-file', 'email', 'managebac-submission', 'managebac-reply'].includes(group.type));
+  const sendsMail = proposal.groups.some((group) => group.type === 'email');
+  const hint = external
+    ? `只有确认后才会执行；邮件、提交和回复发布后无法撤回${sendsMail ? '，发送前还会再弹出一次系统确认' : ''}`
+    : '只有确认后才会保存到 PH Launcher';
   return `<section class="ai-proposal-card${resolved ? ' resolved' : ''}" data-proposal-id="${escapeHtml(proposal.id)}">
-    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>只有确认后才会保存到 PH Launcher</span></div><em>${escapeHtml(status)}</em></div>
+    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>${escapeHtml(hint)}</span></div><em>${escapeHtml(status)}</em></div>
     <div class="proposal-groups">${groups}</div>
     ${proposal.warning ? `<p class="proposal-warning">${escapeHtml(proposal.warning)}</p>` : ''}
-    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>核对无误，确认写入</button></div>
+    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>${external ? '核对无误，确认执行' : '核对无误，确认写入'}</button></div>
   </section>`;
 }
 
@@ -1697,6 +1686,14 @@ function committedSummary(counts = {}) {
   return parts.length ? parts.join('、') : '没有需要重复写入的内容';
 }
 
+// File, mail and school writes report their own outcome; a failure must never be
+// shown as a completed change.
+function effectOutcome(effects) {
+  const list = Array.isArray(effects) ? effects.filter((effect) => effect?.message) : [];
+  if (!list.length) return { text: '', failed: false };
+  return { text: list.map((effect) => effect.message).join('；'), failed: list.some((effect) => effect.ok === false) };
+}
+
 async function confirmAiProposal(proposalId) {
   const message = proposalMessage(proposalId);
   if (!message || message.proposal.status === 'working') return;
@@ -1708,7 +1705,9 @@ async function confirmAiProposal(proposalId) {
     if (result.data) state.data = result.data;
     renderAll();
     if (result.counts?.calendarEvents) await window.calendarUI?.refresh();
-    toast(`已写入：${committedSummary(result.counts)}`);
+    const outcome = effectOutcome(result.effects);
+    if (outcome.failed) toast(outcome.text, 'error');
+    else toast(`已写入：${committedSummary(result.counts)}${outcome.text ? ` · ${outcome.text}` : ''}`);
   } catch (error) {
     message.proposal.status = '';
     toast(`未写入：${error.message}`, 'error');
@@ -1851,6 +1850,9 @@ function renderWebsiteSettings() {
   </div>`).join('');
   renderCredentialSettings();
   renderCustomWebsiteSettings();
+  // Accounts shared through settings.yaml are only known after the main process
+  // has read the shared file.
+  void refreshSharedAccounts().then(() => renderCredentialSettings());
 }
 
 function credentialEntry(siteId) {
@@ -1860,6 +1862,18 @@ function credentialEntry(siteId) {
     displayUsername: '',
     autoFill: false,
     updatedAt: '',
+  };
+}
+
+const XINLV_ACCOUNT = { id: 'xinlv', name: '心履', icon: 'i-spark' };
+
+function xinlvAccountStatus() {
+  const status = state.data?.xinlv || {};
+  return {
+    configured: Boolean(status.configured),
+    username: String(status.username || ''),
+    totalEntries: Number(status.totalEntries || 0),
+    pendingSync: Number(status.pendingSync || 0),
   };
 }
 
@@ -1889,32 +1903,66 @@ function renderCredentialSettings() {
         : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
       : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
     return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
-  }).join('');
+  }).join('') + xinlvCredentialCard() + sharedAccountCard();
+}
+
+// Accounts can be shared with Pinghe Launcher Lite through settings.yaml. Both
+// directions are explicit, and the file is plain text, so the warning is shown
+// before anything is written.
+function sharedAccountCard() {
+  const shared = state.sharedAccounts;
+  if (!shared?.available) return '';
+  const known = shared.platforms.filter((entry) => entry.supported);
+  if (!known.length) return '';
+  const names = known.map((entry) => `${entry.platform}${entry.username ? `（${entry.username}）` : ''}`).join('、');
+  return `<div class="credential-setting shared-account-setting"><div class="site-card-icon blue">${icon('#i-check')}</div><div><strong>共用 settings.yaml 里的账号</strong><small>检测到 ${escapeHtml(names)}；导入后本机加密保存，不会自动登录</small></div><div class="credential-actions"><button type="button" data-import-shared-accounts>导入账号</button><button type="button" data-export-shared-accounts>写入共用文件</button></div></div>`;
+}
+
+// Xinlv signs in through its own REST API, so it shares this login list but
+// stores its credentials in the encrypted launcher store, not the web vault.
+function xinlvCredentialCard() {
+  const account = xinlvAccountStatus();
+  const statusText = account.configured
+    ? `已登录 ${account.username || '心履账号'} · ${account.totalEntries} 条记录${account.pendingSync ? ` · ${account.pendingSync} 条待同步` : ''}`
+    : '未登录；登录后可在“心履”页面记录心情并按需同步';
+  const actions = account.configured
+    ? `<button type="button" data-connect-xinlv>同步</button><button type="button" data-edit-xinlv>修改账号</button><button type="button" class="danger" data-remove-xinlv>退出登录</button>`
+    : '<button type="button" data-edit-xinlv>登录心履</button>';
+  return `<div class="credential-setting"><div class="site-card-icon slate">${icon(XINLV_ACCOUNT.icon)}</div><div><strong>${escapeHtml(XINLV_ACCOUNT.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
 }
 
 function openCredentialDialog(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) return openXinlvLoginDialog();
   const site = BUILTIN_SITE_META[siteId];
   const status = state.credentialStatus;
   if (!site || !status?.supported || status.issue) {
     return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
   }
   const credential = credentialEntry(siteId);
+  const isMail = siteId === 'mail';
   $('#credentialForm').reset();
   $('#credentialSiteId').value = siteId;
   $('#credentialUsername').value = credential.username || '';
   $('#credentialPassword').required = !credential.saved;
-  $('#credentialPasswordNote').textContent = credential.saved
-    ? '如需保留原密码，请留空；保存后不会显示密码。'
-    : '保存后不会显示密码；如需更新，请重新输入。';
-  const isMail = siteId === 'mail';
+  // Only the mail account needs the client authorization code; the other
+  // sites use plain username + password.  form.reset() may clear the
+  // hidden attribute, so reapply it unconditionally.
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  if (isMail) { $('#credentialAuthcodeRow').hidden = false; if ($('#credentialAuthcode')) $('#credentialAuthcode').required = true; }
   $('#credentialAutoFill').checked = isMail ? false : credential.saved ? Boolean(credential.autoFill) : true;
   $('#credentialAutoFillRow').hidden = isMail;
   $('#credentialAutoLoginRow').hidden = isMail;
   $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
-  $('#credentialDialogTitle').textContent = '账号登录';
-  $('#credentialPasswordLabel').textContent = isMail ? '密码或客户端授权码' : '密码';
-  $('#credentialIntro').textContent = siteId === 'mail'
-    ? '网易邮箱可能需要先开启 IMAP/SMTP，并使用客户端授权码。密码或授权码会使用当前系统用户密钥加密，只发送到网易固定邮件服务器；邮件内容不会交给 AI。'
+  $('#credentialDialogTitle').textContent = isMail ? '邮箱登录' : '账号登录';
+  $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
+  $('#credentialPasswordNote').textContent = isMail
+    ? 'IMAP/SMTP 收发信必须使用客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）；网页密码仅在邮箱仍允许普通登录时作为回退。授权码必填，密码可选。'
+    : credential.saved
+      ? '如需保留原密码，请留空；保存后不会显示密码。'
+      : '保存后不会显示密码；如需更新，请重新输入。';
+  $('#credentialIntro').textContent = isMail
+    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，使用当前系统用户密钥加密保存；邮件内容不会交给 AI。'
     : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
@@ -1923,21 +1971,83 @@ function openCredentialDialog(siteId) {
   setTimeout(() => $('#credentialUsername').focus(), 30);
 }
 
+// Xinlv is not a website: it signs in through its REST API, so the dialog keeps
+// the same shape but hides webview-only options (autofill, auto re-login).
+function openXinlvLoginDialog() {
+  const status = state.credentialStatus;
+  if (!status?.supported || status.issue) {
+    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+  }
+  const account = xinlvAccountStatus();
+  $('#credentialForm').reset();
+  $('#credentialSiteId').value = XINLV_ACCOUNT.id;
+  $('#credentialUsername').value = account.username || '';
+  $('#credentialPassword').required = true;
+  $('#credentialPasswordLabel').textContent = '密码';
+  $('#credentialPasswordNote').textContent = '密码与登录令牌使用当前系统用户密钥加密保存，只用于登录心履，保存后不会再次显示。';
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  $('#credentialAutoFillRow').hidden = true;
+  $('#credentialAutoLoginRow').hidden = true;
+  $('#credentialDialogTitle').textContent = '心履登录';
+  $('#credentialIntro').textContent = '心履账号与学校账号相互独立。账号和密码只用于调用心履官方 API；心情记录加密保存在本机，只有你主动同步时才会发送到心履服务器。登录失败不会自动重试，避免账号被锁定。';
+  $('#credentialRiskAccepted').checked = false;
+  $('#saveCredentialButton').disabled = true;
+  $('#saveCredentialButton').textContent = account.configured ? '重新登录' : '登录心履';
+  $('#credentialDialog').showModal();
+  setTimeout(() => $('#credentialUsername').focus(), 30);
+}
+
+async function saveXinlvLoginFromDialog() {
+  const saveButton = $('#saveCredentialButton');
+  const username = $('#credentialUsername').value.trim();
+  const password = $('#credentialPassword').value;
+  if (!username || !password) return toast('请填写心履账号和密码', 'error');
+  $('#credentialPassword').value = '';
+  saveButton.disabled = true;
+  credentialSubmitInFlight = true;
+  const statusEl = $('#credentialConnectStatus');
+  if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在连接心履服务…'; }
+  try {
+    if (typeof window.xinlvUI?.connect !== 'function') throw new Error('心履模块尚未准备好');
+    await window.xinlvUI.connect({ username, password });
+    $('#credentialDialog').close();
+    state.data = await window.ph.data.get();
+    renderCredentialSettings();
+    if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = '心履登录成功，可同步心情记录'; }
+    toast('已登录心履');
+    setTimeout(() => { if (statusEl) statusEl.hidden = true; }, 1500);
+  } catch (error) {
+    if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `登录失败：${error.message}`; }
+    toast(`无法登录心履：${error.message}`, 'error');
+  } finally {
+    credentialSubmitInFlight = false;
+    if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
+  }
+}
+
 async function saveCredentialFromDialog(event) {
   event.preventDefault();
   if (credentialSubmitInFlight) return;
   if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
   const saveButton = $('#saveCredentialButton');
+  const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
+  if ($('#credentialSiteId')?.value === 'xinlv') return saveXinlvLoginFromDialog();
   const credential = {
     siteId: $('#credentialSiteId').value,
     username: $('#credentialUsername').value,
     password: $('#credentialPassword').value,
+    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '') : '',
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };
+  if (isMailSubmit && !credential.password && !credential.authcode) {
+    return toast('客户端授权码必填（网页邮箱 → 设置 → 客户端设置 生成）', 'error');
+  }
   // Clear the editable password field before waiting for IPC. The main process
   // receives the value through the isolated bridge and never returns it.
   $('#credentialPassword').value = '';
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
   saveButton.disabled = true;
   credentialSubmitInFlight = true;
   try {
@@ -1952,11 +2062,17 @@ async function saveCredentialFromDialog(event) {
     if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
   }
   if (credential.siteId === 'mail') {
+    const statusEl = $('#credentialConnectStatus');
+    if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在测试 IMAP 连接…'; }
     try {
       if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
       const connected = await window.mailUI.connect();
+      if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = connected ? 'IMAP 连接成功，收件箱同步完成' : '连接已建立'; }
       if (connected) toast('已登录并同步最近邮件');
+      if (typeof setTimeout === 'function') setTimeout(() => { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }, 1500);
+      else { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }
     } catch (error) {
+      if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `连接失败：${error.message}`; }
       toast(`账号已保存，但无法连接邮箱：${error.message}`, 'error');
     }
     return;
@@ -1971,6 +2087,22 @@ async function saveCredentialFromDialog(event) {
 }
 
 async function connectWithSavedCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    try {
+      if (typeof window.ph.xinlv?.sync !== 'function') throw new Error('心履服务尚未准备好');
+      const result = await window.ph.xinlv.sync({});
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.refresh?.();
+      renderCredentialSettings();
+      const parts = [];
+      if (result?.pushed) parts.push(`上传 ${result.pushed} 条`);
+      if (result?.pulled) parts.push(`下载 ${result.pulled} 条`);
+      toast(parts.length ? `心履同步完成：${parts.join('，')}` : '心履已是最新状态');
+    } catch (error) {
+      toast(`无法同步心履：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site) return;
   try {
@@ -1989,8 +2121,27 @@ async function connectWithSavedCredential(siteId) {
 }
 
 window.openSchoolAccount = openCredentialDialog;
+// Native modules (for example Xinlv) sign in through their own API and need to
+// refresh the shared account list after login or logout.
+window.refreshAccountSettings = async () => {
+  state.data = await window.ph.data.get();
+  renderCredentialSettings();
+};
 
 async function removeCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    if (!await localizedConfirm('退出心履登录？本机心情记录会保留，但不再自动同步。')) return;
+    try {
+      await window.ph.xinlv.logout();
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.clear?.();
+      renderCredentialSettings();
+      toast('已退出心履登录');
+    } catch (error) {
+      toast(`无法退出心履登录：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site || !await localizedConfirm(`删除 ${site.name} 保存的账号和密码？网站登录状态不会受影响。`)) return;
   try {
@@ -2056,7 +2207,9 @@ async function openCustomSiteDialog(site = null) {
   $('#customSiteId').value = site?.id || '';
   $('#customSiteName').value = site?.name || '';
   $('#customSiteUrl').value = site?.url || '';
-  $('#customSiteColor').value = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  const siteColor = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  $('#customSiteColor').value = siteColor;
+  $$('#customSiteColorSwatches input[name="customSiteColorRadio"]').forEach((radio) => { radio.checked = radio.value === siteColor; });
   $('#customSiteShortcut').value = site?.shortcut || '';
   $('#customSiteShortcutEnabled').checked = Boolean(site?.shortcutEnabled);
   $('#customSiteDialogTitle').textContent = site ? '编辑网页' : '添加网页';
@@ -2142,9 +2295,62 @@ function renderSettings() {
   $('#encryptionStatus').textContent = state.data.meta?.encrypted
     ? state.data.meta?.platform === 'darwin' ? '本地数据已使用 macOS 钥匙串保护' : '本地数据已使用当前系统用户密钥加密'
     : '当前系统无法提供加密，数据仅保存在本机';
-  $('#dataPathLabel').textContent = state.data.meta?.dataPath || '';
+  const meta = state.data.meta || {};
+  const shared = Array.isArray(meta.sharedFiles) && meta.sharedFiles.length ? meta.sharedFiles.join(' / ') : '';
+  $('#dataPathLabel').textContent = [
+    meta.dataPath ? `${window.i18n?.t('本应用数据') || '本应用数据'}：${meta.dataPath}` : '',
+    meta.dataRoot ? `${window.i18n?.t('共享数据目录') || '共享数据目录'}：${meta.dataRoot}${shared ? `（${shared}）` : ''}` : '',
+  ].filter(Boolean).join(' · ');
   renderWebsiteSettings();
   renderShortcutSettings();
+  void renderDataChoice();
+}
+
+// The data folder is decided at startup, so this only reports the current choice
+// and offers the two explicit alternatives.
+async function renderDataChoice() {
+  const hint = $('#dataShareHint');
+  const share = $('#shareDataLite');
+  const own = $('#useOwnData');
+  if (!hint || !share || !own) return;
+  let choice = null;
+  try { choice = await window.ph.system.dataChoice(); } catch { choice = null; }
+  if (!choice) { hint.textContent = ''; share.hidden = true; own.hidden = true; return; }
+  const sourceLabel = {
+    pointer: '你选择的目录',
+    portable: '便携模式：程序目录下的 data',
+    profile: '本应用默认目录',
+    env: '由启动参数指定',
+  }[choice.source] || '本应用默认目录';
+  const parts = [`当前：${sourceLabel}`];
+  if (choice.liteAvailable && choice.root !== choice.liteRoot) parts.push(`检测到 Pinghe Launcher Lite 的数据目录：${choice.liteRoot}`);
+  parts.push('两个程序使用同一个数据目录时，会共用 settings.yaml 里的账号、Schedule 日程和 agent 会话记录；本应用自己的任务、笔记与词汇仍单独保存。');
+  hint.textContent = parts.join('｜');
+  share.hidden = !(choice.liteAvailable && choice.root !== choice.liteRoot);
+  own.hidden = choice.source !== 'pointer' && choice.source !== 'portable';
+}
+
+async function refreshSharedAccounts() {
+  try { state.sharedAccounts = await window.ph.school.sharedAccounts(); }
+  catch { state.sharedAccounts = { available: false, platforms: [] }; }
+}
+
+async function importSharedAccounts() {
+  try {
+    const result = await window.ph.school.importSharedAccounts();
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    const imported = (result.imported || []).map((entry) => entry.platform).join('、');
+    toast(imported ? `已导入 ${imported}；密码仍只在本机加密保存` : '没有可导入的账号（本机已有或字段不全）');
+  } catch (error) { toast(`导入失败：${error.message}`, 'error'); }
+}
+
+async function exportSharedAccounts() {
+  if (!await localizedConfirm('把本机保存的账号写入共用的 settings.yaml？该文件是明文，同机其他程序可以读取。')) return;
+  try {
+    const result = await window.ph.school.exportSharedAccounts();
+    toast(`已写入 ${result.exported.join('、')}；文件是明文，请注意本机安全`);
+  } catch (error) { toast(`写入失败：${error.message}`, 'error'); }
 }
 
 async function updateShortcut(action, patch) {
@@ -2273,11 +2479,11 @@ function renderOnboarding() {
   const steps = en ? [
     { title: 'Connect your school services', copy: 'Set up EduPage, ManageBac and Pinghe Mail. Passwords are encrypted locally and each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">You can change these accounts later in Settings → Websites.</p>` },
     { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
-    { title: 'Try Wellbeing (optional)', copy: 'Xinlv is embedded as a launcher module for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
+    { title: 'Try Wellbeing (optional)', copy: 'Xinlv runs natively inside the launcher through its official API for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
   ] : [
     { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会在本机加密保存，也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
     { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
-    { title: '试试心理模块（可选）', copy: '心履已作为启动器中的独立模块嵌入，登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心理</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心理”打开。</p>' },
+    { title: '试试心履（可选）', copy: '心履通过官方 API 原生接入启动器，用于记录心情与获得陪伴建议；登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心履</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心履”打开。</p>' },
   ];
   const step = steps[Math.max(0, Math.min(state.onboardingStep, steps.length - 1))];
   content.innerHTML = `<h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
@@ -2313,7 +2519,7 @@ function handleBodyClick(event) {
   const onboardingAccount = event.target.closest('[data-onboarding-account]');
   if (onboardingAccount) { openCredentialDialog(onboardingAccount.dataset.onboardingAccount); return; }
   if (event.target.closest('#onboardingAiSettings')) { openOnboardingDestination(() => navigate('ai')); return; }
-  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => openSite('psychology')); return; }
+  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => navigate('psychology')); return; }
   if (event.target.closest('#onboardingNext')) {
     if (state.onboardingStep >= 2) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
     return;
@@ -2403,6 +2609,12 @@ function handleBodyClick(event) {
 
 function bindEvents() {
   document.body.addEventListener('click', handleBodyClick);
+  // Close any dialog when clicking the gray backdrop (the dialog element itself).
+  // Use mousedown instead of click to match the standard UI pattern and avoid
+  // race conditions where the dialog opens and immediately closes.
+  document.addEventListener('mousedown', (event) => {
+    if (event.target.tagName === 'DIALOG' && event.target.open) event.target.close();
+  });
   $('#taskForm').addEventListener('submit', saveTaskFromDialog);
   $('#lessonForm').addEventListener('submit', saveLessonFromDialog);
   $('#deleteTask').addEventListener('click', () => deleteTask($('#taskId').value));
@@ -2631,6 +2843,11 @@ function bindEvents() {
     if (removeId) return removeCredential(removeId);
     if (fillId) return fillCredentialOnce(fillId);
     if (connectId) return connectWithSavedCredential(connectId);
+    if (event.target.closest('[data-edit-xinlv]')) return openXinlvLoginDialog();
+    if (event.target.closest('[data-connect-xinlv]')) return connectWithSavedCredential(XINLV_ACCOUNT.id);
+    if (event.target.closest('[data-remove-xinlv]')) return removeCredential(XINLV_ACCOUNT.id);
+    if (event.target.closest('[data-import-shared-accounts]')) return importSharedAccounts();
+    if (event.target.closest('[data-export-shared-accounts]')) return exportSharedAccounts();
   });
   $('#credentialRiskAccepted').addEventListener('change', (event) => {
     $('#saveCredentialButton').disabled = !event.target.checked;
@@ -2642,6 +2859,11 @@ function bindEvents() {
     $('#saveCredentialButton').disabled = true;
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
+  $('#customSiteColorSwatches').addEventListener('change', (event) => {
+    const radio = event.target.closest('input[name="customSiteColorRadio"]');
+    if (!radio) return;
+    $('#customSiteColor').value = radio.value;
+  });
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
     const editId = event.target.closest('[data-edit-custom-site]')?.dataset.editCustomSite;
     const removeId = event.target.closest('[data-remove-custom-site]')?.dataset.removeCustomSite;
@@ -2682,6 +2904,18 @@ function bindEvents() {
     } catch (error) { toast(`恢复失败：${error.message}`, 'error'); }
   });
   $('#showData').addEventListener('click', () => window.ph.system.showData());
+  $('#shareDataLite').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.shareDataWithLite();
+      if (result?.ok) toast(`已记录共用目录：${result.root}；重启 PH Launcher 后生效`);
+    } catch (error) { toast(`无法设置共用目录：${error.message}`, 'error'); }
+  });
+  $('#useOwnData').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.useOwnDataFolder();
+      if (result?.ok) toast(`已恢复本应用自己的数据目录；重启后生效`);
+    } catch (error) { toast(`无法恢复数据目录：${error.message}`, 'error'); }
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
@@ -2716,7 +2950,13 @@ async function init() {
   window.schoolUI?.mount();
   window.calendarUI?.mount();
   window.mailUI?.mount();
-  window.mailUI?.onUnreadChange?.((count) => updateMailBadge(state.route === 'mail' ? 0 : count));
+  window.mailUI?.onUnreadChange?.((count) => {
+    // The dashboard card always shows the real unread total; the nav badge
+    // reads zero while the user is inside the mail page itself.
+    const cardEl = $('#unreadMailCount');
+    if (cardEl) cardEl.textContent = count == null ? '邮箱尚未同步' : `${count} 封未读`;
+    updateMailBadge(state.route === 'mail' ? 0 : (count || 0));
+  });
   $('#dictionaryResult').addEventListener('click', (event) => {
     if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
   });
@@ -2768,6 +3008,10 @@ async function init() {
     if ($('#onboardingDialog')?.open) renderOnboarding();
   });
   window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
+  // Tray quick entries focus the existing window and ask it to jump to a page.
+  window.ph.onTrayNavigate?.((route) => {
+    if (route && (ROUTE_META[route] || ROUTE_ALIASES[route])) navigate(route);
+  });
   window.ph.shortcuts.onAction((action) => {
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
@@ -2840,8 +3084,24 @@ async function init() {
   });
   setInterval(() => { updateClock(); refreshVocabularyBadge(); void window.mailUI?.open?.(); }, 60_000);
   setInterval(updateTimerUi, 500);
+  // Keep the home cards honest: re-project the school snapshot every minute.
+  setInterval(() => { if (state.route === 'today') void window.dashboardData?.refresh(); }, 60_000);
   document.body.dataset.initialized = 'true';
-  if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
+  // The splash overlay is owned by splash-ui: it waits for the real preload
+  // bars (school data, mail, page preload) before revealing the app, so no
+  // page has to show its own spinner after entry.
+  const reveal = () => {
+    // Repaint from the now-populated cache; this reads memory, not the network.
+    if (window.schoolUI?.refresh) void window.schoolUI.refresh().catch(() => {});
+    void window.dashboardData?.refresh();
+    void window.mailUI?.open?.();
+  };
+  if (window.splashUI) window.splashUI.ready(reveal);
+  else document.body.classList.add('loaded');
 }
+
+// Safety net: if init() errors out before the splash is released (e.g. corrupt
+// user data), the overlay stays forever. Force it visible after a hard cap.
+setTimeout(() => { if (!document.body.classList.contains('loaded')) document.body.classList.add('loaded'); }, 26000);
 
 document.addEventListener('DOMContentLoaded', init);

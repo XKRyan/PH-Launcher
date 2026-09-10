@@ -7,14 +7,44 @@ const RECOVERABLE = new Set(['NETWORK_ERROR', 'TIMEOUT', 'PAGE_CHANGED', 'PAGE_T
 const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(Date.parse(`${value}T12:00:00Z`)) && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value;
 
 class SchoolCache {
-  constructor({ now = () => Date.now() } = {}) {
+  constructor({ now = () => Date.now(), onChange = null } = {}) {
     this.now = now;
+    this.onChange = typeof onChange === 'function' ? onChange : null;
     this.current = { edupage: null, managebac: null };
     this.epoch = { edupage: 0, managebac: 0 };
     this.status = { edupage: { state: 'idle' }, managebac: { state: 'idle' } };
     this.entries = new Map();
     this.pending = new Map();
     this.week = '';
+  }
+  _changed() {
+    if (!this.onChange) return;
+    try { this.onChange(this.exportForStorage()); } catch { /* persistence must never break sync */ }
+  }
+  // Restore snapshots written by a previous launch so the UI has data before
+  // any network request. Everything is marked stale so a refresh still runs.
+  hydrate(persisted) {
+    if (!persisted || !Array.isArray(persisted.entries)) return 0;
+    let restored = 0;
+    for (const entry of persisted.entries) {
+      if (!entry || typeof entry.key !== 'string' || !entry.data) continue;
+      if (!entry.key.startsWith('edupage:') && !entry.key.startsWith('managebac:')) continue;
+      if (this.entries.has(entry.key)) continue;
+      this.entries.set(entry.key, { at: Number(entry.at) || 0, data: entry.data });
+      restored += 1;
+      const source = entry.key.startsWith('edupage:') ? 'edupage' : 'managebac';
+      this.status[source] = { state: 'stale', updatedAt: entry.data.fetchedAt || '' };
+    }
+    const week = persisted.week || [...this.entries.keys()].filter((key) => key.startsWith('edupage:')).sort().at(-1)?.slice('edupage:'.length) || '';
+    if (week) {
+      this.week = week;
+      this.current.edupage = this.entries.get(`edupage:${week}`)?.data || null;
+    }
+    if (this.entries.has('managebac:')) this.current.managebac = this.entries.get('managebac:').data;
+    return restored;
+  }
+  exportForStorage() {
+    return { week: this.week, entries: [...this.entries.entries()].map(([key, entry]) => ({ key, at: entry.at, data: entry.data })) };
   }
   key(source, week) {
     if (!Object.hasOwn(TTL, source)) throw new SchoolDataError('INVALID_SOURCE', '未知学校数据源');
@@ -62,6 +92,7 @@ class SchoolCache {
       while (this.entries.size > 9) this.entries.delete(this.entries.keys().next().value);
       if (source !== 'edupage' || this.week === weekStart) this.current[source] = data;
       this.status[source] = { state: 'ready', updatedAt: data.fetchedAt, error: '' };
+      this._changed();
       return data;
     }).catch((error) => {
       if (this.epoch[source] !== epoch) throw error;

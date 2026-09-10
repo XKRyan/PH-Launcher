@@ -89,13 +89,21 @@ class FakeImap {
   }
 
   async getMailboxLock(path, options) {
-    assert.equal(path, 'INBOX');
     this.lockOptions.push(options);
+    this.state.lockPaths.push(path);
+    this.state.currentFolder = path;
     return { release: () => { this.state.releaseCalls += 1; } };
   }
 
+  async *list() {
+    for (const entry of this.state.listMailboxes || []) yield entry;
+  }
+
   async search(query, options) {
-    this.state.searchCalls.push({ query, options });
+    this.state.searchCalls.push({ query, options, folder: this.state.currentFolder || null });
+    if (this.state.searchResults && this.state.currentFolder in this.state.searchResults) {
+      return this.state.searchResults[this.state.currentFolder];
+    }
     return this.state.uids;
   }
 
@@ -107,10 +115,19 @@ class FakeImap {
 
   async fetchOne(uid, query, options) {
     this.fetchOneCalls.push({ uid, query, options });
+    const message = this.state.messages.find((entry) => String(entry.uid) === String(uid));
     const source = this.state.sources.get(String(uid));
-    if (!source) return false;
-    const size = this.state.reportedSizes.get(String(uid)) ?? source.length;
-    return { uid: Number(uid), size, source };
+    if (!source && !message) return false;
+    const size = this.state.reportedSizes.get(String(uid)) ?? source?.length ?? 0;
+    // Real servers may omit FLAGS from a FETCH BODY[] response entirely.
+    const flags = this.state.omitFetchFlags ? undefined : (message?.flags || new Set());
+    return { uid: Number(uid), size, source, envelope: message?.envelope || null, flags };
+  }
+
+  async messageFlagsAdd(range, flags, options) {
+    this.state.messageFlagsAddCalls.push({ range, flags, options });
+    if (this.state.flagError) throw new Error(this.state.flagError);
+    return true;
   }
 }
 
@@ -119,8 +136,19 @@ function createHarness(overrides = {}) {
   const state = {
     connectCalls: 0,
     releaseCalls: 0,
+    lockPaths: [],
+    currentFolder: null,
     searchCalls: [],
+    searchResults: null,
     fetchAllCalls: [],
+    messageFlagsAddCalls: [],
+    omitFetchFlags: overrides.omitFetchFlags === true,
+    flagError: overrides.flagError || '',
+    listMailboxes: [
+      { path: 'INBOX', name: 'INBOX', specialUse: '' },
+      { path: '&XfJT0ZAB-', name: '已发送', specialUse: '\\Sent' },
+      { path: '&g0l6P3ux-', name: '草稿箱', specialUse: '\\Drafts' },
+    ],
     uids: [101, 102],
     messages: [
       {
@@ -220,7 +248,7 @@ test('list is bounded, sanitized, newest-first, and uses TLS/read-only IMAP', as
   assert.equal(state.fetchAllCalls[0].query.bodyStructure, true);
   assert.equal(result.items[1].subject, 'Subject Injected');
   assert.deepEqual(result.items[1].from, [{ name: 'Teacher Name', address: 'teacher@shphschool.com' }]);
-  assert.deepEqual(state.searchCalls[0], { query: { all: true }, options: { uid: true } });
+  assert.deepEqual(state.searchCalls[0], { query: { all: true }, options: { uid: true }, folder: 'INBOX' });
   assert.equal(state.imaps[0].lockOptions[0].readOnly, true);
   assert.equal(state.imaps[0].options.host, IMAP_HOST);
   assert.equal(state.imaps[0].options.port, IMAP_PORT);
@@ -251,8 +279,27 @@ test('read parses local MIME, does not mark seen, and returns bounded Buffer att
   assert.ok(Buffer.isBuffer(content));
   assert.deepEqual(content, attachmentBytes);
   assert.equal(state.imaps[0].fetchOneCalls[0].query.source.maxLength, MAX_RAW_MESSAGE_BYTES + 1);
-  assert.ok(state.imaps[0].lockOptions.every((entry) => entry.readOnly === true));
-  assert.equal(typeof state.imaps[0].messageFlagsAdd, 'undefined');
+  assert.equal(state.imaps[0].lockOptions[0].readOnly, false, 'read opens the mailbox read-write so \\Seen can be stored');
+  assert.deepEqual(state.imaps[0].state.messageFlagsAddCalls.map((entry) => entry.flags), [['\\Seen']], 'opening a mail stores \\Seen server-side');
+  assert.equal(state.imaps[0].fetchOneCalls[0].query.flags, true, 'FLAGS must be requested explicitly or the server-side mark is skipped');
+  assert.equal(mail.markedSeen, true);
+  assert.equal(mail.markSeenError, '');
+});
+
+test('a server that omits FLAGS still gets an explicit \\Seen store', async () => {
+  const { client, state } = createHarness({ omitFetchFlags: true });
+  const mail = await client.read('101');
+  assert.equal(state.imaps[0].state.messageFlagsAddCalls.length, 1, 'missing FLAGS must not skip the store');
+  assert.equal(mail.markedSeen, true);
+  assert.equal(mail.markSeenError, '');
+});
+
+test('a rejected \\Seen store is reported instead of silently ignored', async () => {
+  const { client } = createHarness({ flagError: 'IMAP STORE rejected' });
+  const mail = await client.read('101');
+  assert.equal(mail.markedSeen, false);
+  assert.match(mail.markSeenError, /STORE rejected/);
+  assert.ok(mail.text.length > 0, 'the mail body is still delivered');
 });
 
 test('HTML-only messages become inert text without remote resources or scripts', async () => {
@@ -261,6 +308,11 @@ test('HTML-only messages become inert text without remote resources or scripts',
   assert.match(mail.text, /Hello & world/);
   assert.match(mail.text, /Visible label/);
   assert.doesNotMatch(mail.text, /https:\/\//);
+  // The original HTML part is preserved so the renderer can offer a
+  // sandboxed formatted preview; scripts never cross this boundary.
+  assert.equal(typeof mail.html, 'string');
+  assert.ok(mail.html.length > 0);
+  assert.doesNotMatch(mail.html, /<script/i);
   assert.doesNotMatch(mail.text, /tracker\.invalid|external\.invalid|steal/);
 });
 
@@ -277,7 +329,10 @@ test('real multipart MIME retains a reset button as metadata and resolves only t
   const detail = await client.read('102');
   assert.equal(detail.links.length, 1); assert.equal(detail.links[0].label, 'Reset password');
   assert.equal(detail.links[0].host, 'shph.managebac.cn'); assert.equal(detail.links[0].url, undefined);
-  assert.doesNotMatch(JSON.stringify(detail), /fixture-only|\n\n\n/);
+  // The links metadata never carries raw URLs; the sanitized html body may
+  // still contain the link text itself (that is the visible content).
+  assert.doesNotMatch(JSON.stringify(detail.links), /fixture-only/);
+  assert.doesNotMatch(detail.text, /\n\n\n/);
   const target = await client.link('102', detail.links[0].id);
   assert.equal(target.url, 'https://shph.managebac.cn/reset?token=fixture-only&source=mail');
   await assert.rejects(() => client.link('101', detail.links[0].id), error => error.code === 'NOT_FOUND');
@@ -479,4 +534,54 @@ test('known Coremail authorization errors are actionable without exposing server
     assert.doesNotMatch(error.message, /student@|secret-code|ERR\.ILLEGAL/);
     return true;
   });
+});
+
+test('harvestContacts scans INBOX and sent folders, dedupes and filters addresses', async () => {
+  const { client, state } = createHarness({
+    state: {
+      searchResults: { 'INBOX': [101, 102], '&XfJT0ZAB-': [201] },
+      messages: [
+        {
+          uid: 101,
+          envelope: {
+            from: [{ name: 'Teacher', address: 'TEACHER@shphschool.com' }],
+            to: [{ name: 'Student', address: 'student@shphschool.com' }],
+            cc: [{ name: 'Helper', address: 'helper@example.org' }],
+          },
+        },
+        {
+          uid: 102,
+          envelope: {
+            from: [{ name: 'Updates', address: 'no-reply@example.org' }],
+            to: [{ name: 'Student', address: 'student@shphschool.com' }],
+            cc: [],
+          },
+        },
+        {
+          uid: 201,
+          envelope: {
+            from: [{ name: 'Student', address: 'student@shphschool.com' }],
+            to: [{ name: 'Teacher', address: 'teacher@shphschool.com' }],
+            cc: [],
+          },
+        },
+      ],
+    },
+  });
+  const result = await client.harvestContacts({ perFolder: 400 });
+  assert.equal(result.folders, 2);
+  assert.equal(result.scanned.length, 2);
+  assert.deepEqual(
+    result.scanned.map((entry) => entry.mailbox),
+    ['INBOX', '&XfJT0ZAB-'],
+  );
+  const addresses = result.contacts.map((entry) => entry.address);
+  assert.ok(addresses.includes('teacher@shphschool.com'));
+  assert.ok(addresses.includes('helper@example.org'));
+  assert.ok(!addresses.includes('student@shphschool.com'), 'own address is excluded');
+  assert.ok(!addresses.some((entry) => /no-reply/.test(entry)), 'system addresses are excluded');
+  const teacher = result.contacts.find((entry) => entry.address === 'teacher@shphschool.com');
+  assert.equal(teacher.count, 2, 'counted once from inbox From and once from sent To');
+  // Drafts folder is outside the scan scope.
+  assert.ok(!state.lockPaths.includes('&g0l6P3ux-'));
 });

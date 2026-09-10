@@ -244,15 +244,107 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .clean-toggle.unavailable b::after { content: " · 当前页不可用"; color: var(--wine-700); font-size: 0.75rem; font-weight: 700; }
 
 .content { grid-column: 2; min-width: 0; min-height: 0; overflow: auto; scroll-behavior: smooth; }
-.page { display: none; width: min(100%, 1500px); min-height: 100%; margin: 0 auto; padding: 36px 40px 54px; animation: pageIn .22s ease both; }
+.page { display: none; width: min(100%, 1500px); min-height: 100%; margin: 0 auto; padding: 36px 40px 54px; }
 .page.active { display: block; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .page { contain: layout style; backface-visibility: hidden; }
+}
+
+/* Startup splash: logo + per-platform progress bars */
+.splash-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: var(--ivory-100); z-index: 9999; }
+.splash-logo { opacity: 0; transform: scale(.92); animation: splashIn .5s ease-out .15s both; }
+.splash-bars { display: flex; flex-direction: column; gap: 12px; width: 280px; }
+.splash-bar-row { display: flex; align-items: center; gap: 12px; }
+.splash-bar-label { width: 110px; text-align: right; color: var(--ink-3); font-size: .8125rem; }
+.splash-bar { flex: 1; height: 5px; background: rgba(0,0,0,.08); border-radius: 999px; overflow: hidden; position: relative; }
+/* Real progress from the main process, not a decorative animation. */
+.splash-bar-fill { width: 0%; height: 100%; background: var(--green-800); border-radius: 999px; transition: width .35s cubic-bezier(.22,.61,.36,1), background .3s ease; }
+.splash-bar-fill.is-done { background: var(--green-700); }
+.splash-bar-row.is-active .splash-bar-label { color: var(--green-800); font-weight: 600; }
+.splash-hint { color: var(--ink-3); font-size: .875rem; }
+.splash-skip { position: absolute; bottom: 36px; color: var(--ink-3); font-size: .8125rem; background: none; border: none; cursor: pointer; opacity: .7; }
+.splash-skip:hover { opacity: 1; text-decoration: underline; }
+body.loaded .splash-screen { opacity: 0; transition: opacity .3s ease-out; pointer-events: none; }
+body.loaded .app-shell { opacity: 1; }
+.app-shell { opacity: 0; transition: opacity .25s ease-in; }
+
+/* Color swatch pickers (calendar events + custom sites) */
+.color-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.color-swatch { position: relative; display: inline-grid; place-items: center; cursor: pointer; }
+.color-swatch input { position: absolute; opacity: 0; pointer-events: none; }
+.color-swatch .swatch { width: 30px; height: 30px; border-radius: 9px; border: 2px solid rgba(0,0,0,.12); display: inline-block; }
+.color-swatch input:checked + .swatch { border-color: var(--ink-1); box-shadow: 0 0 0 2px var(--ivory-50), 0 0 0 4px var(--green-700); }
+.color-swatch:hover .swatch { transform: scale(1.06); }
+.swatch-green { background: #1f5a46; }
+.swatch-wine { background: #8b3445; }
+.swatch-gold { background: #b58d45; }
+.swatch-blue { background: #2b6cb0; }
+.swatch-slate { background: #64748b; }
+.swatch-purple { background: #6b46c1; }
+
+/* Credential connectivity status */
+.credential-connect-status { padding: 8px 12px; border-radius: 8px; font-size: .8125rem; margin-top: 10px; }
+.credential-connect-status.ok { background: rgba(46,160,67,.12); color: #1a7f37; }
+.credential-connect-status.error { background: rgba(154,52,18,.10); color: #9a3412; }
+.credential-connect-status.testing { background: rgba(31,90,70,.08); color: var(--ink-2); }
 .section-kicker { display: block; color: var(--green-700); font-size: 0.8125rem; font-weight: 800; letter-spacing: .16em; }
 .hero-row, .page-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; }
 .hero-row { margin-bottom: 25px; }
 .hero-row h2, .page-intro h2 { margin: 4px 0 7px; font-size: clamp(25px, 2.2vw, 34px); line-height: 1.18; letter-spacing: -.035em; }
 .hero-row p, .page-intro p { margin: 0; color: var(--ink-2); font-size: 1rem; }
 .page-intro { margin-bottom: 24px; }
+.dashboard-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 24px; }
+.dashboard-card { display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); cursor: pointer; transition: box-shadow .18s, transform .18s cubic-bezier(.22,.61,.36,1), border-color .18s, opacity .3s ease; min-height: 240px; position: relative; overflow: hidden; }
+/* Cards rise into place when the page appears, with a small stagger. The cards
+   are static markup, so this plays on page entry, not on data refreshes. */
+@keyframes dashboardCardIn { from { opacity: 0; transform: translateY(12px); } }
+@media (prefers-reduced-motion: no-preference) {
+  .dashboard-card { animation: dashboardCardIn .34s cubic-bezier(.22,.61,.36,1) backwards; }
+  .dashboard-card:nth-child(2) { animation-delay: .06s; }
+  .dashboard-card:nth-child(3) { animation-delay: .12s; }
+}
+.dashboard-card:hover { box-shadow: var(--shadow-md); transform: translateY(-3px); border-color: rgba(31, 90, 70, .25); }
+.dashboard-card:hover .dashboard-card-icon { transform: scale(1.08) rotate(-3deg); }
+.dashboard-card:hover .dashboard-card-open { background: var(--green-800); color: var(--ivory-50); border-color: var(--green-800); }
+.dashboard-card-head { display: flex; align-items: center; gap: 14px; }
+.dashboard-card-icon { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; flex-shrink: 0; transition: transform .25s cubic-bezier(.34,1.56,.64,1); }
+.dashboard-card-icon.green { background: var(--green-50); color: var(--green-800); }
+.dashboard-card-icon.wine { background: var(--wine-100); color: var(--wine-700); }
+.dashboard-card-icon.gold { background: var(--gold-100); color: #6b4f1c; }
+.dashboard-card-icon svg { width: 26px; height: 26px; }
+.dashboard-card-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dashboard-card-title span { font-size: .8125rem; color: var(--ink-3); letter-spacing: .04em; }
+.dashboard-card-title strong { font-size: 1.125rem; color: var(--ink); line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dashboard-card-title small { font-size: .75rem; color: var(--ink-3); }
+.dashboard-card-detail { flex: 1; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.dashboard-card-detail p { margin: 0; font-size: .8125rem; color: var(--ink-3); line-height: 1.6; }
+.dashboard-deadline { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 9px; background: var(--ivory-50); border: 1px solid var(--border); transition: background .16s, border-color .16s; }
+.dashboard-deadline:hover { background: var(--green-50); border-color: rgba(42, 114, 90, .25); }
+.dashboard-deadline strong { font-size: .8125rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dashboard-deadline small { font-size: .6875rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dashboard-lesson-line { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 9px; background: var(--ivory-50); border: 1px solid var(--border); font-size: .8125rem; }
+.dashboard-lesson-line strong { color: var(--green-800); white-space: nowrap; }
+.dashboard-lesson-line span { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dashboard-lesson-line.is-now { background: var(--green-50); border-color: rgba(42, 114, 90, .3); }
+.dashboard-card-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--ivory-50); color: var(--ink-2); font-size: .8125rem; cursor: pointer; align-self: flex-start; white-space: nowrap; flex: 0 0 auto; width: auto; height: auto; transition: background .18s, color .18s, border-color .18s; }
+.dashboard-card-open svg { width: 14px; height: 14px; }
+/* Entry animations only run when an element first appears (new content),
+   never on re-render of unchanged siblings. Chromium supports @starting-style. */
+@starting-style {
+  .dashboard-deadline, .dashboard-lesson-line { opacity: 0; transform: translateY(6px); }
+  .toast { opacity: 0; transform: translateY(8px); }
+}
+.dashboard-deadline, .dashboard-lesson-line { transition: opacity .3s ease, transform .3s cubic-bezier(.22,.61,.36,1), background .16s, border-color .16s; }
+.toast { transition: opacity .22s ease, transform .22s ease; }
+/* Page switches fade once; content re-renders inside a page stay still. */
+@media (prefers-reduced-motion: no-preference) {
+  @starting-style { .page.active { opacity: 0; transform: translateY(8px); } }
+  .page.active { transition: opacity .28s ease, transform .28s cubic-bezier(.22,.61,.36,1); }
+  @starting-style { dialog[open].modal { opacity: 0; transform: translateY(10px) scale(.98); } }
+  dialog[open].modal { transition: opacity .2s ease, transform .2s cubic-bezier(.22,.61,.36,1), border-color .2s ease; }
+  .modal::backdrop { transition: background .2s ease; }
+}
 .primary-button, .secondary-button, .ghost-button {
   display: inline-flex;
   align-items: center;
@@ -355,7 +447,7 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .segmented-tabs button { min-width: 84px; height: 32px; padding: 0 14px; border-radius: 9px; color: var(--ink-2); background: transparent; font-size: 0.9375rem; font-weight: 700; }
 .segmented-tabs button.active { color: var(--green-800); background: #fff; box-shadow: 0 2px 8px rgba(31,90,70,.09); }
 .tab-panel { display: none; }
-.tab-panel.active { display: block; animation: pageIn .2s ease; }
+.tab-panel.active { display: block; }
 .task-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .search-field { display: flex; align-items: center; gap: 8px; height: 39px; padding: 0 11px; border: 1px solid var(--border); border-radius: 11px; background: rgba(255,255,255,.7); }
 .search-field:focus-within { border-color: rgba(31,90,70,.33); box-shadow: 0 0 0 3px rgba(31,90,70,.06); }
@@ -687,7 +779,7 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .settings-sections-nav button.active { color: var(--green-800); background: #fff; font-weight: 700; box-shadow: 0 3px 12px rgba(31,90,70,.07); }
 .settings-content { min-width: 0; padding: 27px 30px; }
 .settings-section { display: none; max-width: 780px; }
-.settings-section.active { display: block; animation: pageIn .2s ease; }
+.settings-section.active { display: block; }
 .settings-section > h3 { margin: 0 0 18px; font-size: 1.25rem; }
 .setting-intro { margin: -11px 0 17px; color: var(--ink-3); font-size: 0.875rem; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; min-height: 67px; border-bottom: 1px solid var(--border); }
@@ -767,6 +859,7 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
 .modal-head > button { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); background: transparent; font-size: 1.3125rem; font-weight: 300; }
 .modal-head > button:hover { background: rgba(24,35,30,.06); }
 .modal label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 13px; }
+.modal label[hidden] { display: none !important; }
 .modal label > span { color: var(--ink-2); font-size: 0.8125rem; font-weight: 700; }
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 39px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; outline: 0; background: #fff; font-size: 0.9375rem; }
 .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: rgba(31,90,70,.36); box-shadow: 0 0 0 3px rgba(31,90,70,.06); }

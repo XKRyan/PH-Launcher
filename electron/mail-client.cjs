@@ -318,12 +318,16 @@ class SchoolMailClient {
       fail('CREDENTIAL_UNAVAILABLE', '无法读取邮箱凭据');
     }
     const username = typeof value?.username === 'string' ? value.username.trim().toLowerCase() : '';
+    const authcode = typeof value?.authcode === 'string' ? value.authcode.trim() : '';
     const password = typeof value?.password === 'string' ? value.password : '';
-    if (!isValidEmail(username) || !password || /[\r\n\u0000]/.test(username)) {
+    // NetEase Coremail IMAP/SMTP requires the client authcode (客户端授权码);
+    // the web password is only a fallback for tenants that still allow it.
+    const secret = authcode || password;
+    if (!isValidEmail(username) || !secret || /[\r\n\u0000]/.test(username)) {
       fail('LOGIN_REQUIRED', '请先配置有效的学校邮箱和客户端授权码');
     }
-    const key = createHash('sha256').update(username).update('\0').update(password).digest('hex');
-    return { username, password, key };
+    const key = createHash('sha256').update(username).update('\0').update(secret).digest('hex');
+    return { username, password: secret, authcode, key };
   }
 
   _closeClient(client) {
@@ -432,11 +436,11 @@ class SchoolMailClient {
     this._closeClient(client);
   }
 
-  async _withInbox(work) {
+  async _withInbox(work, { readOnly = true } = {}) {
     const context = await this._imapSession();
     let lock;
     try {
-      lock = await context.client.getMailboxLock('INBOX', { readOnly: true, description: 'PH Launcher native mail' });
+      lock = await context.client.getMailboxLock('INBOX', { readOnly, description: 'PH Launcher native mail' });
       this._assertCurrent(context);
       const result = await work(context.client, context);
       this._assertCurrent(context);
@@ -510,12 +514,15 @@ class SchoolMailClient {
     });
   }
 
-  async _parsedMessage(uid) {
+  async _parsedMessage(uid, { markSeen = false } = {}) {
     const normalizedUid = String(uid ?? '');
     if (!/^[1-9]\d{0,9}$/.test(normalizedUid)) fail('INVALID_ARGUMENT', '邮件 id 不合法');
     return this._withInbox(async (client, context) => {
       const message = await client.fetchOne(normalizedUid, {
         size: true,
+        // FLAGS must be requested explicitly; relying on unsolicited data left
+        // message.flags undefined, which skipped the server-side \Seen write.
+        flags: true,
         source: { start: 0, maxLength: MAX_RAW_MESSAGE_BYTES + 1 },
       }, { uid: true });
       if (!message || !message.source) fail('NOT_FOUND', '邮件不存在或已被移动');
@@ -531,12 +538,29 @@ class SchoolMailClient {
         fail('PARSE_FAILED', '邮件内容无法解析');
       }
       this._assertCurrent(context);
-      return { parsed: parsed || {}, context, uid: normalizedUid };
-    });
+      let markedSeen = false;
+      let markSeenError = '';
+      if (markSeen) {
+        const alreadySeen = message.flags instanceof Set && message.flags.has('\\Seen');
+        if (alreadySeen) markedSeen = true;
+        else {
+          // STORE +FLAGS is idempotent, so a failure here is reported instead of
+          // being swallowed: a silent miss is exactly why mail stayed unread on
+          // the server and in the web client.
+          try {
+            await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true });
+            markedSeen = true;
+          } catch (error) {
+            markSeenError = String(error?.message || '无法在服务器标记为已读');
+          }
+        }
+      }
+      return { parsed: parsed || {}, context, uid: normalizedUid, markedSeen, markSeenError };
+    }, { readOnly: !markSeen });
   }
 
   async read(uid) {
-    const { parsed, context, uid: normalizedUid } = await this._parsedMessage(uid);
+    const { parsed, context, uid: normalizedUid, markedSeen, markSeenError } = await this._parsedMessage(uid, { markSeen: true });
     const from = uniqueAddresses(parsed.from);
     const to = uniqueAddresses(parsed.to);
     const cc = uniqueAddresses(parsed.cc);
@@ -544,6 +568,19 @@ class SchoolMailClient {
     let text = parsed.text ? cleanBody(parsed.text) : htmlToPlainText(parsed.html);
     if (utf8Size(text) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     text = text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n');
+    // Keep the original HTML part so the renderer can show formatted mail
+    // in a sandboxed iframe; text remains the universal fallback. Strip
+    // scripts and event handlers here as defense in depth — the iframe is
+    // sandboxed anyway, but sanitized data must never carry live code.
+    let html = parsed.html ? cleanBody(parsed.html) : '';
+    if (html) {
+      html = html
+        .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+        .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/javascript\s*:/gi, '');
+    }
+    if (html && utf8Size(html) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     const links = extractMailLinks(normalizedUid, parsed);
     const attachments = messageAttachments(normalizedUid, parsed);
     const contactCandidates = uniqueAddresses([from, to, cc]).filter((entry) => entry.address !== context.username);
@@ -555,9 +592,12 @@ class SchoolMailClient {
       date: safeDate(parsed.date),
       subject: cleanInline(parsed.subject || '(无主题)', 500) || '(无主题)',
       text,
+      html,
       links: links.map(({ id, label, host }) => ({ id, label, host })),
       attachments: attachments.map(({ id, name, size }) => ({ id, name, size })),
       contactCandidates,
+      markedSeen,
+      markSeenError,
     };
   }
 
@@ -593,6 +633,66 @@ class SchoolMailClient {
       .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address))
       .slice(0, limit)
       .map((entry) => ({ name: entry.name, address: entry.address }));
+  }
+
+  // Proactive contact harvest: scan INBOX + sent folders (message headers
+  // only, never bodies) and feed every message into the same _harvest
+  // bookkeeping the passive read-time collection uses, so deduplication,
+  // own-address and system-address filtering stay in one place.
+  async harvestContacts({ perFolder = 400, maxFolders = 4 } = {}) {
+    if (!Number.isInteger(perFolder) || perFolder < 1 || perFolder > 1000) fail('INVALID_ARGUMENT', '每文件夹收割数量无效');
+    if (!Number.isInteger(maxFolders) || maxFolders < 1 || maxFolders > 6) fail('INVALID_ARGUMENT', '收割文件夹数量无效');
+    const context = await this._imapSession();
+    this._assertCurrent(context);
+    const client = context.client;
+    // INBOX plus sent folders; Coremail names sent folders in modified UTF-7
+    // (e.g. &XfJT0ZAB- = 已发送) which imapflow decodes for us.
+    const folders = [];
+    for await (const info of client.list()) {
+      if (!info?.path) continue;
+      const specialUse = String(info.specialUse || (Array.isArray(info.specialUse) ? info.specialUse.join(' ') : ''));
+      const decodedName = String(info.name || '');
+      const isSent = specialUse.includes('Sent') || /sent|已发送/i.test(decodedName);
+      if (info.path === 'INBOX' || isSent) folders.push(info.path);
+      if (folders.length >= maxFolders) break;
+    }
+    const scanned = [];
+    for (const mailboxPath of folders) {
+      let lock;
+      try {
+        lock = await client.getMailboxLock(mailboxPath, { readOnly: true });
+        this._assertCurrent(context);
+        const uids = (await client.search({ all: true }, { uid: true })) || [];
+        const recent = uids.slice(-perFolder);
+        for (const uid of recent) {
+          const message = await client.fetchOne(uid, { envelope: true }, { uid: true });
+          const envelope = message?.envelope;
+          if (!envelope) continue;
+          const fields = [];
+          for (const key of ['from', 'to', 'cc']) {
+            const list = Array.isArray(envelope[key]) ? envelope[key] : [];
+            for (const entry of list) {
+              if (entry?.address) fields.push({ name: entry.name || '', address: entry.address });
+            }
+          }
+          this._harvest(`${mailboxPath}:${uid}`, fields, context);
+        }
+        scanned.push({ mailbox: mailboxPath, messages: recent.length });
+      } catch (error) {
+        if (error instanceof MailClientError) throw error;
+        scanned.push({ mailbox: mailboxPath, error: String(error.message || error).slice(0, 100) });
+      } finally {
+        try { lock?.release(); } catch { /* no-op */ }
+      }
+    }
+    return {
+      scanned,
+      folders: folders.length,
+      contacts: [...this._contacts.values()]
+        .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address))
+        .slice(0, 300)
+        .map((entry) => ({ name: entry.name, address: entry.address, count: entry.count })),
+    };
   }
 
   _normalizeDraft(draft) {

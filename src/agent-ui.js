@@ -60,7 +60,8 @@
         existing.updatedAt = item.updatedAt;
         return [existing];
       }
-      return [{ id: item.id, title: typeof item.title === 'string' ? item.title : '', connectionKey: typeof item.connectionKey === 'string' ? item.connectionKey : '', messages: cleanMessages(item.messages), updatedAt: item.updatedAt }];
+      return [{ id: item.id, title: typeof item.title === 'string' ? item.title : '', connectionKey: typeof item.connectionKey === 'string' ? item.connectionKey : '', messages: cleanMessages(item.messages), updatedAt: item.updatedAt,
+        shared: item.shared === true, sharedApp: typeof item.sharedApp === 'string' ? item.sharedApp : '' }];
     }) : [];
     const restoredIds = new Set(restored.map((session) => String(session.id)));
     const localOnly = sessions.filter((session) => !deletedSessionIds.has(String(session.id)) && !restoredIds.has(String(session.id))
@@ -78,14 +79,20 @@
 
   function renderHistory() {
     const list = document.getElementById('agentSessions');
-    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}>${esc(titleFor(session))}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
+    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}><span class="agent-session-title">${esc(titleFor(session))}</span>${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));
       status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyAvailable ? '聊天记录已加密保存在此设备。' : '此设备的聊天仅在当前打开期间保留。';
     }
     const notice = document.getElementById('agentSessionNotice');
-    if (notice) { notice.classList.toggle('hidden', !sessionCannotContinue()); notice.textContent = sessionCannotContinue() ? '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。' : ''; }
+    if (notice) {
+      const shared = current?.shared;
+      notice.classList.toggle('hidden', !sessionCannotContinue() && !shared);
+      notice.textContent = shared
+        ? '这段记录来自 Pinghe Launcher Lite 的共用目录（agent/），在这里只读。继续聊天会新建一个属于当前连接的会话。'
+        : sessionCannotContinue() ? '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。' : '';
+    }
   }
   function renderMemories() {
     const list = document.getElementById('agentMemories');
@@ -94,8 +101,67 @@
     list.querySelectorAll('[data-agent-memory-edit]').forEach((button) => button.addEventListener('click', () => editMemory(button.getAttribute('data-agent-memory-edit'))));
     list.querySelectorAll('[data-agent-memory-delete]').forEach((button) => button.addEventListener('click', () => { void removeMemory(button.getAttribute('data-agent-memory-delete')); }));
   }
-  function renderMemoryToggle() {
-    const input = document.getElementById('aiUseMemories');
+  // The AI file tools only ever touch this folder, so it is shown plainly.
+  function renderWorkspace() {
+    const path = document.getElementById('agentWorkspacePath');
+    if (!path) return;
+    const workspace = String(state.data?.settings?.ai?.workspace || '');
+    path.textContent = workspace || '未设置';
+    path.classList.toggle('is-set', Boolean(workspace));
+    const clear = document.getElementById('agentWorkspaceClear');
+    if (clear) clear.disabled = !workspace || state.aiBusy;
+    for (const id of ['agentWorkspacePick', 'agentWorkspaceNew']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = state.aiBusy;
+    }
+  }
+  async function applyWorkspace(result) {
+    if (!result || result.canceled) return;
+    if (state.data?.settings?.ai) {
+      state.data.settings.ai.workspace = result.workspace || '';
+      state.data.settings.ai.workspaces = result.workspaces || [];
+    }
+    renderWorkspace();
+    if (result.workspace) window.toast?.('AI 工作区已设置为 ' + result.workspace);
+  }
+  async function pickWorkspace() {
+    if (state.aiBusy) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.pick?.()); }
+    catch (error) { window.toast?.(`无法设置工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+  async function createWorkspace() {
+    if (state.aiBusy) return;
+    // window.prompt is unavailable in Electron, so the name comes from a real
+    // dialog; the folder itself is created by the main process.
+    const dialog = document.getElementById('agentWorkspaceDialog');
+    const input = document.getElementById('agentWorkspaceName');
+    if (!dialog || !input) return;
+    const name = await new Promise((resolve) => {
+      const form = document.getElementById('agentWorkspaceForm');
+      const finish = (value) => {
+        form?.removeEventListener('submit', onSubmit);
+        dialog.removeEventListener('close', onClose);
+        resolve(value);
+      };
+      const onSubmit = (event) => { event.preventDefault(); const value = input.value.trim(); if (!value) return; dialog.close(); finish(value); };
+      const onClose = () => finish('');
+      form?.addEventListener('submit', onSubmit);
+      dialog.addEventListener('close', onClose, { once: true });
+      dialog.showModal();
+      input.focus();
+      input.select();
+    });
+    if (!name) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.create?.(name)); }
+    catch (error) { window.toast?.(`无法新建工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+  async function clearWorkspace() {
+    if (state.aiBusy) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.clear?.()); }
+    catch (error) { window.toast?.(`无法清除工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+
+  function renderMemoryToggle() {    const input = document.getElementById('aiUseMemories');
     const risk = document.getElementById('aiMemoryRisk');
     const provider = state.data?.settings?.ai?.provider;
     if (!input) return;
@@ -111,7 +177,7 @@
     const control = Boolean(ai.launcherControlEnabled && ai.controlConsentVersion);
     const mode = control && ai.permissionMode === 'full' && ai.mailReadEnabled && ai.mailConsentVersion === 2 ? 'full' : control ? 'confirm' : 'chat';
     document.querySelectorAll('[data-agent-mode]').forEach((button) => { button.classList.toggle('active', button.dataset.agentMode === mode); button.disabled = state.aiBusy; });
-    renderHistory(); renderMemories(); renderMemoryToggle();
+    renderHistory(); renderMemories(); renderMemoryToggle(); renderWorkspace();
     const model = document.getElementById('agentModel');
     const modelName = ai.provider === 'local' ? ai.localModel : ai.provider === 'api' ? ai.apiModel : '';
     const warmup = state.aiLocalWarmup?.localWarmup;
@@ -204,6 +270,9 @@
     document.getElementById('aiUseMemories')?.addEventListener('change', (event) => { state.aiUseMemories = Boolean(event.target.checked); renderMemoryToggle(); });
     document.querySelectorAll('[data-agent-mode]').forEach((button) => button.addEventListener('click', () => { if (state.aiBusy) return; const toggle = document.getElementById('aiControlToggle'); const ai = state.data.settings.ai || {}; const currentMode = Boolean(ai.launcherControlEnabled && ai.controlConsentVersion && ai.permissionMode === 'full' && ai.mailReadEnabled && ai.mailConsentVersion === 2) ? 'full' : Boolean(ai.launcherControlEnabled && ai.controlConsentVersion) ? 'confirm' : 'chat'; const mode = button.dataset.agentMode; if (mode === currentMode) return; toggle.dataset.agentMode = mode; toggle.checked = mode !== 'chat'; toggle.dispatchEvent(new Event('change')); render(); }));
     document.getElementById('agentConfigure')?.addEventListener('click', () => document.getElementById('aiEditConfig').click());
+    document.getElementById('agentWorkspacePick')?.addEventListener('click', () => { void pickWorkspace(); });
+    document.getElementById('agentWorkspaceNew')?.addEventListener('click', () => { void createWorkspace(); });
+    document.getElementById('agentWorkspaceClear')?.addEventListener('click', () => { void clearWorkspace(); });
   }
   window.agentUI = { render, mount, loadHistory, scheduleSave, saveNow, saveMemory, prepareForSend, currentSession: () => current, connectionKey: () => connectionKey };
 })();
