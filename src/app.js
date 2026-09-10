@@ -1850,6 +1850,9 @@ function renderWebsiteSettings() {
   </div>`).join('');
   renderCredentialSettings();
   renderCustomWebsiteSettings();
+  // Accounts shared through settings.yaml are only known after the main process
+  // has read the shared file.
+  void refreshSharedAccounts().then(() => renderCredentialSettings());
 }
 
 function credentialEntry(siteId) {
@@ -1900,7 +1903,19 @@ function renderCredentialSettings() {
         : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
       : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
     return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
-  }).join('') + xinlvCredentialCard();
+  }).join('') + xinlvCredentialCard() + sharedAccountCard();
+}
+
+// Accounts can be shared with Pinghe Launcher Lite through settings.yaml. Both
+// directions are explicit, and the file is plain text, so the warning is shown
+// before anything is written.
+function sharedAccountCard() {
+  const shared = state.sharedAccounts;
+  if (!shared?.available) return '';
+  const known = shared.platforms.filter((entry) => entry.supported);
+  if (!known.length) return '';
+  const names = known.map((entry) => `${entry.platform}${entry.username ? `（${entry.username}）` : ''}`).join('、');
+  return `<div class="credential-setting shared-account-setting"><div class="site-card-icon blue">${icon('#i-check')}</div><div><strong>共用 settings.yaml 里的账号</strong><small>检测到 ${escapeHtml(names)}；导入后本机加密保存，不会自动登录</small></div><div class="credential-actions"><button type="button" data-import-shared-accounts>导入账号</button><button type="button" data-export-shared-accounts>写入共用文件</button></div></div>`;
 }
 
 // Xinlv signs in through its own REST API, so it shares this login list but
@@ -2313,6 +2328,29 @@ async function renderDataChoice() {
   hint.textContent = parts.join('｜');
   share.hidden = !(choice.liteAvailable && choice.root !== choice.liteRoot);
   own.hidden = choice.source !== 'pointer' && choice.source !== 'portable';
+}
+
+async function refreshSharedAccounts() {
+  try { state.sharedAccounts = await window.ph.school.sharedAccounts(); }
+  catch { state.sharedAccounts = { available: false, platforms: [] }; }
+}
+
+async function importSharedAccounts() {
+  try {
+    const result = await window.ph.school.importSharedAccounts();
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    const imported = (result.imported || []).map((entry) => entry.platform).join('、');
+    toast(imported ? `已导入 ${imported}；密码仍只在本机加密保存` : '没有可导入的账号（本机已有或字段不全）');
+  } catch (error) { toast(`导入失败：${error.message}`, 'error'); }
+}
+
+async function exportSharedAccounts() {
+  if (!await localizedConfirm('把本机保存的账号写入共用的 settings.yaml？该文件是明文，同机其他程序可以读取。')) return;
+  try {
+    const result = await window.ph.school.exportSharedAccounts();
+    toast(`已写入 ${result.exported.join('、')}；文件是明文，请注意本机安全`);
+  } catch (error) { toast(`写入失败：${error.message}`, 'error'); }
 }
 
 async function updateShortcut(action, patch) {
@@ -2808,6 +2846,8 @@ function bindEvents() {
     if (event.target.closest('[data-edit-xinlv]')) return openXinlvLoginDialog();
     if (event.target.closest('[data-connect-xinlv]')) return connectWithSavedCredential(XINLV_ACCOUNT.id);
     if (event.target.closest('[data-remove-xinlv]')) return removeCredential(XINLV_ACCOUNT.id);
+    if (event.target.closest('[data-import-shared-accounts]')) return importSharedAccounts();
+    if (event.target.closest('[data-export-shared-accounts]')) return exportSharedAccounts();
   });
   $('#credentialRiskAccepted').addEventListener('change', (event) => {
     $('#saveCredentialButton').disabled = !event.target.checked;

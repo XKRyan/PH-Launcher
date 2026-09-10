@@ -94,24 +94,43 @@ JSON 缩进 2 空格、非 ASCII **不转义**(直接写中文)。
 **谁写哪个段**:`accounts`(四平台凭据)与 `agent`(AI 工作区等)是两侧共用的;
 PHL 自己的界面、外观、快捷键、学习数据**不写进这个文件**(它们在 `phl/`)。
 
-PHL 目前对这个文件的读写是**块级编辑**,不是整份重新序列化:
+PHL 目前对这个文件的读写是**块级编辑**,不是整份重新序列化
+(`electron/settings-yaml.cjs`):
 
-- 读:`electron/settings-yaml.cjs` 的 `readNestedMap(text, 'accounts')` /
-  `readScalarMap(text, 'agent')` / `readStringList(text, 'agent', 'workspaces')`。
-  只解析需要的顶层块,缺失块返回 `{}` / `[]`,畸形文件不抛错。
+- 读:`readNestedMap(text, 'accounts')` / `readScalarMap(text, 'agent')` /
+  `readStringList(text, 'agent', 'workspaces')`。只解析需要的顶层块,缺失块返回
+  `{}` / `[]`,畸形文件不抛错(值原样返回:带引号的按引号解析,`true`/`false`、
+  纯数字转成对应类型,空值返回空字符串)。内联列表(`[a, b]`)只由
+  `readStringList` 读取,不会当成标量。
 - 写:`replaceBlock(text, name, body)` 只替换该块,**块外的每一个字节原样保留**
-  (注释、空行、未知段落、其他程序的字段都不会被重排或丢弃)。
-- 落盘:`atomicWriteFileSync()`(临时文件 + `rename`,LF、无 BOM)。
+  (注释、空行、未知段落、其他程序的字段都不会被重排或丢弃);`body` 由
+  `serializeNestedMap` / `serializeScalarMap` 生成,必须含结尾换行,否则报错。
+  值需要引号时会用单引号转义(`'it''s'`);看起来像布尔或数字的**字符串**也会加
+  引号,避免读回来时变成别的类型。
+- 落盘:`atomicWriteFileSync()`(同目录临时文件 + `rename`,UTF-8 无 BOM,换行
+  统一为 `LF`,沿用原文件权限)。
 
 配套规则:
 
 - **凭据是明文**(见 PLL 文档 §2.2 的说明),PHL 读取时不做额外加密处理,
   也不会把它上传、打印或写进日志;PHL 自己的凭据库仍是系统加密的
-  `phl/credentials.json`,共享只发生在用户开启共用目录之后。
-- PHL 只在用户明确启用共用后才会把账号写进 `settings.yaml`;默认只做**读取**
-  (用于建议/预填),不做写入,以免覆盖用户在其他程序里的选择。
-- `accounts` 下只更新 PHL 拥有的平台字段,不整块替换;PLL 新增的平台
-  (如 `xinlv`)原样保留。
+  `phl/credentials.json`。
+- **两个方向都是显式操作**,界面在"设置 → 网站 → 账号记忆"里:
+  - `导入账号`:把共用文件里的四平台账号读进 PHL 的加密凭据库;已经保存过的
+    平台一律跳过(不会覆盖),缺少用户名或可用密钥的条目也跳过;
+  - `写入共用文件`:把 PHL 已保存的账号(含心履用户名与令牌)写进 `accounts`
+    段。因为文件是明文,点击前会再确认一次。
+  字段映射(`electron/shared-accounts.cjs`):
+
+  | 共用 `accounts.<平台>` | PHL 站点 | 映射 |
+  |---|---|---|
+  | `edupage` | `edupage` | `username` → 账号;`password` → 密码 |
+  | `managebac` | `managebac` | `email` → 账号;`password` → 密码;写入时补 `base_url` |
+  | `mail` | `mail` | `email` → 账号;`authcode` 优先作密钥,`password` 作回退;写入时补 `imap_host`/`smtp_host` |
+  | `xinlv` | 心履 | `username` / `token`,PHL 存在加密的 `launcher.json` 里 |
+
+- 导入的账号只写入本机加密凭据库,不会**自动**用在登录上:自动填入与自动重新
+  登录仍各自需要单独开启(与既有行为一致)。
 
 ---
 

@@ -2563,6 +2563,54 @@ async function createEduPageImportProposal() {
 
 const sharedScheduleApi = require('./shared-schedule.cjs');
 const sharedCalendarBridge = require('./shared-calendar-bridge.cjs');
+const sharedSettings = require('./settings-yaml.cjs');
+const sharedAccounts = require('./shared-accounts.cjs');
+
+function sharedSettingsFile() { return dataRoot().settings; }
+
+/** What the other launcher already wrote into the shared settings.yaml. */
+function sharedAccountsSnapshot() {
+  const text = sharedSettings.readTextFile(sharedSettingsFile());
+  const accounts = text ? sharedSettings.readNestedMap(text, 'accounts') : {};
+  const platforms = sharedAccounts.describeSharedAccounts(accounts);
+  return { available: platforms.length > 0, file: sharedSettingsFile(), platforms };
+}
+
+/**
+ * Copies accounts from the shared file into this app's encrypted vault. Only an
+ * explicit user action reaches here; existing saved accounts are never replaced.
+ */
+function importSharedAccounts() {
+  const text = sharedSettings.readTextFile(sharedSettingsFile());
+  if (!text) throw new Error('共用数据目录里还没有 settings.yaml');
+  const plan = sharedAccounts.planImport(sharedSettings.readNestedMap(text, 'accounts'), credentialVault.status()?.sites || {});
+  const imported = [];
+  for (const entry of plan.imported) {
+    credentialVault.saveCredential({ siteId: entry.siteId, username: entry.username, password: entry.password, authcode: entry.authcode, autoFill: true, autoLogin: false });
+    imported.push({ platform: entry.platform, siteId: entry.siteId, username: entry.username });
+  }
+  return { imported, skipped: plan.skipped, status: credentialStatus() };
+}
+
+/**
+ * Writes this app's saved accounts into the shared `accounts` block. The file is
+ * plain text by design (see docs/data-format.md §3), so this stays a deliberate
+ * action with its own warning in the interface.
+ */
+function exportSharedAccounts() {
+  const file = sharedSettingsFile();
+  if (!credentialVault.availability().supported) throw new Error('当前系统无法读取已保存账号，不能写入共用文件');
+  const records = {};
+  for (const siteId of SITE_IDS) records[siteId] = credentialVault.getForFill(siteId, { allowDisabled: true });
+  const xinlv = secureStore.xinlvData();
+  const owned = sharedAccounts.ownedPlatforms(records, xinlv);
+  if (!owned.length) throw new Error('本机还没有保存任何账号，没有可写入的内容');
+  const text = sharedSettings.readTextFile(file);
+  // Read-modify-write: platforms this app does not own keep their values.
+  const merged = sharedAccounts.buildAccountsBlock(sharedSettings.readNestedMap(text, 'accounts'), records, xinlv);
+  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'accounts', sharedSettings.serializeNestedMap('accounts', merged)));
+  return { exported: owned, file, status: credentialStatus() };
+}
 
 function sharedScheduleFile() { return dataRoot().schedule; }
 
@@ -2656,6 +2704,9 @@ function registerIpc() {
   });
   schoolHandle('get', schoolSnapshot);
   schoolHandle('sync', syncSchool);
+  schoolHandle('shared-accounts', () => sharedAccountsSnapshot());
+  schoolHandle('import-shared-accounts', () => importSharedAccounts());
+  schoolHandle('export-shared-accounts', () => exportSharedAccounts());
   schoolHandle('login', loginSchoolAccount);
   const mailbox = createMailController({
     getClient: getSchoolMailClient,
