@@ -54,7 +54,10 @@ test('this app mirrors its own session into the shared folder in the standard sh
   assert.equal(fs.readFileSync(file, 'utf8').endsWith('\n'), true);
   assert.equal(written.version, 1);
   assert.equal(written.kind, 'phl-agent-session');
-  assert.equal(written.updated_at, now().toISOString());
+  // 与共享 Schedule 同一约定：本地时区偏移，不用 UTC 的 Z。
+  assert.match(written.updated_at, /[+-]\d{2}:\d{2}$/);
+  assert.doesNotMatch(written.updated_at, /Z$/);
+  assert.equal(written.updated_at, require('../electron/shared-schedule.cjs').localIso(now()));
 });
 
 test('tool and system traffic from the other application is dropped, keeping readable turns', () => {

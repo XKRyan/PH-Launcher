@@ -93,7 +93,8 @@ function writeSharedSession(directory, session, { now = () => new Date() } = {})
     id,
     title: cleanTitle(session.title),
     app: APP_NAME,
-    updated_at: now().toISOString(),
+    // Same timestamp convention as the shared Schedule: local offset, never Z.
+    updated_at: require('./shared-schedule.cjs').localIso(now()),
     history,
   };
   // Never overwrite a transcript the other application rewrote with more context.
