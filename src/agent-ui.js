@@ -60,7 +60,8 @@
         existing.updatedAt = item.updatedAt;
         return [existing];
       }
-      return [{ id: item.id, title: typeof item.title === 'string' ? item.title : '', connectionKey: typeof item.connectionKey === 'string' ? item.connectionKey : '', messages: cleanMessages(item.messages), updatedAt: item.updatedAt }];
+      return [{ id: item.id, title: typeof item.title === 'string' ? item.title : '', connectionKey: typeof item.connectionKey === 'string' ? item.connectionKey : '', messages: cleanMessages(item.messages), updatedAt: item.updatedAt,
+        shared: item.shared === true, sharedApp: typeof item.sharedApp === 'string' ? item.sharedApp : '' }];
     }) : [];
     const restoredIds = new Set(restored.map((session) => String(session.id)));
     const localOnly = sessions.filter((session) => !deletedSessionIds.has(String(session.id)) && !restoredIds.has(String(session.id))
@@ -78,14 +79,20 @@
 
   function renderHistory() {
     const list = document.getElementById('agentSessions');
-    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}>${esc(titleFor(session))}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
+    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}>${esc(titleFor(session))}${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));
       status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyAvailable ? '聊天记录已加密保存在此设备。' : '此设备的聊天仅在当前打开期间保留。';
     }
     const notice = document.getElementById('agentSessionNotice');
-    if (notice) { notice.classList.toggle('hidden', !sessionCannotContinue()); notice.textContent = sessionCannotContinue() ? '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。' : ''; }
+    if (notice) {
+      const shared = current?.shared;
+      notice.classList.toggle('hidden', !sessionCannotContinue() && !shared);
+      notice.textContent = shared
+        ? '这段记录来自 Pinghe Launcher Lite 的共用目录（agent/），在这里只读。继续聊天会新建一个属于当前连接的会话。'
+        : sessionCannotContinue() ? '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。' : '';
+    }
   }
   function renderMemories() {
     const list = document.getElementById('agentMemories');

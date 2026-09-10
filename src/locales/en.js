@@ -44,6 +44,7 @@
       '还没有保存的长期记忆。': 'No long-term memory saved yet.', '保存记忆': 'Save memory', '取消编辑': 'Cancel editing', '本次使用长期记忆': 'Use long-term memory this time',
       '聊天记录已加密保存在此设备。': 'Chat history is encrypted and stored on this device.', '此设备的聊天仅在当前打开期间保留。': 'Chats on this device are kept only while this window is open.',
       '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。': 'This record belongs to another AI connection. You can view it; continuing starts a new chat and does not send the old content to the current service.',
+      '这段记录来自 Pinghe Launcher Lite 的共用目录（agent/），在这里只读。继续聊天会新建一个属于当前连接的会话。': 'This record comes from the shared agent/ folder used by Pinghe Launcher Lite and is read-only here. Continuing starts a new chat for the current connection.',
       '完整权限含收件箱读取，任何写入仍需你确认。': 'Full access includes inbox reading. Any write still needs your confirmation.',
       'AI 操作启动器': 'AI launcher actions', '会话': 'Chats', '＋ 新会话': '＋ New chat', '当前模型': 'Current model', '连接设置': 'Connection settings',
       '查看未读邮件': 'Check unread mail',

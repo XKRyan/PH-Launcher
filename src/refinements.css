@@ -112,3 +112,5 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .data-share-row strong { display:block; font-size:.9375rem; }
 .data-share-row p { margin:4px 0 0; font-size:.8125rem; color:var(--ink-2); line-height:1.6; }
 .data-share-actions { display:flex; flex-wrap:wrap; gap:8px; }
+/* A session that comes from the shared agent folder is marked, not silently mixed in. */
+.agent-session-badge { margin-left:6px; padding:1px 6px; border-radius:999px; background:var(--ivory-100,#f2efe7); color:var(--ink-3); font-size:.6875rem; font-weight:600; }

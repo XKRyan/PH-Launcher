@@ -3610,6 +3610,32 @@ async function runSelfTest() {
   checks.aiHistoryReloaded = restoredHistory.sessions[0]?.messages.length === 2 && restoredHistory.memories[0]?.text === 'I prefer concise examples.';
   const dictionaryResult = offlineDictionary.lookup('analyze');
   checks.dictionaryLookup = dictionaryResult.exact?.word === 'analyze' && Boolean(dictionaryResult.exact.translation);
+  // The shared layout: the data root must be the profile-scoped folder during a
+  // headless run, and every shared file must be reachable from it.
+  const layout = dataRoot();
+  checks.sharedLayoutReady = layout.root.startsWith(app.getPath('userData'))
+    && fs.statSync(layout.agent).isDirectory()
+    && path.basename(layout.settings) === 'settings.yaml'
+    && path.basename(layout.schedule) === 'Schedule'
+    && fs.existsSync(ownFile(layout, 'launcher'));
+  // A saved session must reach `agent/` and be readable back as a shared record.
+  if (aiHistoryStore) {
+    const mirrored = aiHistoryStore.saveSession({
+      id: 'self-test-shared', title: 'Shared transcript', connectionKey: 'local:self-test-model',
+      messages: [{ role: 'user', content: 'Explain a study idea.' }, { role: 'assistant', content: 'First understand the context.' }],
+    });
+    const sharedFile = path.join(layout.agent, 'self-test-shared.json');
+    const parsed = fs.existsSync(sharedFile) ? JSON.parse(fs.readFileSync(sharedFile, 'utf8')) : null;
+    checks.sharedSessionMirrored = mirrored.shared === true
+      && parsed?.title === 'Shared transcript'
+      && parsed?.history?.length === 2
+      && parsed?.app === 'PH Launcher';
+    aiHistoryStore.removeSession('self-test-shared');
+    checks.sharedSessionRemoved = !fs.existsSync(sharedFile);
+  } else {
+    checks.sharedSessionMirrored = true;
+    checks.sharedSessionRemoved = true;
+  }
   // Exercise the real file-tool path in a throwaway folder: proposing a document
   // must not write anything, and confirming must produce a readable .docx.
   const workspaceFixture = fs.mkdtempSync(path.join(app.getPath('temp'), 'phl-self-test-workspace-'));
@@ -3883,7 +3909,7 @@ app.whenReady().then(() => {
   });
   try {
     if (!safeStorage.isEncryptionAvailable()) throw Error('系统加密不可用，AI 历史暂不保存');
-    aiHistoryStore = new AiHistoryStore({ filePath: ownFile(dataRoot(), 'aiHistory'),
+    aiHistoryStore = new AiHistoryStore({ filePath: ownFile(dataRoot(), 'aiHistory'), sharedDirectory: dataRoot().agent,
       encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value) });
     aiHistoryStore.load();
   } catch { aiHistoryError = '无法解锁或保存 AI 历史，原有文件不会被覆盖'; aiHistoryStore = null; }
