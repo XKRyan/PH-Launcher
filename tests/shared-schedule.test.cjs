@@ -215,7 +215,8 @@ test('7. 时间戳带本地数字时区偏移且永不以 Z 结尾; localIso 与
   assert.equal(parseOffset('2026-09-10T21:30:00Z'), null);
   assert.equal(parseOffset('2026-09-10T21:30:00'), null);
   assert.equal(parseOffset('不是时间戳'), null);
-  assert.equal(parseOffset(localIso(NOW)), -NOW.getTimezoneOffset()); // 缺省用本机偏移
+  // 缺省用本机偏移; +0 归一化 -0, 否则 UTC 运行器上 0 与 -0 会判不相等。
+  assert.equal(parseOffset(localIso(NOW)) + 0, -NOW.getTimezoneOffset() + 0);
 });
 
 test('8. 写入原子落地: 无临时文件残留, UTF-8 无 BOM, 仅 \\n 换行, 重读内容一致', () => {
