@@ -17,6 +17,8 @@ function harness(change = () => {}, scope = 'mail') {
     shouldOfferLauncherTools: () => false, shouldOfferMailTools: () => false,
     AI_TOOLS: [{ function: { name: 'list_tasks' } }], AI_MAIL_TOOLS: [{ function: { name: 'read_mail' } }],
     AI_LAUNCHER_READ_TOOLS: [{ function: { name: 'read_school_cache' } }],
+    AI_WORKSPACE_TOOLS: [], AI_EXTERNAL_WRITE_TOOLS: [],
+    SCHOOL_WRITE_NAMES: new Set(['send_email', 'submit_managebac_task', 'reply_discussion']),
     LAUNCHER_READ_NAMES: new Set(['read_school_cache']),
     launcherAccountRevision: () => state.revision,
     mailAccountRevision: () => state.revision,

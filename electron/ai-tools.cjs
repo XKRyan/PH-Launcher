@@ -1,7 +1,10 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { SUBJECTS, normalizeSubjectId } = require('./ib-command-terms.cjs');
 const { normalizeCustomSites } = require('./custom-sites.cjs');
 const { isCalendarDate, isCalendarTime, upsertCalendarEvent } = require('./calendar.cjs');
+const { filePreview, planDocxWrite, resolveInside } = require('./ai-workspace-tools.cjs');
 
 const SUBJECT_SELECTION_HELP = SUBJECTS
   .filter((subject) => !['common', 'all'].includes(subject.id))
@@ -12,6 +15,7 @@ const MAX_TASKS_PER_ACTION = 24;
 const MAX_LESSONS_PER_ACTION = 100;
 const MAX_NOTES_PER_ACTION = 8;
 const MAX_CALENDAR_EVENTS_PER_ACTION = 12;
+const MAX_SUBMIT_BYTES = 24 * 1024 * 1024;
 const PROPOSAL_TTL_MS = 10 * 60_000;
 
 const AI_TOOLS = [
@@ -334,8 +338,137 @@ const AI_MAIL_TOOLS = [
   },
 ];
 
-const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'create_calendar_events', 'upsert_schedule', 'set_task_status']);
+// Workspace file tools. They only ever touch the folder the user picked in the
+// AI panel; reads run immediately, writes are proposed like every other write.
+const AI_WORKSPACE_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_workspace',
+      description: '列出 AI 工作区内的文件（最多 200 个，含子目录）。工作区之外的路径不可访问。',
+      parameters: {
+        type: 'object',
+        properties: { subdir: { type: 'string', maxLength: 200, description: '可选；工作区内的相对子目录。' } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_text_file',
+      description: '读取工作区内的文本文件（最多 12000 字符）。',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', minLength: 1, maxLength: 300 } },
+        required: ['path'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_docx',
+      description: '读取工作区内 Word 文档（.docx）的段落文本。',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', minLength: 1, maxLength: 300 } },
+        required: ['path'], additionalProperties: false,
+      },
+    },
+  },
+];
+
+// Writes that reach outside the launcher: files, mail, school submissions.
+const AI_EXTERNAL_WRITE_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'create_docx',
+      description: '提出在工作区新建 Word 文档的方案。只有用户确认后才会写入文件。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', minLength: 1, maxLength: 300, description: '工作区内的相对路径，可省略 .docx。' },
+          title: { type: 'string', minLength: 1, maxLength: 200 },
+          paragraphs: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 20000 } },
+        },
+        required: ['path', 'title', 'paragraphs'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'append_to_docx',
+      description: '提出向工作区内已有 Word 文档追加段落的方案。只有用户确认后才会写入文件。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', minLength: 1, maxLength: 300 },
+          paragraphs: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 20000 } },
+        },
+        required: ['path', 'paragraphs'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_email',
+      description: '提出用学校邮箱发送邮件的方案。收件人必须是完整邮箱地址；只知道姓名时先用 search_mail_contacts 查询。确认后仍会由系统再确认一次才真正发送。',
+      parameters: {
+        type: 'object',
+        properties: {
+          to: { type: 'string', minLength: 3, maxLength: 500, description: '一个或多个完整邮箱地址，用逗号分隔（最多 5 个）。' },
+          subject: { type: 'string', maxLength: 200 },
+          body: { type: 'string', minLength: 1, maxLength: 20000 },
+        },
+        required: ['to', 'subject', 'body'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'submit_managebac_task',
+      description: '提出把工作区内的文件提交到 ManageBac 作业的方案。courseId、taskId 必须来自已同步的资料；确认后才能真正提交。',
+      parameters: {
+        type: 'object',
+        properties: {
+          courseId: { type: 'string', pattern: '^\\d{1,20}$' },
+          taskId: { type: 'string', pattern: '^\\d{1,20}$' },
+          filePath: { type: 'string', minLength: 1, maxLength: 300, description: '工作区内的相对路径。' },
+        },
+        required: ['courseId', 'taskId', 'filePath'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'reply_discussion',
+      description: '提出以学生身份回复一篇 ManageBac 讨论的方案。courseId、discussionId 必须先通过读取讨论列表取得；确认后才会发布。',
+      parameters: {
+        type: 'object',
+        properties: {
+          courseId: { type: 'string', pattern: '^\\d{1,20}$' },
+          discussionId: { type: 'string', pattern: '^\\d{1,20}$' },
+          body: { type: 'string', minLength: 1, maxLength: 4000 },
+          private: { type: 'boolean', description: '可选；true 表示发给老师的私密回复。' },
+        },
+        required: ['courseId', 'discussionId', 'body'], additionalProperties: false,
+      },
+    },
+  },
+];
+
+const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'create_calendar_events', 'upsert_schedule', 'set_task_status',
+  'create_docx', 'append_to_docx', 'send_email', 'submit_managebac_task', 'reply_discussion']);
 const COMMAND_TOOLS = new Set(['open_launcher_page', 'open_custom_site', 'control_focus_timer']);
+// Effects change something outside the launcher's own data file, so they are
+// executed after confirmation instead of being applied to the data snapshot.
+const EFFECT_ACTIONS = new Set(['docx-create', 'docx-append', 'send-email', 'submit-task', 'reply-discussion']);
 
 function cleanText(value, maxLength, fallback = '') {
   const text = String(value ?? '').replace(/\u0000/g, '').trim();
@@ -459,6 +592,69 @@ function sanitizeLessons(rawLessons, source = 'ai') {
   return lessons;
 }
 
+function sanitizeDocxParagraphs(raw) {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 500) throw new Error('每次只能写入 1–500 个段落');
+  return raw.map((item) => {
+    if (typeof item !== 'string') throw new Error('段落必须是文本');
+    const text = item.replace(/\u0000/g, '').replace(/\r\n?/g, '\n');
+    if (text.length > 20_000) throw new Error('单个段落过长，请拆分后再写入');
+    if (!text.trim()) throw new Error('段落不能为空');
+    return text;
+  });
+}
+
+function cleanWorkspaceArgument(value, name) {
+  const text = cleanText(value, 300);
+  if (!text) throw new Error('请提供工作区内的文件路径');
+  if (/^[a-zA-Z]:/.test(text) || text.startsWith('/') || text.startsWith('\\') || text.startsWith('~')) throw new Error('只能使用工作区内的相对路径');
+  if (text.split(/[\\/]+/).includes('..')) throw new Error('路径不能离开工作区');
+  if (name === 'create_docx' && !/\.docx$/i.test(text)) return `${text}.docx`;
+  return text;
+}
+
+function cleanDocumentTitle(value) {
+  const title = cleanText(value, 200);
+  if (!title) throw new Error('文档标题不能为空');
+  return title;
+}
+
+const EMAIL_ADDRESS = /^[^\s@,;<>"]+@[^\s@.,;<>"]+\.[^\s@,;<>"]{2,}$/;
+function sanitizeRecipients(value) {
+  const parts = String(value ?? '').split(/[,;]/).map((item) => item.trim()).filter(Boolean);
+  if (!parts.length) throw new Error('请提供收件人邮箱地址');
+  if (parts.length > 5) throw new Error('一次最多发送给 5 个收件人');
+  for (const part of parts) {
+    if (part.length > 200 || !EMAIL_ADDRESS.test(part)) throw new Error(`收件人地址无效：${part.slice(0, 60)}`);
+  }
+  return [...new Set(parts.map((item) => item.toLowerCase()))].join(', ');
+}
+
+function cleanSubject(value) {
+  const subject = String(value ?? '').replace(/[\r\n\u0000]/g, ' ').trim();
+  if (subject.length > 200) throw new Error('邮件主题过长');
+  return subject;
+}
+
+function cleanMailBody(value) {
+  const body = String(value ?? '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').trim();
+  if (!body) throw new Error('邮件正文不能为空');
+  if (body.length > 20_000) throw new Error('邮件正文过长');
+  return body;
+}
+
+function cleanDiscussionBody(value) {
+  const body = String(value ?? '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').trim();
+  if (!body) throw new Error('回复内容不能为空');
+  if (Buffer.byteLength(body, 'utf8') > 12_000) throw new Error('回复内容过长，请精简后再提交');
+  return body;
+}
+
+function cleanNumericId(value, label) {
+  const text = cleanText(value, 20);
+  if (!/^\d{1,20}$/.test(text)) throw new Error(`${label}编号无效，请先读取最新资料再试`);
+  return text;
+}
+
 function sanitizeToolArguments(name, input, data = {}) {
   const args = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   if (name === 'create_tasks') return { tasks: sanitizeTasks(args.tasks) };
@@ -508,6 +704,24 @@ function sanitizeToolArguments(name, input, data = {}) {
     if (!['start', 'pause', 'reset'].includes(args.action)) throw new Error('不支持的计时器操作');
     return { action: args.action };
   }
+  if (name === 'list_workspace') return { subdir: cleanText(args.subdir, 200) };
+  if (name === 'read_text_file' || name === 'read_docx') return { path: cleanWorkspaceArgument(args.path, name) };
+  if (name === 'create_docx') {
+    return { path: cleanWorkspaceArgument(args.path, name), title: cleanDocumentTitle(args.title), paragraphs: sanitizeDocxParagraphs(args.paragraphs) };
+  }
+  if (name === 'append_to_docx') {
+    return { path: cleanWorkspaceArgument(args.path, name), paragraphs: sanitizeDocxParagraphs(args.paragraphs) };
+  }
+  if (name === 'send_email') {
+    return { to: sanitizeRecipients(args.to), subject: cleanSubject(args.subject), body: cleanMailBody(args.body) };
+  }
+  if (name === 'submit_managebac_task') {
+    return { courseId: cleanNumericId(args.courseId, '课程'), taskId: cleanNumericId(args.taskId, '作业'), filePath: cleanWorkspaceArgument(args.filePath, name) };
+  }
+  if (name === 'reply_discussion') {
+    if (args.private !== undefined && typeof args.private !== 'boolean') throw new Error('私密标记无效');
+    return { courseId: cleanNumericId(args.courseId, '课程'), discussionId: cleanNumericId(args.discussionId, '讨论'), body: cleanDiscussionBody(args.body), private: args.private === true };
+  }
   if (['get_launcher_overview', 'list_schedule', 'preview_edupage_timetable'].includes(name)) return {};
   throw new Error('AI 请求了未授权的操作');
 }
@@ -536,6 +750,15 @@ function relevantDataHash(data) {
   return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
+function workspaceRootOf(data) {
+  const root = data?.settings?.ai?.workspace;
+  return typeof root === 'string' ? root.trim() : '';
+}
+
+function pathRelative(root, target) {
+  return path.relative(fs.realpathSync(root), target).split(path.sep).join('/');
+}
+
 function createAction(name, args, data) {
   const sanitized = sanitizeToolArguments(name, args, data);
   if (name === 'create_tasks') return { type: name, tasks: sanitized.tasks };
@@ -543,6 +766,22 @@ function createAction(name, args, data) {
   if (name === 'create_calendar_events') return { type: name, events: sanitized.events };
   if (name === 'upsert_schedule') return { type: name, lessons: sanitized.lessons };
   if (name === 'set_task_status') return { type: name, ...sanitized };
+  if (name === 'create_docx' || name === 'append_to_docx') {
+    const plan = planDocxWrite(workspaceRootOf(data), name, sanitized);
+    return { type: plan.kind, plan };
+  }
+  if (name === 'send_email') return { type: 'send-email', ...sanitized };
+  if (name === 'submit_managebac_task') {
+    const root = workspaceRootOf(data);
+    if (!root) throw new Error('请先在 AI 助手页选择工作区文件夹');
+    const target = resolveInside(root, sanitized.filePath);
+    const stat = fs.statSync(target, { throwIfNoEntry: false });
+    if (!stat?.isFile()) throw new Error('工作区里找不到要提交的文件');
+    if (!stat.size) throw new Error('要提交的文件是空的');
+    if (stat.size > MAX_SUBMIT_BYTES) throw new Error('要提交的文件超过 24 MB 限制');
+    return { type: 'submit-task', courseId: sanitized.courseId, taskId: sanitized.taskId, path: target, root: fs.realpathSync(root), relative: pathRelative(root, target), bytes: stat.size, filename: path.basename(target) };
+  }
+  if (name === 'reply_discussion') return { type: 'reply-discussion', ...sanitized };
   throw new Error('该操作不能加入写入清单');
 }
 
@@ -593,7 +832,44 @@ function actionPreview(action) {
       items: [{ primary: action.title, secondary: action.done ? '标记为已完成' : '恢复为待处理' }],
     };
   }
+  if (EFFECT_ACTIONS.has(action.type)) return effectPreview(action);
   throw new Error('未知写入操作');
+}
+
+function effectPreview(action) {
+  if (action.type === 'docx-create' || action.type === 'docx-append') return filePreview(action.plan);
+  if (action.type === 'send-email') {
+    return {
+      type: 'email',
+      title: `发送邮件给 ${action.to}`,
+      items: [{ primary: action.subject || '(无主题)', secondary: `${action.body.length} 字 · 确认后还会再弹出一次系统确认` }],
+    };
+  }
+  if (action.type === 'submit-task') {
+    return {
+      type: 'managebac-submission',
+      title: `提交作业到 ManageBac（课程 ${action.courseId} / 作业 ${action.taskId}）`,
+      items: [{ primary: action.relative, secondary: `${Math.ceil(action.bytes / 1024)} KB · 提交后请到 ManageBac 网页确认` }],
+    };
+  }
+  if (action.type === 'reply-discussion') {
+    return {
+      type: 'managebac-reply',
+      title: `${action.private ? '私密回复' : '回复'}讨论（课程 ${action.courseId} / 讨论 ${action.discussionId}）`,
+      items: [{ primary: trimText(action.body, 200), secondary: '以你的学生身份发布，发布后可能无法删除' }],
+    };
+  }
+  throw new Error('未知写入操作');
+}
+
+function trimText(value, limit) {
+  const text = String(value ?? '');
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+/** Effects run after confirmation; they never touch the launcher data snapshot. */
+function effectActions(actions) {
+  return (Array.isArray(actions) ? actions : []).filter((action) => EFFECT_ACTIONS.has(action.type));
 }
 
 function applyActions(data, actions, now = new Date()) {
@@ -606,6 +882,7 @@ function applyActions(data, actions, now = new Date()) {
   const counts = { tasksAdded: 0, notesAdded: 0, calendarEvents: 0, lessonsAdded: 0, lessonsUpdated: 0, unchanged: 0, tasksChanged: 0 };
 
   for (const action of actions) {
+    if (EFFECT_ACTIONS.has(action.type)) continue; // executed after confirmation
     if (action.type === 'create_tasks') {
       for (const task of action.tasks) {
         const duplicate = next.tasks.some((item) =>
@@ -741,8 +1018,9 @@ class PendingActionStore {
       throw new Error('数据已发生变化，请让 AI 重新生成更改清单');
     }
     const result = applyActions(data, proposal.actions);
+    const effects = effectActions(proposal.actions);
     this.pending.delete(proposal.id);
-    return result;
+    return { ...result, effects };
   }
 
   reject(id) {
@@ -754,16 +1032,21 @@ class PendingActionStore {
 function toolKind(name) {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (COMMAND_TOOLS.has(name)) return 'command';
-  if ([...AI_TOOLS, ...AI_MAIL_TOOLS].some((tool) => tool.function.name === name)) return 'read';
+  if ([...AI_TOOLS, ...AI_MAIL_TOOLS, ...AI_WORKSPACE_TOOLS].some((tool) => tool.function.name === name)) return 'read';
   return 'unknown';
 }
 
 module.exports = {
   AI_TOOLS,
   AI_MAIL_TOOLS,
+  AI_WORKSPACE_TOOLS,
+  AI_EXTERNAL_WRITE_TOOLS,
+  EFFECT_ACTIONS,
   PendingActionStore,
   applyActions,
   createAction,
+  effectActions,
+  effectPreview,
   lessonKey,
   relevantDataHash,
   sanitizeLessons,

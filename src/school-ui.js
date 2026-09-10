@@ -266,7 +266,7 @@
   }
   function consent(source, callback) {
     if (autoApproved(source)) { callback(); return; }
-    showDialog('连接学校账号', `<p>将连接你的 ${source === 'edupage' ? 'EduPage' : 'ManageBac'} 账号，读取${source === 'edupage' ? '所属班级的课程、教学组、任课老师和教室' : '课程、成绩、作业、讨论与项目摘要'}。选择“登录并同步”时会使用本机保存的账号密码完成此次登录。</p><div class="school-callout">内容仅保留在本次打开期间；不会自动发送给 AI，也不会提交作业、回复讨论、发送邮件或修改学校信息。共享电脑上请先确认这是你自己的账号。</div><p>数据可能识别不完整，请与学校记录核对。只有你主动确认加入计划的课程会保存为本地提醒。</p>`, `${btn('暂不连接', 'close')}${btn('同意并继续', 'consent', `data-source="${source}"`, true)}`);
+    showDialog('连接学校账号', `<p>将连接你的 ${source === 'edupage' ? 'EduPage' : 'ManageBac'} 账号，读取${source === 'edupage' ? '所属班级的课程、教学组、任课老师和教室' : '课程、成绩、作业、讨论与项目摘要'}。选择“登录并同步”时会使用本机保存的账号密码完成此次登录。</p><div class="school-callout">内容仅保留在本次打开期间；不会自动发送给 AI，同步本身只读取内容，不会提交作业、回复讨论或修改学校信息。共享电脑上请先确认这是你自己的账号。</div><p>数据可能识别不完整，请与学校记录核对。只有你主动确认加入计划的课程会保存为本地提醒。</p>`, `${btn('暂不连接', 'close')}${btn('同意并继续', 'consent', `data-source="${source}"`, true)}`);
     modal.schoolConsentAction = callback;
   }
   async function sync(source, { force = true, weekStart = state.week } = {}) {
@@ -313,7 +313,7 @@
     sync(source, { force: false, weekStart: state.week });
   }
   function autoConsentDialog() {
-    showDialog('开启自动更新课表与课程', '<p>开启后，PH Launcher 会在你正在查看“课表与课程”且窗口可见时，按需读取已登录的 EduPage 与 ManageBac 内容；课表最短 2 分钟、课程与作业最短 3 分钟才会再次检查，并每 5 分钟进行一次可见性检查。</p><div class="school-callout">数据仅保留在本次打开期间，不会发送给 AI，也不会提交作业、发送邮件或修改学校信息。你可随时关闭此选项。</div><p>若希望网站在下次打开时保留登录状态，可在“设置 → 网站”中单独选择保存，自动更新不会替你保存密码。</p>', `${btn('暂不开启', 'close')}${btn('同意并开启', 'auto-sync-consent', '', true)}`);
+    showDialog('开启自动更新课表与课程', '<p>开启后，PH Launcher 会在你正在查看“课表与课程”且窗口可见时，按需读取已登录的 EduPage 与 ManageBac 内容；课表最短 2 分钟、课程与作业最短 3 分钟才会再次检查，并每 5 分钟进行一次可见性检查。</p><div class="school-callout">数据仅保留在本次打开期间，不会发送给 AI；自动更新只读取内容，不会提交作业、发送邮件或修改学校信息。你可随时关闭此选项。</div><p>若希望网站在下次打开时保留登录状态，可在“设置 → 网站”中单独选择保存，自动更新不会替你保存密码。</p>', `${btn('暂不开启', 'close')}${btn('同意并开启', 'auto-sync-consent', '', true)}`);
   }
   function teachingGroupInference(data) {
     const infer = window.schoolSelectionInference?.inferTeachingGroups;

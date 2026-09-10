@@ -1583,9 +1583,9 @@ async function openAiControlDialog(mode = 'confirm') {
   $('#aiControlDialogTitle').textContent = full ? '允许 AI 使用完整权限' : '允许 AI 操作启动器';
   $('#aiControlRiskIntro').textContent = full
     ? state.data.settings.ai.provider === 'api'
-      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改。';
+      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改；若已选择工作区，还可以读写该文件夹内的文件。';
   refreshAiControlAcceptance();
   $('#aiApiRisk').classList.toggle('hidden', state.data.settings.ai.provider !== 'api');
   $('#aiControlDialog').showModal();
@@ -1636,11 +1636,18 @@ function proposalMarkup(proposal) {
   const status = proposal.status === 'committed' ? '已写入' : proposal.status === 'canceled' ? '已取消' : proposal.status === 'working' ? '处理中' : '等待确认';
   const recurrence = (item) => item.repeatWeekdays?.length ? `<small translate="no">${window.i18n?.locale() === 'en' ? 'Weekly: ' : '每周：'}${item.repeatWeekdays.map(day => (window.i18n?.locale() === 'en' ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'] : ['','周一','周二','周三','周四','周五','周六','周日'])[day] || '').join(' / ')}</small>` : '';
   const groups = proposal.groups.map((group) => `<section class="proposal-group"><b>${escapeHtml(group.title)}</b>${(group.items || []).map((item) => `<div class="proposal-item"><strong>${escapeHtml(item.primary)}</strong><span>${escapeHtml(item.secondary)}${recurrence(item)}</span></div>`).join('')}</section>`).join('');
+  // External actions leave the launcher (files, mail, school submissions), so the
+  // card must not promise that confirming only saves local data.
+  const external = proposal.groups.some((group) => ['workspace-file', 'email', 'managebac-submission', 'managebac-reply'].includes(group.type));
+  const sendsMail = proposal.groups.some((group) => group.type === 'email');
+  const hint = external
+    ? `只有确认后才会执行；邮件、提交和回复发布后无法撤回${sendsMail ? '，发送前还会再弹出一次系统确认' : ''}`
+    : '只有确认后才会保存到 PH Launcher';
   return `<section class="ai-proposal-card${resolved ? ' resolved' : ''}" data-proposal-id="${escapeHtml(proposal.id)}">
-    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>只有确认后才会保存到 PH Launcher</span></div><em>${escapeHtml(status)}</em></div>
+    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>${escapeHtml(hint)}</span></div><em>${escapeHtml(status)}</em></div>
     <div class="proposal-groups">${groups}</div>
     ${proposal.warning ? `<p class="proposal-warning">${escapeHtml(proposal.warning)}</p>` : ''}
-    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>核对无误，确认写入</button></div>
+    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>${external ? '核对无误，确认执行' : '核对无误，确认写入'}</button></div>
   </section>`;
 }
 
@@ -1679,6 +1686,14 @@ function committedSummary(counts = {}) {
   return parts.length ? parts.join('、') : '没有需要重复写入的内容';
 }
 
+// File, mail and school writes report their own outcome; a failure must never be
+// shown as a completed change.
+function effectOutcome(effects) {
+  const list = Array.isArray(effects) ? effects.filter((effect) => effect?.message) : [];
+  if (!list.length) return { text: '', failed: false };
+  return { text: list.map((effect) => effect.message).join('；'), failed: list.some((effect) => effect.ok === false) };
+}
+
 async function confirmAiProposal(proposalId) {
   const message = proposalMessage(proposalId);
   if (!message || message.proposal.status === 'working') return;
@@ -1690,7 +1705,9 @@ async function confirmAiProposal(proposalId) {
     if (result.data) state.data = result.data;
     renderAll();
     if (result.counts?.calendarEvents) await window.calendarUI?.refresh();
-    toast(`已写入：${committedSummary(result.counts)}`);
+    const outcome = effectOutcome(result.effects);
+    if (outcome.failed) toast(outcome.text, 'error');
+    else toast(`已写入：${committedSummary(result.counts)}${outcome.text ? ` · ${outcome.text}` : ''}`);
   } catch (error) {
     message.proposal.status = '';
     toast(`未写入：${error.message}`, 'error');
@@ -2263,9 +2280,39 @@ function renderSettings() {
   $('#encryptionStatus').textContent = state.data.meta?.encrypted
     ? state.data.meta?.platform === 'darwin' ? '本地数据已使用 macOS 钥匙串保护' : '本地数据已使用当前系统用户密钥加密'
     : '当前系统无法提供加密，数据仅保存在本机';
-  $('#dataPathLabel').textContent = state.data.meta?.dataPath || '';
+  const meta = state.data.meta || {};
+  const shared = Array.isArray(meta.sharedFiles) && meta.sharedFiles.length ? meta.sharedFiles.join(' / ') : '';
+  $('#dataPathLabel').textContent = [
+    meta.dataPath ? `${window.i18n?.t('本应用数据') || '本应用数据'}：${meta.dataPath}` : '',
+    meta.dataRoot ? `${window.i18n?.t('共享数据目录') || '共享数据目录'}：${meta.dataRoot}${shared ? `（${shared}）` : ''}` : '',
+  ].filter(Boolean).join(' · ');
   renderWebsiteSettings();
   renderShortcutSettings();
+  void renderDataChoice();
+}
+
+// The data folder is decided at startup, so this only reports the current choice
+// and offers the two explicit alternatives.
+async function renderDataChoice() {
+  const hint = $('#dataShareHint');
+  const share = $('#shareDataLite');
+  const own = $('#useOwnData');
+  if (!hint || !share || !own) return;
+  let choice = null;
+  try { choice = await window.ph.system.dataChoice(); } catch { choice = null; }
+  if (!choice) { hint.textContent = ''; share.hidden = true; own.hidden = true; return; }
+  const sourceLabel = {
+    pointer: '你选择的目录',
+    portable: '便携模式：程序目录下的 data',
+    profile: '本应用默认目录',
+    env: '由启动参数指定',
+  }[choice.source] || '本应用默认目录';
+  const parts = [`当前：${sourceLabel}`];
+  if (choice.liteAvailable && choice.root !== choice.liteRoot) parts.push(`检测到 Pinghe Launcher Lite 的数据目录：${choice.liteRoot}`);
+  parts.push('两个程序使用同一个数据目录时，会共用 settings.yaml 里的账号、Schedule 日程和 agent 会话记录；本应用自己的任务、笔记与词汇仍单独保存。');
+  hint.textContent = parts.join('｜');
+  share.hidden = !(choice.liteAvailable && choice.root !== choice.liteRoot);
+  own.hidden = choice.source !== 'pointer' && choice.source !== 'portable';
 }
 
 async function updateShortcut(action, patch) {
@@ -2817,6 +2864,18 @@ function bindEvents() {
     } catch (error) { toast(`恢复失败：${error.message}`, 'error'); }
   });
   $('#showData').addEventListener('click', () => window.ph.system.showData());
+  $('#shareDataLite').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.shareDataWithLite();
+      if (result?.ok) toast(`已记录共用目录：${result.root}；重启 PH Launcher 后生效`);
+    } catch (error) { toast(`无法设置共用目录：${error.message}`, 'error'); }
+  });
+  $('#useOwnData').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.useOwnDataFolder();
+      if (result?.ok) toast(`已恢复本应用自己的数据目录；重启后生效`);
+    } catch (error) { toast(`无法恢复数据目录：${error.message}`, 'error'); }
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;

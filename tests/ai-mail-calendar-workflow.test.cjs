@@ -58,6 +58,8 @@ function workflowHarness() {
     isAiControlEnabled: () => true,
     isAiMailReadEnabled: () => permitted,
     AI_TOOLS, AI_MAIL_TOOLS, AI_LAUNCHER_READ_TOOLS: [], LAUNCHER_READ_NAMES: new Set(),
+    AI_WORKSPACE_TOOLS: [], AI_EXTERNAL_WRITE_TOOLS: [],
+    SCHOOL_WRITE_NAMES: new Set(['send_email', 'submit_managebac_task', 'reply_discussion']),
     launcherAccountRevision: () => 'launcher-a', mailAccountRevision: () => revision,
     requestAiTurn: async (_config, messages, tools) => { rounds.push(structuredClone(messages)); offered.push(tools.map((tool) => tool.function.name)); return replies.shift(); },
     normalizedToolCalls: (reply) => reply.calls || [], parseToolArguments: JSON.parse,

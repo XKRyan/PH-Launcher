@@ -31,7 +31,10 @@ test('school transport allowlist rejects off-origin and write-like paths', () =>
   assert.throws(() => readUrl('managebac', '/student/classes/21/units', 'POST'), { code: 'URL_NOT_ALLOWED' });
   assert.equal(readUrl('managebac', '/student/classes/21/discussions/31'), 'https://shph.managebac.cn/student/classes/21/discussions/31');
   assert.equal(readUrl('managebac', '/student/classes/21/discussions/31/attachments/7/file.pdf'), 'https://shph.managebac.cn/student/classes/21/discussions/31/attachments/7/file.pdf');
-  assert.throws(() => readUrl('managebac', '/student/classes/21/discussions/31/replies', 'POST'), { code: 'URL_NOT_ALLOWED' });
+  // Replying is the one discussion write: POST to this exact path is allowed,
+  // every other method and path stays read-only.
+  assert.throws(() => readUrl('managebac', '/student/classes/21/discussions/31/replies', 'GET'), { code: 'URL_NOT_ALLOWED' });
+  assert.equal(readUrl('managebac', '/student/classes/21/discussions/31/replies', 'POST'), 'https://shph.managebac.cn/student/classes/21/discussions/31/replies');
   assert.equal(safeSourceUrl('managebac', 'javascript:alert(1)'), '');
   assert.equal(safeSourceUrl('managebac', '/student/classes/21/leave'), '');
 });

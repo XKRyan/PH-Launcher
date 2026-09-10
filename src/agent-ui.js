@@ -124,8 +124,27 @@
   }
   async function createWorkspace() {
     if (state.aiBusy) return;
-    const name = window.prompt('新建工作区名称', '作业草稿');
-    if (name === null) return;
+    // window.prompt is unavailable in Electron, so the name comes from a real
+    // dialog; the folder itself is created by the main process.
+    const dialog = document.getElementById('agentWorkspaceDialog');
+    const input = document.getElementById('agentWorkspaceName');
+    if (!dialog || !input) return;
+    const name = await new Promise((resolve) => {
+      const form = document.getElementById('agentWorkspaceForm');
+      const finish = (value) => {
+        form?.removeEventListener('submit', onSubmit);
+        dialog.removeEventListener('close', onClose);
+        resolve(value);
+      };
+      const onSubmit = (event) => { event.preventDefault(); const value = input.value.trim(); if (!value) return; dialog.close(); finish(value); };
+      const onClose = () => finish('');
+      form?.addEventListener('submit', onSubmit);
+      dialog.addEventListener('close', onClose, { once: true });
+      dialog.showModal();
+      input.focus();
+      input.select();
+    });
+    if (!name) return;
     try { await applyWorkspace(await window.ph?.ai?.workspace?.create?.(name)); }
     catch (error) { window.toast?.(`无法新建工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
   }

@@ -6,12 +6,15 @@
 // See docs/school-integration.md for sources and integration changes.
 const { parseHTML } = require('linkedom');
 const { createHash } = require('node:crypto');
+const { buildMultipart, formEncode } = require('./multipart.cjs');
 
 const ORIGINS = Object.freeze({
   managebac: 'https://shph.managebac.cn',
   edupage: 'https://pingheschool.edupage.org',
 });
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
+const MAX_SUBMIT_BYTES = 24 * 1024 * 1024;
+const MAX_REPLY_BYTES = 12_000;
 const clean = (value, max = 200) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const digest = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 20);
 const validDate = (value) => { const time = Date.parse(`${value}T12:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value; };
@@ -23,16 +26,45 @@ class SchoolDataError extends Error {
   constructor(code, message) { super(message); this.name = 'SchoolDataError'; this.code = code; }
 }
 function fail(code, message) { throw new SchoolDataError(code, message); }
+
+// Every write body is checked here, not only at the call site: a redirected or
+// rebuilt request still has to look like exactly one supported submission.
+const REPLY_FIELDS = ['reply[body]', 'reply[notify_via_email]', 'reply[private]', 'commit'];
+function assertWriteBody(site, url, body, contentType) {
+  const type = String(contentType || '').toLowerCase();
+  if (site === 'edupage') return; // request() keeps its own strict key/value check
+  if (url.endsWith('/replies')) {
+    if (typeof body !== 'string' || !type.startsWith('application/x-www-form-urlencoded')) fail('WRITE_NOT_ALLOWED', '讨论回复只能使用表单编码提交');
+    const form = new URLSearchParams(body);
+    if ([...form.keys()].length !== REPLY_FIELDS.length || REPLY_FIELDS.some((key) => form.getAll(key).length !== 1)) fail('WRITE_NOT_ALLOWED', '讨论回复只允许提交正文与提交动作');
+    if (form.get('commit') !== 'Comment' || !['0', '1'].includes(form.get('reply[private]')) || form.get('reply[notify_via_email]') !== '0') fail('WRITE_NOT_ALLOWED', '讨论回复的提交动作无效');
+    const reply = form.get('reply[body]');
+    if (!reply || Buffer.byteLength(reply, 'utf8') > MAX_REPLY_BYTES) fail('WRITE_NOT_ALLOWED', '讨论回复的正文长度无效');
+    return;
+  }
+  if (!Buffer.isBuffer(body) || !type.startsWith('multipart/form-data; boundary=')) fail('WRITE_NOT_ALLOWED', '作业上传必须使用 multipart 表单');
+}
+function escapeHtmlText(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 function readUrl(site, raw, method = 'GET') {
   let url;
   try { url = new URL(raw, ORIGINS[site]); } catch { fail('URL_NOT_ALLOWED', '学校数据地址无效'); }
   if (!ORIGINS[site] || url.origin !== ORIGINS[site] || url.username || url.password || url.hash) fail('URL_NOT_ALLOWED', '只允许读取学校官方网站');
   const path = url.pathname;
   const params = url.searchParams;
+  // Two writes are supported and nothing else: uploading a file to a task's
+  // dropbox, and posting a reply inside one discussion. Both are anchored to the
+  // numeric class id, so a page cannot redirect a submission to another class.
+  if (site === 'managebac' && method === 'POST') {
+    if (/^\/student\/classes\/\d+\/(?:core_tasks\/\d+\/)?dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
+    if (/^\/student\/classes\/\d+\/discussions\/\d+\/replies$/.test(path) && !url.search) return url.href;
+  }
   if (site === 'managebac' && method === 'GET') {
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
     if (path === '/student/tasks_and_deadlines' && [...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
+    if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
     if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
     if (['/student/ib/activity/cas', '/student/ib/pbl/778'].includes(path) && !url.search) return url.href;
@@ -68,6 +100,52 @@ function htmlDocument(html) {
   // The parser is inert: no network, scripts, styles or event handlers execute.
   for (const node of document.querySelectorAll('script,style,noscript,template')) node.remove();
   return document;
+}
+function parseCsrfToken(html) {
+  const doc = htmlDocument(html);
+  const meta = doc.querySelector('meta[name="csrf-token"]');
+  const fromMeta = clean(meta?.getAttribute('content'), 400);
+  if (fromMeta) return fromMeta;
+  return clean(doc.querySelector('input[name="authenticity_token"]')?.getAttribute('value'), 400);
+}
+// Rails dropbox uploads must reproduce the page's own form: routing only accepts
+// PATCH (hidden _method), and the file field name is server-generated.
+function parseDropboxUploadForm(html) {
+  const doc = htmlDocument(html);
+  for (const form of doc.querySelectorAll('form')) {
+    const action = clean(form.getAttribute('action'), 400);
+    if (String(form.getAttribute('method') || 'get').toLowerCase() !== 'post' || !/dropbox/i.test(action)) continue;
+    const input = form.querySelector('input[type="file"]');
+    const field = clean(input?.getAttribute('name'), 200);
+    if (!field) continue;
+    const fields = {};
+    for (const hidden of form.querySelectorAll('input[type="hidden"]')) {
+      const name = clean(hidden.getAttribute('name'), 200);
+      if (name && !Object.hasOwn(fields, name)) fields[name] = clean(hidden.getAttribute('value'), 2000);
+    }
+    const submit = form.querySelector('input[type="submit"], button[name]');
+    const submitName = clean(submit?.getAttribute('name'), 200);
+    if (submitName && !Object.hasOwn(fields, submitName)) fields[submitName] = clean(submit.getAttribute('value'), 2000);
+    const token = fields.authenticity_token || parseCsrfToken(html);
+    if (token) fields.authenticity_token = token;
+    return { field, action, fields, token };
+  }
+  return null;
+}
+function parseDropboxLinks(html, courseId, taskId) {
+  const doc = htmlDocument(html);
+  const found = [];
+  for (const link of doc.querySelectorAll('a[href]')) {
+    const href = String(link.getAttribute('href') || '');
+    if (!href.includes(String(taskId)) || !/dropbox/i.test(href)) continue;
+    let url;
+    try { url = new URL(href, ORIGINS.managebac); } catch { continue; }
+    if (url.origin !== ORIGINS.managebac || url.username || url.password || url.search || url.hash) continue;
+    if (!new RegExp(`^/student/classes/${courseId}/`).test(url.pathname)) continue;
+    if (!/^\/student\/classes\/\d+\/(?:core_tasks\/\d+\/)?dropbox(?:\/[a-z_]+)*$/.test(url.pathname)) continue;
+    if (!found.includes(url.pathname)) found.push(url.pathname);
+  }
+  return found.slice(0, 3);
 }
 
 function parseManageBacCourses(html) {
@@ -449,27 +527,34 @@ class SchoolDataClient {
     if (typeof fetch !== 'function') throw new TypeError('SchoolDataClient requires an injected session fetch');
     this.fetch = fetch; this.now = now; this.timeoutMs = timeoutMs; this.pause = pause;
   }
-  async request(site, raw, { method = 'GET', body } = {}) {
+  async request(site, raw, { method = 'GET', body, contentType, headers } = {}) {
     let url = readUrl(site, raw, method);
     if (method === 'POST') {
-      const form = new URLSearchParams(body);
-      const keys = ['gpid', 'gsh', 'action', 'user', 'changes', 'date', 'dateto', '_LJSL'];
-      if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || ![0, 1, 2].some((days) => form.get('dateto') === addDays(form.get('date'), days))) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
+      if (site === 'edupage') {
+        const form = new URLSearchParams(body);
+        const keys = ['gpid', 'gsh', 'action', 'user', 'changes', 'date', 'dateto', '_LJSL'];
+        if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || ![0, 1, 2].some((days) => form.get('dateto') === addDays(form.get('date'), days))) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
+      } else assertWriteBody(site, url, body, contentType);
     }
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), this.timeoutMs);
     try {
       for (let redirect = 0; redirect < 4; redirect += 1) {
-        const response = await this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) } });
+        const response = await this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': contentType || 'application/x-www-form-urlencoded' } : {}), ...(headers || {}) } });
         if (response.status === 401 || response.status === 403) fail('LOGIN_REQUIRED', '登录已过期或没有读取权限，请在内置网页重新登录');
         if (response.status >= 300 && response.status < 400) {
           const destination = new URL(response.headers.get('location') || '', url);
           if (/login|session|auth/i.test(destination.pathname)) fail('LOGIN_REQUIRED', '登录已过期，请在内置网页重新登录');
-          if (method !== 'GET') fail('PAGE_CHANGED', 'EduPage 课表请求需要重新登录');
+          // Rails answers a successful upload or reply with a redirect back to the
+          // material itself; there is nothing further to read from it.
+          if (method !== 'GET') {
+            if (site === 'managebac') return '';
+            fail('PAGE_CHANGED', 'EduPage 课表请求需要重新登录');
+          }
           url = readUrl(site, destination.href); continue;
         }
         if (!response.ok) fail('NETWORK_ERROR', '学校网站暂时没有响应，请稍后刷新');
-        if (response.url && response.url !== url) readUrl(site, response.url, method);
+        if (response.url && response.url !== url && method === 'GET') readUrl(site, response.url);
         const length = Number(response.headers.get('content-length') || 0);
         if (length > MAX_HTML_BYTES) fail('PAGE_TOO_LARGE', '学校页面过大');
         let result;
@@ -599,6 +684,66 @@ class SchoolDataClient {
     const cid = validatedId(courseId); const did = validatedId(discussionId);
     const path = `/student/classes/${cid}/discussions/${did}`;
     return { courseId: cid, discussionId: did, url: `${ORIGINS.managebac}${path}`, ...parseDiscussionDetail(await this.request('managebac', path), cid, did), fetchedAt: this.now().toISOString() };
+  }
+  // ---------------------------------------------------------------- writes
+  // Submission locates the task's own upload form instead of guessing a URL:
+  // only the page we already parsed can name the file field and hidden fields.
+  async submissionEntry(courseId, taskId) {
+    const base = `/student/classes/${courseId}/core_tasks/${taskId}`;
+    for (const path of [base, `${base}/dropbox`]) {
+      let html;
+      try { html = await this.request('managebac', path); } catch (error) {
+        if (error.code === 'LOGIN_REQUIRED') throw error;
+        continue;
+      }
+      const entry = parseDropboxUploadForm(html);
+      if (entry?.action) return entry;
+      for (const linked of parseDropboxLinks(html, courseId, taskId)) {
+        let target;
+        try { target = await this.request('managebac', linked); } catch (error) {
+          if (error.code === 'LOGIN_REQUIRED') throw error;
+          continue;
+        }
+        const linkedEntry = parseDropboxUploadForm(target);
+        if (linkedEntry?.action) return linkedEntry;
+      }
+      await this.pause(120);
+    }
+    return null;
+  }
+  async submitTaskFile(courseId, taskId, { bytes, filename } = {}) {
+    const cid = validatedId(courseId); const tid = validatedId(taskId);
+    const content = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+    if (!content.length) fail('INVALID_FILE', '要提交的文件是空的');
+    if (content.length > MAX_SUBMIT_BYTES) fail('FILE_TOO_LARGE', '提交的文件超过 24 MB 限制');
+    const entry = await this.submissionEntry(cid, tid);
+    if (!entry) fail('NO_SUBMISSION', '这个任务没有可用的网上提交入口，可能已截止或需要老师开放；请到 ManageBac 网页确认');
+    const { body, contentType } = buildMultipart({ fields: entry.fields, file: { field: entry.field, filename: clean(filename, 180) || 'file', bytes: content } });
+    const headers = entry.token ? { 'X-CSRF-Token': entry.token, 'X-Requested-With': 'XMLHttpRequest' } : {};
+    await this.request('managebac', entry.action, { method: 'POST', body, contentType, headers });
+    return { courseId: cid, taskId: tid, bytes: content.length, url: `${ORIGINS.managebac}/student/classes/${cid}/core_tasks/${tid}`, submittedAt: this.now().toISOString() };
+  }
+  async replyToDiscussion(courseId, discussionId, text, { private: isPrivate = false } = {}) {
+    const cid = validatedId(courseId); const did = validatedId(discussionId);
+    const value = String(text ?? '').trim();
+    if (!value) fail('INVALID_BODY', '回复内容不能为空');
+    if (Buffer.byteLength(value, 'utf8') > MAX_REPLY_BYTES) fail('INVALID_BODY', '回复内容过长，请精简后再提交');
+    const path = `/student/classes/${cid}/discussions/${did}`;
+    const token = parseCsrfToken(await this.request('managebac', path));
+    if (!token) fail('PAGE_CHANGED', '没有找到页面安全令牌，请在 ManageBac 网页回复');
+    // The site expects HTML in this field, so escape first and only then turn
+    // newlines into line breaks; otherwise the reply could carry markup.
+    const body = formEncode({
+      'reply[body]': escapeHtmlText(value).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>'),
+      'reply[notify_via_email]': '0',
+      'reply[private]': isPrivate ? '1' : '0',
+      commit: 'Comment',
+    });
+    await this.request('managebac', `${path}/replies`, {
+      method: 'POST', body, contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+      headers: { 'X-CSRF-Token': token, 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/javascript, application/javascript, */*; q=0.01' },
+    });
+    return { courseId: cid, discussionId: did, private: isPrivate, url: `${ORIGINS.managebac}${path}`, repliedAt: this.now().toISOString() };
   }
   async getCoreOverview(kind) {
     if (!['cas', 'ee'].includes(kind)) fail('INVALID_ID', '请选择 CAS 或 EE');
