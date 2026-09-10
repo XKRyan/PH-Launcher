@@ -2,7 +2,7 @@
 
 PH Launcher 是面向平和 IB 学生的开源桌面学习工作台。它把学校邮箱、ManageBac、EduPage、自选学习网站、课程表、待办、笔记、专注计时、离线英汉词典、IB 工具和可选 AI 放在一个安静、统一的界面中。
 
-## 1.0.7 协作版本
+## 1.0.10 协作版本
 
 PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher)：XKRyan 与 huaziqian40-bot 的学生工具项目协作整合。本版以 PH Launcher 为主体，保留双方署名，并将学校认证适配代码整合到本仓库。组合发行版采用 GPL-3.0-or-later；来源与原 PH Launcher 的 MIT 条款见 [许可证](#许可证)。
 
@@ -26,7 +26,7 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 ## 下载与状态
 
 - Windows x64 提供安装版与免安装版；请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 中实际存在的最新发布为准，并核对同一发布页的 SHA-256。Windows 目前没有商业代码签名证书，可能显示“未知发布者”。
-- `1.0.7` 提供 Windows x64 安装版／文件夹版；macOS Universal 包需在 macOS runner 上构建，发布页会注明签名、公证与 SHA-256 状态。源码位于 [1.0 分支](https://github.com/XKRyan/PH-Launcher/tree/codex/v1.0-release-check)。
+- `1.0.10` 提供 Windows x64 安装版／便携版；macOS Universal 包需在 macOS runner 上构建，发布页会注明签名、公证与 SHA-256 状态。当前源码位于 [`main`](https://github.com/XKRyan/PH-Launcher/tree/main)。
 
 ## 主要功能
 
@@ -42,7 +42,7 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 - 本地普通聊天逐步显示回复，可随时停止。选择本地 AI 时，程序启动后会后台准备已安装的服务与选定模型；选择 API 或暂不启用时，不启动或预热本地 AI。不会后台自动安装或下载模型。
 - 邮件按钮和链接单独列在正文前，显示实际域名；点击并确认后用系统浏览器打开。邮件图片不自动加载，链接格式合法不代表网站可信。
 
-完整说明见 [使用指南](使用指南.md)、[1.0 更新说明](docs/PH-Launcher-1.0-更新说明.md)，Mac 构建边界见 [Mac 构建与验证](Mac构建与验证.md)，历史版本安全说明见 [PH Launcher 0.5.1 发布与安全说明](PH-Launcher-0.5.1-发布与安全说明.md)。
+完整说明见 [使用指南](使用指南.md)、[1.0.10 更新说明](docs/PH-Launcher-1.0.10-更新说明.md) 与 [1.0 更新说明](docs/PH-Launcher-1.0-更新说明.md)，Mac 构建边界见 [Mac 构建与验证](Mac构建与验证.md)，历史版本安全说明见 [PH Launcher 0.5.1 发布与安全说明](PH-Launcher-0.5.1-发布与安全说明.md)。
 
 ## 学校功能使用
 
