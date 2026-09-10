@@ -79,7 +79,7 @@
 
   function renderHistory() {
     const list = document.getElementById('agentSessions');
-    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}>${esc(titleFor(session))}${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
+    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}><span class="agent-session-title">${esc(titleFor(session))}</span>${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));

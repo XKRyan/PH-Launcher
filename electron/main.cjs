@@ -3318,6 +3318,59 @@ async function runCapture() {
     })()`);
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
+  // Workspace panel with a real folder, a proposal card for external actions,
+  // and one transcript mirrored from Pinghe Launcher Lite (fixture data only).
+  if (CAPTURE_ROUTE === 'ai' && ['workspace', 'workspace-panel', 'shared-session'].includes(CAPTURE_VARIANT)) {
+    const SHARED_SESSION_CLICK = "document.querySelector('[data-agent-session=\"20260910-213045\"]')?.click();";
+    let workspaceRoot = '';
+    try {
+      workspaceRoot = path.join(app.getPath('temp'), 'phl-capture-workspace');
+      fs.mkdirSync(path.join(workspaceRoot, 'drafts'), { recursive: true });
+      fs.writeFileSync(path.join(workspaceRoot, 'drafts', 'notes.txt'), '草稿内容');
+      fs.writeFileSync(path.join(workspaceRoot, '阅读计划.md'), '# 阅读计划');
+    } catch { workspaceRoot = ''; }
+    try {
+      if (aiHistoryStore) {
+        const fixture = {
+          version: 1, kind: 'phl-agent-session', id: '20260910-213045',
+          title: '最近两周哪些作业还没交', app: 'Pinghe Launcher Lite',
+          updated_at: '2026-09-10T21:30:45+08:00',
+          history: [
+            { role: 'user', content: '最近两周哪些作业还没交?' },
+            { role: 'assistant', content: '这两周有 3 项：物理 IA 初稿、数学 AA 习题集、TOK 展示稿。' },
+          ],
+        };
+        sharedSettings.atomicWriteFileSync(path.join(dataRoot().agent, `${fixture.id}.json`), `${JSON.stringify(fixture, null, 2)}\n`);
+        aiHistoryStore.refreshSharedSessions();
+      }
+      secureStore.updateAi({ workspace: workspaceRoot, permissionMode: 'full', launcherControlEnabled: true, controlConsentVersion: AI_CONTROL_CONSENT_VERSION, controlConsentAcceptedAt: new Date().toISOString(), mailReadEnabled: true, mailConsentVersion: AI_MAIL_CONSENT_VERSION, mailConsentAcceptedAt: new Date().toISOString() });
+      secureStore.updateAi({ enabled: true, provider: 'local', localModel: 'qwen3.5:4b' });
+    } catch { /* capture only: fall back to whatever the panel shows */ }
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      state.data.settings.ai = { ...state.data.settings.ai, enabled: true, provider: 'local', localModel: 'qwen3.5:4b',
+        workspace: ${JSON.stringify(workspaceRoot)}, workspaces: [${JSON.stringify(workspaceRoot)}].filter(Boolean),
+        permissionMode: 'full', launcherControlEnabled: true, controlConsentVersion: ${AI_CONTROL_CONSENT_VERSION},
+        mailReadEnabled: true, mailConsentVersion: ${AI_MAIL_CONSENT_VERSION} };
+      state.aiEditing = false;
+      state.aiMessages = [
+        { role: 'user', content: '帮我把今晚的复习计划写成 Word，再发邮件提醒我自己。' },
+        { role: 'assistant', content: '我整理了一份方案：先在工作区新建 Word 文档，再给你发一封提醒邮件。两项都还没有执行，请你逐项核对。', proposal: {
+          id: 'capture-proposal-external', title: 'AI 建议的更改',
+          warning: 'AI 可能误解课程、日期或上下文。请逐项核对后再确认。',
+          status: '',
+          groups: [
+            { type: 'workspace-file', title: '新建 Word 文档：drafts/复习计划.docx', items: [{ primary: '今晚复习计划', secondary: '3 段' }] },
+            { type: 'email', title: '发送邮件给 student@example.com', items: [{ primary: '复习提醒', secondary: '120 字 · 确认后还会再弹出一次系统确认' }] },
+          ],
+        } },
+      ];
+      renderAi();
+      await window.agentUI?.loadHistory?.();
+      ${CAPTURE_VARIANT === 'workspace-panel' ? "document.getElementById('agentWorkspacePath')?.scrollIntoView({ block: 'center' });" : ''}
+      ${CAPTURE_VARIANT === 'shared-session' ? SHARED_SESSION_CLICK : ''}
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
   if (CAPTURE_ROUTE === 'dictionary' && CAPTURE_VARIANT) {
     await mainWindow.webContents.executeJavaScript(`lookupDictionary(${JSON.stringify(CAPTURE_VARIANT)})`);
     for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -3380,6 +3433,27 @@ async function runCapture() {
       ${CAPTURE_VARIANT === 'school-account' ? 'openCredentialDialog("edupage");' : ''}
     })()`);
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  // The privacy panel: shared data folder row plus the shared-account card.
+  // The fixture settings.yaml only exists in the throwaway capture profile.
+  if (CAPTURE_ROUTE === 'settings' && ['privacy', 'shared-accounts'].includes(CAPTURE_VARIANT)) {
+    try {
+      const fixture = [
+        'version: 1', 'wizard_done: true', '',
+        'accounts:', '  edupage:', '    username: student@example.com', '    subdomain: pingheschool', "    password: 'fixture-only'",
+        '  mail:', '    email: student@example.com', '    imap_host: imap.qiye.163.com', '    smtp_host: smtp.qiye.163.com', '    authcode: fixture-only', '',
+        'agent:', '  mode: confirm', '',
+      ].join('\n');
+      sharedSettings.atomicWriteFileSync(sharedSettingsFile(), fixture);
+    } catch { /* capture only */ }
+    await mainWindow.webContents.executeJavaScript(`(async () => {
+      ${CAPTURE_VARIANT === 'privacy' ? "selectSettingsSection('privacy');" : "selectSettingsSection('websites');"}
+      await refreshSharedAccounts();
+      renderCredentialSettings();
+      await renderDataChoice();
+      ${CAPTURE_VARIANT === 'shared-accounts' ? "document.querySelector('.shared-account-setting')?.scrollIntoView({ block: 'center' });" : ''}
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 350));
   }
   const captureState = await mainWindow.webContents.executeJavaScript("({route: document.querySelector('.page.active')?.dataset.page || null, initialized: document.body.dataset.initialized, aiProvider: state.data?.settings?.ai?.provider || null, activeAiChoice: document.querySelector('.ai-choice-list > button.active')?.dataset.aiProvider || null, aiPanelHeading: document.querySelector('#aiConfigPanel h3')?.textContent || null, hardwareReady: Boolean(state.hardware)})");
   console.log(`CAPTURE_STATE ${JSON.stringify(captureState)}`);
