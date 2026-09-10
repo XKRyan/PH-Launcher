@@ -65,6 +65,13 @@ contextBridge.exposeInMainWorld('ph', {
       saveMemory: (input) => ipcRenderer.invoke('ai:memory-save', input),
       removeMemory: (id) => ipcRenderer.invoke('ai:memory-remove', id),
     },
+    workspace: {
+      get: () => ipcRenderer.invoke('ai:workspace-get'),
+      pick: () => ipcRenderer.invoke('ai:workspace-pick'),
+      create: (name) => ipcRenderer.invoke('ai:workspace-create', name),
+      set: (workspace) => ipcRenderer.invoke('ai:workspace-set', { workspace }),
+      clear: () => ipcRenderer.invoke('ai:workspace-clear'),
+    },
     cancelStream: (requestId) => ipcRenderer.invoke('ai:cancel-stream', requestId),
     status: () => ipcRenderer.invoke('ai:status'),
     controlInfo: () => ipcRenderer.invoke('ai:control-info'),

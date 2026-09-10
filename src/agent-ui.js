@@ -94,8 +94,48 @@
     list.querySelectorAll('[data-agent-memory-edit]').forEach((button) => button.addEventListener('click', () => editMemory(button.getAttribute('data-agent-memory-edit'))));
     list.querySelectorAll('[data-agent-memory-delete]').forEach((button) => button.addEventListener('click', () => { void removeMemory(button.getAttribute('data-agent-memory-delete')); }));
   }
-  function renderMemoryToggle() {
-    const input = document.getElementById('aiUseMemories');
+  // The AI file tools only ever touch this folder, so it is shown plainly.
+  function renderWorkspace() {
+    const path = document.getElementById('agentWorkspacePath');
+    if (!path) return;
+    const workspace = String(state.data?.settings?.ai?.workspace || '');
+    path.textContent = workspace || '未设置';
+    path.classList.toggle('is-set', Boolean(workspace));
+    const clear = document.getElementById('agentWorkspaceClear');
+    if (clear) clear.disabled = !workspace || state.aiBusy;
+    for (const id of ['agentWorkspacePick', 'agentWorkspaceNew']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = state.aiBusy;
+    }
+  }
+  async function applyWorkspace(result) {
+    if (!result || result.canceled) return;
+    if (state.data?.settings?.ai) {
+      state.data.settings.ai.workspace = result.workspace || '';
+      state.data.settings.ai.workspaces = result.workspaces || [];
+    }
+    renderWorkspace();
+    if (result.workspace) window.toast?.('AI 工作区已设置为 ' + result.workspace);
+  }
+  async function pickWorkspace() {
+    if (state.aiBusy) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.pick?.()); }
+    catch (error) { window.toast?.(`无法设置工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+  async function createWorkspace() {
+    if (state.aiBusy) return;
+    const name = window.prompt('新建工作区名称', '作业草稿');
+    if (name === null) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.create?.(name)); }
+    catch (error) { window.toast?.(`无法新建工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+  async function clearWorkspace() {
+    if (state.aiBusy) return;
+    try { await applyWorkspace(await window.ph?.ai?.workspace?.clear?.()); }
+    catch (error) { window.toast?.(`无法清除工作区：${String(error?.message || '请重试').slice(0, 140)}`, 'error'); }
+  }
+
+  function renderMemoryToggle() {    const input = document.getElementById('aiUseMemories');
     const risk = document.getElementById('aiMemoryRisk');
     const provider = state.data?.settings?.ai?.provider;
     if (!input) return;
@@ -111,7 +151,7 @@
     const control = Boolean(ai.launcherControlEnabled && ai.controlConsentVersion);
     const mode = control && ai.permissionMode === 'full' && ai.mailReadEnabled && ai.mailConsentVersion === 2 ? 'full' : control ? 'confirm' : 'chat';
     document.querySelectorAll('[data-agent-mode]').forEach((button) => { button.classList.toggle('active', button.dataset.agentMode === mode); button.disabled = state.aiBusy; });
-    renderHistory(); renderMemories(); renderMemoryToggle();
+    renderHistory(); renderMemories(); renderMemoryToggle(); renderWorkspace();
     const model = document.getElementById('agentModel');
     const modelName = ai.provider === 'local' ? ai.localModel : ai.provider === 'api' ? ai.apiModel : '';
     const warmup = state.aiLocalWarmup?.localWarmup;
@@ -204,6 +244,9 @@
     document.getElementById('aiUseMemories')?.addEventListener('change', (event) => { state.aiUseMemories = Boolean(event.target.checked); renderMemoryToggle(); });
     document.querySelectorAll('[data-agent-mode]').forEach((button) => button.addEventListener('click', () => { if (state.aiBusy) return; const toggle = document.getElementById('aiControlToggle'); const ai = state.data.settings.ai || {}; const currentMode = Boolean(ai.launcherControlEnabled && ai.controlConsentVersion && ai.permissionMode === 'full' && ai.mailReadEnabled && ai.mailConsentVersion === 2) ? 'full' : Boolean(ai.launcherControlEnabled && ai.controlConsentVersion) ? 'confirm' : 'chat'; const mode = button.dataset.agentMode; if (mode === currentMode) return; toggle.dataset.agentMode = mode; toggle.checked = mode !== 'chat'; toggle.dispatchEvent(new Event('change')); render(); }));
     document.getElementById('agentConfigure')?.addEventListener('click', () => document.getElementById('aiEditConfig').click());
+    document.getElementById('agentWorkspacePick')?.addEventListener('click', () => { void pickWorkspace(); });
+    document.getElementById('agentWorkspaceNew')?.addEventListener('click', () => { void createWorkspace(); });
+    document.getElementById('agentWorkspaceClear')?.addEventListener('click', () => { void clearWorkspace(); });
   }
   window.agentUI = { render, mount, loadHistory, scheduleSave, saveNow, saveMemory, prepareForSend, currentSession: () => current, connectionKey: () => connectionKey };
 })();

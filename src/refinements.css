@@ -98,5 +98,12 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .agent-conversation .chat-input-dock .chat-footnote { padding:0; text-align:left; font-size:.875rem; }
 .agent-conversation .chat-input-dock .agent-memory-toggle small:empty { display:none; }
 .ai-choice-list small { font-size:.85rem; }
+/* AI workspace picker: the folder every file tool is confined to. */
+.agent-workspace-picker { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+.agent-workspace-path { margin:0; font-size:.8125rem; color:var(--ink-3); word-break:break-all; }
+.agent-workspace-path.is-set { color:var(--green-800); font-weight:600; }
+.agent-workspace-note { margin:0; font-size:.75rem; color:var(--ink-3); line-height:1.55; }
+.agent-workspace-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.agent-workspace-actions button { min-height:32px; padding:0 10px; font-size:.8125rem; }
 @media(max-width:1100px) { .agent-workspace { grid-template-columns:200px minmax(0,1fr); gap:12px; } .agent-sidebar { padding:16px; } }
 @media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .agent-sidebar h3,.agent-sidebar .ai-control-strip,.agent-sidebar .agent-permission-note,.agent-session-list { grid-column:1/-1; } }

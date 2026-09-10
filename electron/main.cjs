@@ -33,7 +33,7 @@ const { recommendLocalModel } = require('./hardware.cjs');
 const { OfflineDictionary } = require('./dictionary.cjs');
 const { LocalAiDeploymentManager } = require('./ai-deployment.cjs');
 const { canStartConfiguredLocalRuntime, ensureDefaultInstalledOllamaService } = require('./local-ai-runtime.cjs');
-const { streamOllamaChat } = require('./ai-stream.cjs');
+const { streamOllamaChat, streamOpenAiChat } = require('./ai-stream.cjs');
 const {
   AI_TOOLS,
   AI_MAIL_TOOLS,
@@ -224,6 +224,8 @@ function createDefaultData() {
         controlConsentVersion: 0,
         controlConsentAcceptedAt: '',
         permissionMode: 'chat',
+        workspace: '',
+        workspaces: [],
         mailReadEnabled: false,
         mailConsentVersion: 0,
         mailConsentAcceptedAt: '',
@@ -276,6 +278,18 @@ function mergeDefaults(source) {
       ai: normalizedAi,
     },
   };
+}
+
+// AI file tools are confined to the user-chosen workspace. An empty value means
+// the tools report that no workspace is set instead of touching any folder.
+function normalizeWorkspacePath(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const resolved = path.resolve(raw);
+    if (!fs.existsSync(resolved)) return '';
+    return fs.statSync(resolved).isDirectory() ? resolved : '';
+  } catch { return ''; }
 }
 
 // Xinlv state is split by trust level: credentials and the sync cursor stay in
@@ -408,9 +422,17 @@ class SecureStore {
       'mailReadEnabled',
       'mailConsentVersion',
       'mailConsentAcceptedAt',
+      'workspace',
     ];
     for (const key of allowed) {
       if (Object.hasOwn(config, key)) next[key] = config[key];
+    }
+    if (Object.hasOwn(config, 'workspace')) {
+      // The workspace scopes every file tool; keep the recent list in sync.
+      const workspace = normalizeWorkspacePath(config.workspace);
+      next.workspace = workspace;
+      const recent = Array.isArray(current.workspaces) ? current.workspaces.filter((item) => typeof item === 'string') : [];
+      next.workspaces = workspace ? [workspace, ...recent.filter((item) => item !== workspace)].slice(0, 8) : recent;
     }
     if (!['off', 'local', 'api'].includes(next.provider)) throw new Error('未知 AI 类型');
     if (!['chat', 'confirm', 'full'].includes(next.permissionMode)) throw new Error('未知 AI 权限模式');
@@ -2021,7 +2043,7 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     const payload = {
       model: config.localModel,
       messages,
-      stream: Boolean(onDelta && !tools.length),
+      stream: Boolean(onDelta),
       keep_alive: '10m',
       think: false,
       // A conversational request does not need the model's maximum context.
@@ -2030,8 +2052,14 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     };
     if (tools.length) payload.tools = tools;
     if (payload.stream) {
+      // Streaming is enabled even when tools are offered: content deltas are
+      // shown as they arrive and tool calls are merged from the same stream.
       const body = await streamOllamaChat({ url, payload, signal: requestSignal, onDelta });
-      return { role: 'assistant', content: String(body.content || '').slice(0, 32_000) };
+      return {
+        role: 'assistant',
+        content: String(body.content || '').slice(0, 32_000),
+        ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+      };
     }
     const response = await fetch(url, {
       method: 'POST',
@@ -2060,6 +2088,17 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     }
     const payload = { model: config.apiModel, messages };
     if (tools.length) payload.tools = tools;
+    if (onDelta) {
+      // Providers stream content deltas and any tool calls over SSE; both are
+      // merged so the user sees text as it is generated.
+      const headers = { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` };
+      const body = await streamOpenAiChat({ url: endpoint, headers, payload, signal: requestSignal, onDelta });
+      return {
+        role: 'assistant',
+        content: String(body.content || '').slice(0, 32_000),
+        ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+      };
+    }
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
@@ -2699,6 +2738,49 @@ function registerIpc() {
     return saved;
   });
   ipcMain.handle('ai:history-get', (event) => { assertMainRenderer(event); return aiHistorySnapshot(); });
+  // ------------------------------------------------------------ AI workspace
+  // File tools are scoped to this folder; choosing it is an explicit user act.
+  const workspaceState = () => {
+    const ai = secureStore.data.settings.ai || {};
+    return {
+      workspace: String(ai.workspace || ''),
+      workspaces: Array.isArray(ai.workspaces) ? ai.workspaces.filter((item) => typeof item === 'string').slice(0, 8) : [],
+    };
+  };
+  ipcMain.handle('ai:workspace-get', (event) => { assertMainRenderer(event); return workspaceState(); });
+  ipcMain.handle('ai:workspace-pick', async (event) => {
+    assertMainRenderer(event);
+    const result = await showLocalizedOpenDialog(mainWindow, { title: '选择 AI 工作区文件夹', properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled || !result.filePaths?.length) return { canceled: true, ...workspaceState() };
+    const workspace = normalizeWorkspacePath(result.filePaths[0]);
+    if (!workspace) throw new Error('无法使用这个文件夹');
+    secureStore.updateAi({ workspace });
+    return { canceled: false, ...workspaceState() };
+  });
+  ipcMain.handle('ai:workspace-create', (event, name) => {
+    assertMainRenderer(event);
+    const safeName = String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 60);
+    if (!safeName) throw new Error('请填写工作区名称');
+    const base = path.join(app.getPath('documents'), 'PH Launcher');
+    const target = path.join(base, safeName);
+    fs.mkdirSync(target, { recursive: true });
+    const workspace = normalizeWorkspacePath(target);
+    if (!workspace) throw new Error('无法创建工作区文件夹');
+    secureStore.updateAi({ workspace });
+    return { canceled: false, created: workspace, ...workspaceState() };
+  });
+  ipcMain.handle('ai:workspace-set', (event, input) => {
+    assertMainRenderer(event);
+    const workspace = normalizeWorkspacePath(input?.workspace || '');
+    if (!workspace) throw new Error('请选择存在的文件夹');
+    secureStore.updateAi({ workspace });
+    return { canceled: false, ...workspaceState() };
+  });
+  ipcMain.handle('ai:workspace-clear', (event) => {
+    assertMainRenderer(event);
+    secureStore.updateAi({ workspace: '' });
+    return { canceled: false, ...workspaceState() };
+  });
   for (const [channel, method] of [['ai:history-save', 'saveSession'], ['ai:history-remove', 'removeSession'], ['ai:memory-save', 'saveMemory'], ['ai:memory-remove', 'removeMemory']]) {
     ipcMain.handle(channel, (event, input) => {
       assertMainRenderer(event);
@@ -3319,6 +3401,15 @@ async function runSelfTest() {
       && !document.querySelector('#xinlvPage iframe, #xinlvPage webview')
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'psychology'
       && xinlvBridge;
+    // The workspace picker must render and answer over the real bridge: a
+    // missing preload entry would leave the buttons dead.
+    const aiWorkspaceRendered = ['#agentWorkspacePath', '#agentWorkspacePick', '#agentWorkspaceNew', '#agentWorkspaceClear']
+      .every((selector) => Boolean(document.querySelector('#aiChat ' + selector)));
+    const aiWorkspaceState = await window.ph.ai.workspace.get().then((value) => value).catch(() => null);
+    const aiWorkspaceReady = aiWorkspaceRendered
+      && Boolean(aiWorkspaceState)
+      && typeof aiWorkspaceState.workspace === 'string'
+      && Array.isArray(aiWorkspaceState.workspaces);
     const customCreated = await window.ph.sites.saveCustom({
       name: '自检网页',
       url: 'https://example.com/',
@@ -3362,6 +3453,7 @@ async function runSelfTest() {
       coursesRendered,
       nativeMailRendered,
       nativeXinlvRendered,
+      aiWorkspaceReady,
       customSiteCreated: Boolean(customSite),
       customSiteRendered,
       customSiteRemoved: !state.data.settings.customSites.some((item) => item.id === customSite.id),
