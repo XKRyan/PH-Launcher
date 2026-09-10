@@ -17,7 +17,7 @@ const validDate = (value) => typeof value === 'string' && Number.isFinite(Date.p
 const integer = (value, low, high, fallback) => Number.isInteger(value) && value >= low && value <= high ? value : fallback;
 
 function emptyVocabulary() {
-  return { version: 1, settings: { dailyNewLimit: 10, retention: 0.9, mode: 'mixed' }, cards: [], logs: [], readings: [], readingLogs: [] };
+  return { version: 1, settings: { dailyNewLimit: 10, retention: 0.9, mode: 'mixed' }, cards: [], logs: [], readings: [], readingLogs: [], batch: null };
 }
 
 function cleanSchedule(raw, now) {
@@ -97,8 +97,10 @@ function normalizeVocabulary(raw, now = new Date()) {
   }));
   result.readings = reading.normalizeReadings(raw?.readings);
   result.readingLogs = reading.normalizeReadingLogs(raw?.readingLogs, result.readings);
-  if (raw?.batch && raw.batch.day === dateKey(now) && Array.isArray(raw.batch.ids)) {
-    result.batch = { day: raw.batch.day, ids: [...new Set(raw.batch.ids.filter((id) => ids.has(id)))].slice(0, 5) };
+  if (raw?.batch && Array.isArray(raw.batch.ids)) {
+    const phase = ['preview', 'recall'].includes(raw.batch.phase) ? raw.batch.phase : 'preview';
+    const index = integer(raw.batch.index, 0, 4, 0);
+    result.batch = { day: raw.batch.day, ids: [...new Set(raw.batch.ids.filter((id) => ids.has(id)))].slice(0, 5), phase, index };
   }
   return result;
 }
@@ -146,7 +148,7 @@ function queue(data, now = new Date(), subject = '') {
   const active = data.cards.filter((c) => !c.suspended && (!subject || c.subject === subject));
   const due = active.filter((c) => c.schedule.state !== 0 && Date.parse(c.schedule.due) <= now.getTime())
     .sort((a, b) => Date.parse(a.schedule.due) - Date.parse(b.schedule.due));
-  const pinned = data.batch?.day === day ? data.batch.ids || [] : [];
+  const pinned = data.batch?.ids || [];
   const fresh = newCandidates(data, now, subject, MAX_CARDS)
     .sort((a, b) => (pinned.includes(a.id) ? pinned.indexOf(a.id) : 99) - (pinned.includes(b.id) ? pinned.indexOf(b.id) : 99))
     .slice(0, Math.max(0, data.settings.dailyNewLimit - learnedToday));
@@ -167,7 +169,7 @@ function snapshot(data, now = new Date(), subject = '') {
   const selected = list[0];
   const intervals = selected ? Object.fromEntries([1, 2, 3, 4].map((rating) =>
     [rating, scheduler(data).next(selected.schedule, now, rating).card.due.toISOString()])) : {};
-  return { settings: data.settings, cards: data.cards, queueIds: list.map((c) => c.id), intervals,
+  return { settings: data.settings, cards: data.cards, batch: data.batch ? plain(data.batch) : null, queueIds: list.map((c) => c.id), intervals,
     study: { level: data.settings.level || '',
       newAtLevel: active.filter((c) => c.schedule.state === 0 && (!subject || c.subject === subject) && (!data.settings.level || cardLevel(c) === data.settings.level)).length,
       hasContext: list.filter((c) => [c.context, ...(c.contexts || []), ...(c.encounters || []).map((entry) => entry.context)].some((context) => usableCloze(context, c.word))).length },
@@ -222,6 +224,10 @@ function reviewCard(data, { id, rating, expectedReps, mode, subject = '' }, now 
   data.logs.push({ id: randomUUID(), cardId: card.id, at: now.toISOString(), rating,
     wasNew: previous.state === 0, mode: MODES.includes(mode) ? mode : 'meaning', previous });
   data.logs = data.logs.slice(-MAX_LOGS);
+  if (Array.isArray(data.batch?.ids)) {
+    data.batch.ids = data.batch.ids.filter((batchId) => batchId !== card.id);
+    if (!data.batch.ids.length) delete data.batch;
+  }
   return { nextDue: card.schedule.due, lapses: card.schedule.lapses };
 }
 
@@ -241,6 +247,10 @@ function updateCard(data, input) {
   if (typeof input.suspended === 'boolean') card.suspended = input.suspended;
   if (input.suspended === true && input.known === true && card.schedule.state === 0) card.knownAt = new Date().toISOString();
   if (input.suspended === false) card.knownAt = '';
+  if (input.suspended === true && input.known === true && Array.isArray(data.batch?.ids)) {
+    data.batch.ids = data.batch.ids.filter((batchId) => batchId !== card.id);
+    if (!data.batch.ids.length) delete data.batch;
+  }
   for (const key of ['context', 'ownExample', 'subject', 'meaning']) {
     if (typeof input[key] !== 'string') continue;
     const value = text(input[key], key === 'subject' ? 60 : key === 'meaning' ? 4000 : 1600);
@@ -248,6 +258,16 @@ function updateCard(data, input) {
     card[key] = value;
   }
   return { id: card.id };
+}
+
+function updateBatchProgress(data, { ids, phase = 'preview', index = 0 } = {}, now = new Date()) {
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || new Set(ids).size !== ids.length) throw new Error('学习分组无效');
+  if (!['preview', 'recall'].includes(phase) || !Number.isInteger(index) || index < 0 || index > 4) throw new Error('学习进度无效');
+  const allowed = new Set(data.cards.filter((card) => !card.suspended && card.schedule.state === 0).map((card) => card.id));
+  const valid = ids.filter((id) => allowed.has(id));
+  if (!valid.length) { delete data.batch; return { ids: [] }; }
+  data.batch = { day: dateKey(now), ids: [...new Set(valid)].slice(0, 5), phase, index: Math.min(index, valid.length - 1) };
+  return { ids: data.batch.ids, phase: data.batch.phase, index: data.batch.index };
 }
 
 function removeCard(data, id) {
@@ -340,5 +360,5 @@ function paragraphCandidates(raw, dictionary, known = []) {
 }
 
 module.exports = { emptyVocabulary, normalizeVocabulary, snapshot, queue, addCards, reviewCard,
-  undoReview, updateCard, removeCard, configure, importVocabulary, parseWordList, paragraphCandidates,
+  undoReview, updateCard, updateBatchProgress, removeCard, configure, importVocabulary, parseWordList, paragraphCandidates,
   wordKey, cloze, usableCloze, dateKey, cardLevel, newCandidates, MAX_CARDS };

@@ -6,6 +6,7 @@
   let memories = [];
   let historyAvailable = false;
   let historyError = '';
+  let historyNotice = '';
   let saveFailed = false;
   const saveTimers = new Map();
   const saveGenerations = new Map();
@@ -41,6 +42,7 @@
       historyAvailable = snapshot.available === true;
       const snapshotError = snapshot.error ? String(snapshot.error).slice(0, 180) : '';
       if (snapshotError || !saveFailed) historyError = snapshotError;
+      historyNotice = snapshot.notice ? String(snapshot.notice).slice(0, 220) : '';
       connectionKey = typeof snapshot.connectionKey === 'string' && snapshot.connectionKey.trim() ? snapshot.connectionKey.trim() : '';
     }
     if (updateMemories) memories = Array.isArray(snapshot.memories) ? snapshot.memories.flatMap((item) => {
@@ -82,7 +84,7 @@
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));
-      status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyAvailable ? '聊天记录已加密保存在此设备。' : '此设备的聊天仅在当前打开期间保留。';
+      status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyNotice ? esc(historyNotice) : historyAvailable ? '聊天记录已加密保存在此设备。' : '此设备的聊天仅在当前打开期间保留。';
     }
     const notice = document.getElementById('agentSessionNotice');
     if (notice) { notice.classList.toggle('hidden', !sessionCannotContinue()); notice.textContent = sessionCannotContinue() ? '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。' : ''; }

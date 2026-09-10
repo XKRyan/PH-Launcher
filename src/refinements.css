@@ -100,3 +100,9 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .ai-choice-list small { font-size:.85rem; }
 @media(max-width:1100px) { .agent-workspace { grid-template-columns:200px minmax(0,1fr); gap:12px; } .agent-sidebar { padding:16px; } }
 @media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .agent-sidebar h3,.agent-sidebar .ai-control-strip,.agent-sidebar .agent-permission-note,.agent-session-list { grid-column:1/-1; } }
+/* 心履账号只在使用该模块时需要；登录信息不会进入通用数据快照。 */
+.xinlv-settings { border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: color-mix(in srgb, var(--paper) 86%, var(--accent) 14%); }
+.xinlv-settings .setting-intro { margin: 0 0 12px; }
+.xinlv-settings .form-grid { margin-bottom: 10px; }
+.xinlv-settings .setting-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.xinlv-settings .setting-actions .path-label { margin: 0; }

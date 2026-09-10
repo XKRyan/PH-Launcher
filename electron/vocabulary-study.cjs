@@ -3,7 +3,7 @@ const { createHash, randomInt } = require('node:crypto');
 const vocabulary = require('./vocabulary.cjs');
 const { selectConfig } = require('./vocabulary-advisor.cjs');
 
-function createVocabularyStudy({ getData, getConfig, getRevision, change, snapshot, advise, now = () => new Date() }) {
+function createVocabularyStudy({ getData, getConfig, getRevision, change, snapshot, advise, getConsent = () => '', saveConsent = () => {}, now = () => new Date() }) {
   let consentKey = '';
   let active = null;
   let prefetchTask = null;
@@ -16,15 +16,20 @@ function createVocabularyStudy({ getData, getConfig, getRevision, change, snapsh
     ])).digest('hex');
   };
   const available = (provider) => { try { selectConfig(getConfig(), provider); return true; } catch { return false; } };
+  const consentConnectionKey = () => {
+    const ai = getConfig();
+    return createHash('sha256').update(JSON.stringify(['vocabulary-consent-v1', ai.apiEndpoint, ai.apiModel, ai.apiKey])).digest('hex');
+  };
   function status() {
     const provider = getData().settings.advisorProvider || 'local';
     const localAvailable = available('local'), apiAvailable = available('api');
-    const apiConsented = Boolean(consentKey && consentKey === connectionKey());
+    const remembered = getConsent();
+    const apiConsented = Boolean((consentKey || remembered) && (consentKey === consentConnectionKey() || remembered === consentConnectionKey()));
     const notice = provider === 'off' ? '使用离线学习流程'
       : provider === 'local' ? localAvailable ? '使用已配置的本地模型；连接失败时自动离线' : '尚未配置可用的本地 AI，将离线学习'
         : !apiAvailable ? '尚未配置可用的 API，将离线学习' : !apiConsented ? '请先确认词汇学习记录的 API 使用范围' : '使用已授权的 API 推荐，可能产生费用';
     const configIssue = (() => { try { if (provider !== 'off') selectConfig(getConfig(), provider); return ''; } catch (error) { return error.message; } })();
-    return { provider, localAvailable, apiAvailable, apiConsented, notice: configIssue ? `${configIssue}；可点击“连接与检查”` : notice, lastAttempt };
+    return { provider, localAvailable, apiAvailable, apiConsented, apiConsentRemembered: Boolean(remembered && remembered === consentConnectionKey()), notice: configIssue ? `${configIssue}；可点击“连接与检查”` : notice, lastAttempt };
   }
   function cancel({ requestId } = {}) {
     if (active && (!requestId || active.id === requestId)) {
@@ -41,11 +46,16 @@ function createVocabularyStudy({ getData, getConfig, getRevision, change, snapsh
     return { ok: true };
   }
   function invalidate() { consentKey = ''; lastAttempt = null; cancel(); }
-  function configure({ provider, apiConsent = false } = {}) {
+  function configure({ provider, apiConsent = false, rememberApiConsent = false, revokeApiConsent = false } = {}) {
     if (!['local', 'api', 'off'].includes(provider)) throw new Error('请选择词汇推荐方式');
     cancel();
     lastAttempt = null;
-    consentKey = provider === 'api' && apiConsent === true && available('api') ? connectionKey() : '';
+    if (revokeApiConsent) { saveConsent(''); consentKey = ''; }
+    else if (provider === 'api' && apiConsent === true && available('api')) {
+      const key = consentConnectionKey();
+      saveConsent(rememberApiConsent ? key : '');
+      consentKey = key;
+    }
     return change((data) => { data.settings.advisorProvider = provider; return { provider }; });
   }
   function authorize(provider) {
@@ -154,7 +164,7 @@ function createVocabularyStudy({ getData, getConfig, getRevision, change, snapsh
     const availableIds = new Set(data.cards.filter((card) => !card.suspended && card.schedule.state === 0).map((card) => card.id));
     ids = ids.filter((id) => availableIds.has(id));
     const result = change((next) => {
-      next.batch = { day: vocabulary.dateKey(now()), ids };
+      next.batch = { day: vocabulary.dateKey(now()), ids, phase: 'preview', index: 0 };
       for (const entry of contexts) {
         const card = next.cards.find((item) => item.id === entry.id && ids.includes(item.id));
         if (!card || typeof entry.sentence !== 'string' || entry.sentence.length > 450 || vocabulary.cloze(entry.sentence, card.word) === entry.sentence) continue;
@@ -175,7 +185,7 @@ function createVocabularyStudy({ getData, getConfig, getRevision, change, snapsh
     const order = [...ids];
     for (let i = order.length - 1; i > 0; i--) { const j = randomInt(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
     if (order.length > 1 && order.every((id, i) => id === ids[i])) order.push(order.shift());
-    const result = change(data => { data.batch = { day: vocabulary.dateKey(now()), ids: order }; return { ids: order }; });
+    const result = change(data => { data.batch = { day: vocabulary.dateKey(now()), ids: order, phase: 'recall', index: 0 }; return { ids: order }; });
     return { ...result, snapshot: subject ? snapshot(subject) : result.snapshot };
   }
   async function check({ requestId } = {}) {

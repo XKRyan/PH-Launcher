@@ -104,6 +104,16 @@ test('API memory use defaults off and unavailable history remains an explicitly 
   assert.match(ui.window.document.querySelector('#agentHistoryStatus').textContent, /加密存储不可用/);
 });
 
+test('a recovered encrypted history warns once while remaining writable', async () => {
+  const ui = harness({ snapshot: { available: true, error: '', notice: '旧聊天记录无法解锁，已保留加密备份；从现在起的新聊天会正常保存。', connectionKey: 'local-key', sessions: [], memories: [] } });
+  ui.window.agentUI.mount();
+  await ui.window.agentUI.loadHistory();
+  assert.match(ui.window.document.querySelector('#agentHistoryStatus').textContent, /新聊天会正常保存/);
+  ui.state.aiMessages.push({ role: 'user', content: 'new durable chat' });
+  assert.equal(await ui.window.agentUI.saveNow(), true);
+  assert.equal(ui.calls.save.length, 1);
+});
+
 test('a delayed save snapshot cannot replace a streaming assistant message, and the completed text survives reload', async () => {
   const ui = harness({ snapshot: { available: true, connectionKey: 'local-key', sessions: [], memories: [] } });
   ui.window.agentUI.mount(); await ui.window.agentUI.loadHistory();

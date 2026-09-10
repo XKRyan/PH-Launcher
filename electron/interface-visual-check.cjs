@@ -9,6 +9,12 @@ async function checkInterfaces(win, appRoot) {
   await run("(async()=>{await window.ph.vocabulary.addStarter('学术表达');})()");
   const results=[], untranslated=new Set();
   for(const language of ['zh-CN','en']) {
+    await run(`window.i18n.apply(${JSON.stringify(language)}); openOnboarding(4, true);`);
+    await pause(200);
+    fs.writeFileSync(path.join(output,language+'-user-guide.png'),(await win.webContents.capturePage()).toPNG());
+    await run("document.querySelector('#onboardingDialog').close();");
+  }
+  for(const language of ['zh-CN','en']) {
     await run(`(async()=>{ await window.ph.settings.setLanguage(${JSON.stringify(language)}); state.data.settings.language=${JSON.stringify(language)}; window.i18n.apply(${JSON.stringify(language)}); })()`);
     for(const route of ['today','settings','vocabulary','plan','ai','mail','calendar','timetable','courses','notes','ib','dictionary']) {
       await run(`document.querySelectorAll('dialog[open]').forEach(d=>d.close()); navigate(${JSON.stringify(route)});`);
@@ -27,7 +33,7 @@ async function checkInterfaces(win, appRoot) {
   }
   for(const [name,code] of [
     ['batch',"navigate('vocabulary'); await window.vocabularyUI.refresh(); document.querySelector('[data-vocab-action=start]').click(); for(let i=0;i<100&&!document.querySelector('.vocab-new-batch,.vocab-study-card');i++) await new Promise(r=>setTimeout(r,50));"],
-    ['expression',"while(document.querySelector('[data-vocab-action=batch-next]')) document.querySelector('[data-vocab-action=batch-next]').click(); document.querySelector('[data-vocab-action=start-batch-recall]').click(); document.querySelector('[data-vocab-action=reveal]').click(); document.querySelector('[data-vocab-action=expression]').click();"],
+    ['expression',"for(let n=0;n<5 && document.querySelector('[data-vocab-action=batch-next]');n++){document.querySelector('[data-vocab-action=batch-next]').click(); await new Promise(r=>setTimeout(r,150));} document.querySelector('[data-vocab-action=start-batch-recall]').click(); for(let n=0;n<100&&!document.querySelector('[data-vocab-action=reveal]');n++) await new Promise(r=>setTimeout(r,50)); document.querySelector('[data-vocab-action=reveal]').click(); document.querySelector('[data-vocab-action=expression]').click();"],
     ['focus',"document.querySelector('#vocabDialog')?.close(); navigate('plan'); openFocusSettings();"],
     ['ai-back',"document.querySelectorAll('dialog[open]').forEach(d=>d.close()); navigate('ai'); state.data.settings.ai={...state.data.settings.ai,enabled:true,provider:'local',localModel:'Local model'}; state.aiEditing=false; renderAi(); beginAiEditing();"],
   ]) {

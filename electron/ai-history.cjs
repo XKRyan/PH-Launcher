@@ -163,6 +163,18 @@ class AiHistoryStore {
     if (this.loadError) throw new Error(this.loadError);
   }
 
+  recoverUnreadable() {
+    if (!this.loaded || !this.loadError || !this.fs.existsSync(this.filePath)) throw new Error('没有可恢复的 AI 历史文件');
+    const stamp = this.timestamp().replace(/[^0-9]/g, '').slice(0, 14);
+    const backupPath = `${this.filePath}.unreadable-${stamp}-${randomUUID()}.bak`;
+    try { this.fs.renameSync(this.filePath, backupPath); }
+    catch { throw new Error('旧 AI 历史无法备份；未创建新的记录库'); }
+    this.data = emptyData();
+    this.loaded = true;
+    this.loadError = '';
+    return { backupPath, snapshot: this.snapshot() };
+  }
+
   snapshot() {
     return clone(this.data);
   }

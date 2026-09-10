@@ -12,6 +12,7 @@ function fixture(authenticate = async () => {}) {
   const context = vm.createContext({
     SchoolAuthError, SchoolDataError, schoolSessionMutations: new Set(),
     invalidateSchoolSnapshots: () => calls.push('invalidate'),
+    persistSchoolCache: () => calls.push('persist'),
     schoolAuthenticator: { authenticate: async (site, options) => { calls.push(['authenticate', site, options.manual]); await authenticate(); }, withSession: () => { throw new Error('must not log in a second time'); } },
     schoolState: { key: (site, week) => { if (site === 'edupage' && week !== '2026-09-07') throw new Error('invalid date'); }, sync: async (site, options, operation) => { calls.push(['sync', site, options.force]); return operation(); } },
     schoolClient: { syncEduPage: async () => { calls.push('read'); return {}; }, syncManageBac: async () => ({}) },
@@ -31,7 +32,7 @@ test('explicit account login locks session changes, authenticates once, then rea
   assert.throws(() => f.context.assertSchoolSessionReady('edupage'), /正在更新/);
   finish();
   assert.equal((await pending).ok, true);
-  assert.deepEqual(f.calls, ['invalidate', ['authenticate', 'edupage', true], 'invalidate', ['sync', 'edupage', true], 'read', 'flush']);
+  assert.deepEqual(f.calls, ['invalidate', ['authenticate', 'edupage', true], 'invalidate', ['sync', 'edupage', true], 'read', 'flush', 'persist']);
 });
 
 test('direct login validates source/date before touching credentials', async () => {

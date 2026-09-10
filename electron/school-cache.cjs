@@ -1,5 +1,6 @@
 // PH Launcher school snapshots. No credentials or cookies are stored here.
-// In-memory, bounded, account-sensitive stale-while-revalidate cache.
+// Bounded, account-sensitive stale-while-revalidate cache; the last verified
+// snapshot may also be persisted in the encrypted local store for offline use.
 const { SchoolDataError } = require('./school-data.cjs');
 const { SchoolAuthError } = require('./school-auth.cjs');
 const TTL = { edupage: 120000, managebac: 180000 };
@@ -16,6 +17,36 @@ class SchoolCache {
     this.pending = new Map();
     this.week = '';
   }
+  restore(raw = {}) {
+    this.current.edupage = null;
+    this.current.managebac = null;
+    this.status = { edupage: { state: 'idle' }, managebac: { state: 'idle' } };
+    this.entries.clear();
+    this.week = '';
+    const saved = Array.isArray(raw?.entries) ? raw.entries.slice(-9) : [raw?.edupage, raw?.managebac];
+    for (const data of saved) {
+      const source = data?.source;
+      if (!Object.hasOwn(TTL, source)) continue;
+      if (!data || data.source !== source || typeof data.fetchedAt !== 'string' || !Number.isFinite(Date.parse(data.fetchedAt))) continue;
+      const week = source === 'edupage' ? data.weekStart : '';
+      if (source === 'edupage' && !dateValid(week)) continue;
+      const copy = structuredClone(data);
+      this.entries.set(this.key(source, week), { at: Date.parse(copy.fetchedAt), data: copy });
+      this.current[source] = structuredClone(copy);
+      if (source === 'edupage') this.week = week;
+      this.status[source] = { state: 'stale', updatedAt: copy.fetchedAt, error: '' };
+    }
+    return this.snapshot();
+  }
+  serialize() {
+    return {
+      version: 1,
+      week: this.week,
+      entries: [...this.entries.values()].map(entry => structuredClone(entry.data)),
+      edupage: this.current.edupage ? structuredClone(this.current.edupage) : null,
+      managebac: this.current.managebac ? structuredClone(this.current.managebac) : null,
+    };
+  }
   key(source, week) {
     if (!Object.hasOwn(TTL, source)) throw new SchoolDataError('INVALID_SOURCE', '未知学校数据源');
     if (source === 'edupage' && !dateValid(week)) throw new SchoolDataError('INVALID_DATE', '请选择正确的课表日期');
@@ -28,7 +59,7 @@ class SchoolCache {
   }
   snapshot(options = {}) {
     if (options?.weekStart) this.selectWeek(options.weekStart);
-    return { ...this.current, status: structuredClone(this.status), epochs: { ...this.epoch } };
+    return { ...this.current, cachedWeeks: [...this.entries.values()].filter(entry => entry.data.source === 'edupage').map(entry => entry.data.weekStart).sort().reverse(), status: structuredClone(this.status), epochs: { ...this.epoch } };
   }
   invalidate(source) {
     for (const site of source && Object.hasOwn(TTL, source) ? [source] : Object.keys(TTL)) {

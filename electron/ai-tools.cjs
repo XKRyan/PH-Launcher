@@ -195,6 +195,23 @@ const AI_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'delete_calendar_events',
+      description: '提出删除一个或多个现有日程的待确认清单。必须先读取日程并使用返回的真实 id；不会立即删除，必须由用户确认。删除每周重复日程会删除整个系列。',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventIds: {
+            type: 'array', minItems: 1, maxItems: MAX_CALENDAR_EVENTS_PER_ACTION, uniqueItems: true,
+            items: { type: 'string', minLength: 1, maxLength: 120 },
+          },
+        },
+        required: ['eventIds'], additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'upsert_schedule',
       description: '提出向常规周课程表合并课程的方案。不会删除原课程，也不会立即写入，必须由用户确认。',
       parameters: {
@@ -334,7 +351,7 @@ const AI_MAIL_TOOLS = [
   },
 ];
 
-const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'create_calendar_events', 'upsert_schedule', 'set_task_status']);
+const WRITE_TOOLS = new Set(['create_tasks', 'create_notes', 'create_calendar_events', 'delete_calendar_events', 'upsert_schedule', 'set_task_status']);
 const COMMAND_TOOLS = new Set(['open_launcher_page', 'open_custom_site', 'control_focus_timer']);
 
 function cleanText(value, maxLength, fallback = '') {
@@ -424,6 +441,26 @@ function sanitizeCalendarEvents(rawEvents) {
   return events;
 }
 
+function sanitizeCalendarEventDeletion(rawIds, data = {}) {
+  if (!Array.isArray(rawIds) || rawIds.length === 0 || rawIds.length > MAX_CALENDAR_EVENTS_PER_ACTION) {
+    throw new Error(`每次只能删除 1–${MAX_CALENDAR_EVENTS_PER_ACTION} 条日程`);
+  }
+  const ids = [...new Set(rawIds.map((value) => typeof value === 'string' ? value.trim() : ''))];
+  if (ids.length !== rawIds.length || ids.some((id) => !id || id.length > 120 || /[\u0000-\u001f\u007f]/.test(id))) throw new Error('日程 id 无效或重复');
+  return ids.map((id) => {
+    const event = (data.calendarEvents || []).find((item) => item.id === id);
+    if (!event) throw new Error('找不到要删除的日程；请先重新读取日程');
+    return {
+      id,
+      title: cleanText(event.title, 120, '未命名日程'),
+      date: cleanText(event.date, 20),
+      start: cleanText(event.start, 12),
+      end: cleanText(event.end, 12),
+      repeatWeekdays: Array.isArray(event.repeatWeekdays) ? event.repeatWeekdays.filter((day) => Number.isInteger(day) && day >= 1 && day <= 7) : [],
+    };
+  });
+}
+
 function sanitizeLessons(rawLessons, source = 'ai') {
   if (!Array.isArray(rawLessons) || rawLessons.length === 0 || rawLessons.length > MAX_LESSONS_PER_ACTION) {
     throw new Error(`每次只能合并 1–${MAX_LESSONS_PER_ACTION} 节课`);
@@ -464,6 +501,7 @@ function sanitizeToolArguments(name, input, data = {}) {
   if (name === 'create_tasks') return { tasks: sanitizeTasks(args.tasks) };
   if (name === 'create_notes') return { notes: sanitizeNotes(args.notes) };
   if (name === 'create_calendar_events') return { events: sanitizeCalendarEvents(args.events) };
+  if (name === 'delete_calendar_events') return { events: sanitizeCalendarEventDeletion(args.eventIds, data) };
   if (name === 'upsert_schedule') return { lessons: sanitizeLessons(args.lessons, args.source) };
   if (name === 'set_task_status') {
     const taskId = cleanText(args.taskId, 80);
@@ -541,6 +579,7 @@ function createAction(name, args, data) {
   if (name === 'create_tasks') return { type: name, tasks: sanitized.tasks };
   if (name === 'create_notes') return { type: name, notes: sanitized.notes };
   if (name === 'create_calendar_events') return { type: name, events: sanitized.events };
+  if (name === 'delete_calendar_events') return { type: name, events: sanitized.events };
   if (name === 'upsert_schedule') return { type: name, lessons: sanitized.lessons };
   if (name === 'set_task_status') return { type: name, ...sanitized };
   throw new Error('该操作不能加入写入清单');
@@ -586,6 +625,17 @@ function actionPreview(action) {
       })),
     };
   }
+  if (action.type === 'delete_calendar_events') {
+    return {
+      type: 'calendar-events-delete',
+      title: `删除 ${action.events.length} 条日程${action.events.some((event) => event.repeatWeekdays?.length) ? '（重复日程将整组删除）' : ''}`,
+      items: action.events.map((event) => ({
+        primary: event.title,
+        secondary: `${event.date}${event.start ? ` ${event.start}${event.end ? `–${event.end}` : ''}` : ''}`,
+        repeatWeekdays: event.repeatWeekdays || [],
+      })),
+    };
+  }
   if (action.type === 'set_task_status') {
     return {
       type: 'task-status',
@@ -603,7 +653,7 @@ function applyActions(data, actions, now = new Date()) {
   if (!Array.isArray(next.schedule)) next.schedule = [];
   if (!Array.isArray(next.calendarEvents)) next.calendarEvents = [];
   const timestamp = now.toISOString();
-  const counts = { tasksAdded: 0, notesAdded: 0, calendarEvents: 0, lessonsAdded: 0, lessonsUpdated: 0, unchanged: 0, tasksChanged: 0 };
+  const counts = { tasksAdded: 0, notesAdded: 0, calendarEvents: 0, calendarEventsRemoved: 0, lessonsAdded: 0, lessonsUpdated: 0, unchanged: 0, tasksChanged: 0 };
 
   for (const action of actions) {
     if (action.type === 'create_tasks') {
@@ -646,6 +696,13 @@ function applyActions(data, actions, now = new Date()) {
         }
         next.calendarEvents = upsertCalendarEvent(next.calendarEvents, event);
         counts.calendarEvents += 1;
+      }
+    } else if (action.type === 'delete_calendar_events') {
+      for (const event of action.events) {
+        const index = next.calendarEvents.findIndex((item) => item.id === event.id);
+        if (index < 0) throw new Error('日程已经不存在，请重新让 AI 读取日程');
+        next.calendarEvents.splice(index, 1);
+        counts.calendarEventsRemoved += 1;
       }
     } else if (action.type === 'upsert_schedule') {
       for (const lesson of action.lessons) {
@@ -768,6 +825,7 @@ module.exports = {
   relevantDataHash,
   sanitizeLessons,
   sanitizeCalendarEvents,
+  sanitizeCalendarEventDeletion,
   sanitizeToolArguments,
   toolKind,
 };

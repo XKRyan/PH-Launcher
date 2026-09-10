@@ -35,6 +35,15 @@ contextBridge.exposeInMainWorld('ph', {
     fill: (siteId) => ipcRenderer.invoke('credentials:fill', siteId),
     onChanged: (callback) => on('credentials:changed', callback),
   },
+  xinlv: {
+    status: () => ipcRenderer.invoke('xinlv:status'),
+    login: (username, password) => ipcRenderer.invoke('xinlv:login', { username, password }),
+    logout: () => ipcRenderer.invoke('xinlv:logout'),
+    setSettings: (settings) => ipcRenderer.invoke('xinlv:set-settings', settings),
+    sync: (options) => ipcRenderer.invoke('xinlv:sync', options),
+    chat: (message, options) => ipcRenderer.invoke('xinlv:chat', message, options),
+    onStatus: (callback) => on('xinlv:status', callback),
+  },
   ai: {
     configure: (config) => ipcRenderer.invoke('ai:configure', config),
     chat: (messages, options) => ipcRenderer.invoke('ai:chat', messages, options),
@@ -76,6 +85,7 @@ contextBridge.exposeInMainWorld('ph', {
     prefetchBatch: (input) => ipcRenderer.invoke('vocabulary:prefetch-batch', input),
     prepareBatch: (input) => ipcRenderer.invoke('vocabulary:prepare-batch', input),
     startRecall: (input) => ipcRenderer.invoke('vocabulary:start-recall', input),
+    batchProgress: (input) => ipcRenderer.invoke('vocabulary:batch-progress', input),
     checkAdvisor: (input) => ipcRenderer.invoke('vocabulary:check-advisor', input),
     importReadingDocument: () => ipcRenderer.invoke('vocabulary:import-reading-document'),
     cancelPrepareBatch: (input) => ipcRenderer.invoke('vocabulary:cancel-prepare-batch', input),

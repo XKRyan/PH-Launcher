@@ -155,6 +155,20 @@ test('bad ciphertext or decryption failure is obvious and cannot overwrite the o
   assert.throws(() => decrypting.load(), /无法解锁 AI 历史/);
 });
 
+test('an unreadable history can be quarantined without deletion and new chats save normally', (t) => {
+  const f = fixture(t);
+  const unreadable = `PHAIH1:${Buffer.from('unreadable ciphertext').toString('base64')}`;
+  fs.writeFileSync(f.filePath, unreadable, 'utf8');
+  const store = f.create({ decrypt: () => { throw new Error('cannot decrypt'); } });
+  assert.throws(() => store.load(), /无法解锁 AI 历史/);
+  const recovered = store.recoverUnreadable();
+  assert.equal(fs.existsSync(f.filePath), false);
+  assert.equal(fs.readFileSync(recovered.backupPath, 'utf8'), unreadable);
+  store.decrypt = (buffer) => xor(buffer).toString('utf8');
+  store.saveSession(session('after-recovery'));
+  assert.equal(f.create().load().sessions[0].id, 'after-recovery');
+});
+
 test('atomic rename failure preserves the previous file, memory, and removes same-directory temp data', (t) => {
   const f = fixture(t);
   const store = f.create();

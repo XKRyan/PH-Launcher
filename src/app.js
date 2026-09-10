@@ -82,6 +82,8 @@ const state = {
   aiMemoryProvider: '',
   aiControlInfo: null,
   aiPendingPermissionMode: '',
+  xinlvStatus: { loggedIn: false, username: '', cloudSyncEnabled: false, shareLauncherContext: false, revision: 0, lastSyncAt: '' },
+  xinlvBusy: false,
   shortcutResults: {},
   credentialStatus: null,
   ibCommandCatalog: null,
@@ -294,6 +296,21 @@ async function openSite(siteId) {
   if (siteId === 'mail') return navigate('mail');
   const site = SITE_META[siteId];
   if (!site) return;
+  if (siteId === 'psychology' && window.ph.xinlv?.status) {
+    try {
+      const status = await window.ph.xinlv.status();
+      state.xinlvStatus = { ...state.xinlvStatus, ...status };
+      if (!status.loggedIn) {
+        navigate('settings');
+        selectSettingsSection('general');
+        toast('请先在“设置 → 通用 → 心履与云端同步”登录；其他模块不需要登录。');
+        return;
+      }
+    } catch (error) {
+      toast(`无法检查心履登录状态：${error.message}`, 'error');
+      return;
+    }
+  }
   state.activeSite = siteId;
   state.route = null;
   $$('.page').forEach((page) => page.classList.remove('active'));
@@ -1690,6 +1707,7 @@ function committedSummary(counts = {}) {
   if (counts.tasksAdded) parts.push(`${counts.tasksAdded} 个任务`);
   if (counts.notesAdded) parts.push(`${counts.notesAdded} 条笔记`);
   if (counts.calendarEvents) parts.push(`${counts.calendarEvents} 条日程`);
+  if (counts.calendarEventsRemoved) parts.push(`删除 ${counts.calendarEventsRemoved} 条日程`);
   if (counts.lessonsAdded) parts.push(`${counts.lessonsAdded} 节课程`);
   if (counts.lessonsUpdated) parts.push(`更新 ${counts.lessonsUpdated} 节课程`);
   if (counts.tasksChanged) parts.push(`${counts.tasksChanged} 个任务状态`);
@@ -1707,7 +1725,7 @@ async function confirmAiProposal(proposalId) {
     message.proposal.status = 'committed';
     if (result.data) state.data = result.data;
     renderAll();
-    if (result.counts?.calendarEvents) await window.calendarUI?.refresh();
+    if (result.counts?.calendarEvents || result.counts?.calendarEventsRemoved) await window.calendarUI?.refresh();
     toast(`已写入：${committedSummary(result.counts)}`);
   } catch (error) {
     message.proposal.status = '';
@@ -1896,7 +1914,8 @@ function openCredentialDialog(siteId) {
   const site = BUILTIN_SITE_META[siteId];
   const status = state.credentialStatus;
   if (!site || !status?.supported || status.issue) {
-    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+    toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+    return false;
   }
   const credential = credentialEntry(siteId);
   $('#credentialForm').reset();
@@ -1921,6 +1940,7 @@ function openCredentialDialog(siteId) {
   $('#saveCredentialButton').textContent = '保存并登录';
   $('#credentialDialog').showModal();
   setTimeout(() => $('#credentialUsername').focus(), 30);
+  return true;
 }
 
 async function saveCredentialFromDialog(event) {
@@ -2144,7 +2164,84 @@ function renderSettings() {
     : '当前系统无法提供加密，数据仅保存在本机';
   $('#dataPathLabel').textContent = state.data.meta?.dataPath || '';
   renderWebsiteSettings();
+  renderXinlvSettings();
   renderShortcutSettings();
+}
+
+function renderXinlvSettings() {
+  const root = $('#xinlvSettings');
+  if (!root) return;
+  const settings = state.data?.settings?.xinlv || {};
+  const status = state.xinlvStatus || {};
+  $('#xinlvStatusText').textContent = status.loggedIn
+    ? `已登录：${status.username || '心履账号'}${status.issue ? ` · ${status.issue}` : ''}`
+    : `未登录心履${status.issue ? ` · ${status.issue}` : ''}`;
+  $('#xinlvCloudSync').checked = settings.cloudSyncEnabled === true;
+  $('#xinlvShareContext').checked = settings.shareLauncherContext === true;
+  $('#xinlvCloudSync').disabled = !status.loggedIn || state.xinlvBusy;
+  $('#xinlvShareContext').disabled = !status.loggedIn || state.xinlvBusy;
+  root.querySelectorAll('[data-xinlv-action]').forEach((button) => { button.disabled = state.xinlvBusy || (button.dataset.xinlvAction === 'sync' && !status.loggedIn); });
+  $('#xinlvSyncText').textContent = status.lastSyncAt ? `上次同步：${new Date(status.lastSyncAt).toLocaleString()}` : '';
+}
+
+async function refreshXinlvStatus() {
+  if (!window.ph.xinlv?.status) return;
+  try { state.xinlvStatus = { ...state.xinlvStatus, ...await window.ph.xinlv.status() }; }
+  catch (error) { state.xinlvStatus = { ...state.xinlvStatus, issue: error.message }; }
+  if (state.route === 'settings') renderXinlvSettings();
+}
+
+async function loginXinlv() {
+  if (state.xinlvBusy || !window.ph.xinlv?.login) return;
+  const username = $('#xinlvUsername')?.value.trim();
+  const password = $('#xinlvPassword')?.value || '';
+  if (!username || !password) return toast('请输入心履账号和密码', 'error');
+  state.xinlvBusy = true; renderXinlvSettings();
+  try {
+    state.xinlvStatus = { ...state.xinlvStatus, ...await window.ph.xinlv.login(username, password) };
+    $('#xinlvPassword').value = '';
+    toast('心履登录成功');
+  } catch (error) {
+    toast(`心履登录失败：${error.message}`, 'error');
+  } finally {
+    state.xinlvBusy = false; renderXinlvSettings();
+  }
+}
+
+async function logoutXinlv() {
+  if (state.xinlvBusy || !window.ph.xinlv?.logout || !state.xinlvStatus.loggedIn) return;
+  state.xinlvBusy = true; renderXinlvSettings();
+  try { state.xinlvStatus = { ...state.xinlvStatus, ...await window.ph.xinlv.logout(), loggedIn: false, username: '' }; toast('已退出心履'); }
+  catch (error) { toast(`退出心履失败：${error.message}`, 'error'); }
+  finally { state.xinlvBusy = false; renderXinlvSettings(); }
+}
+
+async function syncXinlv() {
+  if (state.xinlvBusy || !window.ph.xinlv?.sync) return;
+  if (!state.xinlvStatus.loggedIn) return toast('请先登录心履', 'error');
+  state.xinlvBusy = true; renderXinlvSettings();
+  try {
+    const result = await window.ph.xinlv.sync({ mode: 'auto' });
+    if (result?.conflict) toast('本机与云端都有新数据，请先导出备份后选择保留哪一份', 'error');
+    else toast(result?.action === 'downloaded' ? '已从云端恢复学习数据' : result?.action === 'uploaded' ? '已上传本机学习数据' : '云端数据已同步');
+    await refreshXinlvStatus();
+  } catch (error) { toast(`云端同步失败：${error.message}`, 'error'); }
+  finally { state.xinlvBusy = false; renderXinlvSettings(); }
+}
+
+async function updateXinlvSettings(patch) {
+  if (!state.data?.settings?.xinlv || !window.ph.xinlv?.setSettings) return;
+  const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, state.data.settings.xinlv[key]]));
+  Object.assign(state.data.settings.xinlv, patch);
+  try {
+    await window.ph.xinlv.setSettings(patch);
+    await persistData(true);
+    renderXinlvSettings();
+  } catch (error) {
+    Object.assign(state.data.settings.xinlv, previous);
+    renderXinlvSettings();
+    toast(`心履设置未保存：${error.message}`, 'error');
+  }
 }
 
 async function updateShortcut(action, patch) {
@@ -2268,25 +2365,32 @@ function renderOnboarding() {
   ];
   const accountRows = accounts.map(([id, label]) => {
     const saved = credentialEntry(id).saved;
-    return `<button type="button" data-onboarding-account="${id}"><span><strong>${label}</strong><small>${saved ? (en ? 'Configured' : '已配置') : (en ? 'Set up account' : '去设置账号')}</small></span><span>${saved ? '✓' : '→'}</span></button>`;
+    return `<button type="button" data-onboarding-account="${id}" aria-label="${en ? `Enter ${label} username and password` : `输入${label}用户名和密码`}"><span><strong>${label}</strong><small>${saved ? (en ? 'Configured' : '已配置') : (en ? 'Enter username and password' : '输入用户名和密码')}</small></span><span>${saved ? '✓' : '→'}</span></button>`;
   }).join('');
   const steps = en ? [
-    { title: 'Connect your school services', copy: 'Set up EduPage, ManageBac and Pinghe Mail. Passwords are encrypted locally and each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">You can change these accounts later in Settings → Websites.</p>` },
+    { title: 'Welcome to PH Launcher', copy: 'A calm workspace for your timetable, assignments, calendar, mail and study tools.', body: '<p class="onboarding-step-copy">This short guide is optional. You can skip it now and change everything later in Settings.</p>' },
+    { title: 'Connect your school services', copy: 'Enter your username and password directly in PH Launcher. The original school websites will not open during setup; each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">Passwords are encrypted locally. You can change these accounts later in Settings → Websites.</p>` },
     { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
     { title: 'Try Wellbeing (optional)', copy: 'Xinlv is embedded as a launcher module for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
+    { title: 'Start with one small action', copy: 'Tasks hold things to do. My calendar holds timed and weekly activities. Vocabulary keeps your learning and reviews together.', body: '<div class="onboarding-list"><button type="button" data-guide-route="vocabulary">Import a wordbook and start learning →</button><button type="button" data-guide-route="calendar">Add an activity or weekly schedule →</button><button type="button" data-guide-route="plan">Create a task and set a focus goal →</button></div><p class="onboarding-step-copy">Use Search and quick actions (Ctrl/Cmd K) to jump to a page. Reopen this guide below Settings anytime.</p>' },
   ] : [
-    { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会在本机加密保存，也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
+    { title: '欢迎使用 PH Launcher', copy: '把课表、作业、日程、邮件和学习工具放在一个安静的工作台。', body: '<p class="onboarding-step-copy">这段引导可以跳过，之后也能在“设置”中修改所有选项。</p>' },
+    { title: '先连接学校服务', copy: '直接在 PH Launcher 输入用户名和密码，设置期间不会自动打开学校原网页；三个服务都可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">密码会在本机加密保存，之后可在“设置 → 网站”修改账号。</p>` },
     { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
     { title: '试试心理模块（可选）', copy: '心履已作为启动器中的独立模块嵌入，登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心理</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心理”打开。</p>' },
+    { title: '从一件小事开始', copy: '计划管理待办；我的日程安排具体时间和每周活动；背单词集中管理学习与复习。', body: '<div class="onboarding-list"><button type="button" data-guide-route="vocabulary">导入词书，开始背单词 →</button><button type="button" data-guide-route="calendar">添加日程或每周固定活动 →</button><button type="button" data-guide-route="plan">创建任务，设置专注目标 →</button></div><p class="onboarding-step-copy">按 Ctrl/Cmd K 打开搜索与快捷操作。随时从侧栏“设置”下方重新打开导览。</p>' },
   ];
   const step = steps[Math.max(0, Math.min(state.onboardingStep, steps.length - 1))];
-  content.innerHTML = `<h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
+  content.innerHTML = `<p class="onboarding-step-copy">${en ? 'Step' : '步骤'} ${state.onboardingStep + 1} / ${steps.length}</p><h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
   $('#onboardingBack').hidden = state.onboardingStep === 0;
   $('#onboardingNext').textContent = state.onboardingStep === steps.length - 1 ? (en ? 'Finish' : '完成') : (en ? 'Next' : '下一步');
+  state.data.settings.onboardingStep = state.onboardingStep;
+  void persistData(true);
 }
 
 function finishOnboarding() {
   state.onboardingPending = false;
+  $('#openUserGuide').textContent = window.i18n?.locale?.() === 'en' ? 'User guide' : '使用导览';
   if (state.data) {
     state.data.settings.onboardingCompleted = true;
     void persistData(true);
@@ -2294,10 +2398,10 @@ function finishOnboarding() {
   $('#onboardingDialog')?.close();
 }
 
-function openOnboarding(step = 0) {
-  if (!state.data || state.data.settings.onboardingCompleted === true) return;
+function openOnboarding(step = state.data?.settings.onboardingStep || 0, force = false) {
+  if (!state.data || state.data.settings.onboardingCompleted === true && !force && !state.onboardingPending) return;
   state.onboardingPending = false;
-  state.onboardingStep = Math.max(0, Math.min(2, Number(step) || 0));
+  state.onboardingStep = Math.max(0, Math.min(4, Number(step) || 0));
   renderOnboarding();
   const dialog = $('#onboardingDialog');
   if (dialog && !dialog.open) dialog.showModal();
@@ -2305,17 +2409,41 @@ function openOnboarding(step = 0) {
 
 function openOnboardingDestination(action) {
   state.onboardingPending = true;
+  $('#openUserGuide').textContent = window.i18n?.locale?.() === 'en' ? 'Continue guide' : '继续导览';
   $('#onboardingDialog')?.close();
   action();
 }
 
 function handleBodyClick(event) {
+  if (event.target.closest('#openUserGuide')) {
+    if (state.activeSite) navigate('today');
+    openOnboarding(state.onboardingPending ? state.onboardingStep : 0, true); return;
+  }
+  const guideRoute = event.target.closest('[data-guide-route]')?.dataset.guideRoute;
+  if (guideRoute) { openOnboardingDestination(() => navigate(guideRoute)); return; }
+  const xinlvAction = event.target.closest('[data-xinlv-action]')?.dataset.xinlvAction;
+  if (xinlvAction) {
+    if (xinlvAction === 'login') loginXinlv();
+    if (xinlvAction === 'logout') logoutXinlv();
+    if (xinlvAction === 'sync') syncXinlv();
+    return;
+  }
   const onboardingAccount = event.target.closest('[data-onboarding-account]');
-  if (onboardingAccount) { openCredentialDialog(onboardingAccount.dataset.onboardingAccount); return; }
+  if (onboardingAccount) {
+    // Keep the first-run guide out of the modal stack while the in-app
+    // username/password dialog is open. No school website is opened here.
+    state.onboardingPending = true;
+    $('#onboardingDialog')?.close();
+    if (!openCredentialDialog(onboardingAccount.dataset.onboardingAccount)) {
+      state.onboardingPending = false;
+      openOnboarding(state.onboardingStep);
+    }
+    return;
+  }
   if (event.target.closest('#onboardingAiSettings')) { openOnboardingDestination(() => navigate('ai')); return; }
   if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => openSite('psychology')); return; }
   if (event.target.closest('#onboardingNext')) {
-    if (state.onboardingStep >= 2) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
+    if (state.onboardingStep >= 4) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
     return;
   }
   if (event.target.closest('#onboardingBack')) { state.onboardingStep = Math.max(0, state.onboardingStep - 1); renderOnboarding(); return; }
@@ -2615,6 +2743,8 @@ function bindEvents() {
   $('#openAtLoginSetting').addEventListener('change', (event) => { state.data.settings.openAtLogin = event.target.checked; persistData(true); });
   $('#minimizeTraySetting').addEventListener('change', (event) => { state.data.settings.minimizeToTray = event.target.checked; persistData(true); });
   $('#reminderSetting').addEventListener('change', (event) => { state.data.settings.defaultReminderMinutes = Number(event.target.value); persistData(); });
+  $('#xinlvCloudSync')?.addEventListener('change', (event) => updateXinlvSettings({ cloudSyncEnabled: event.target.checked }));
+  $('#xinlvShareContext')?.addEventListener('change', (event) => updateXinlvSettings({ shareLauncherContext: event.target.checked }));
   $('#websiteSettings').addEventListener('click', async (event) => {
     const siteId = event.target.closest('[data-clear-site]')?.dataset.clearSite;
     if (!siteId || !await localizedConfirm(`清除 ${SITE_META[siteId].name} 的登录状态、Cookie、缓存与已保存密码？`)) return;
@@ -2640,6 +2770,7 @@ function bindEvents() {
     $('#credentialPassword').value = '';
     $('#credentialRiskAccepted').checked = false;
     $('#saveCredentialButton').disabled = true;
+    if (state.onboardingPending && state.route === 'today') setTimeout(() => openOnboarding(state.onboardingStep), 50);
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
@@ -2729,6 +2860,8 @@ async function init() {
       window.ph.credentials.status(),
     ]);
     state.data = data;
+    state.data.settings.xinlv = { cloudSyncEnabled: false, shareLauncherContext: false, revision: 0, lastSyncAt: '', ...(data.settings?.xinlv || {}) };
+    if (window.ph.xinlv?.status) state.xinlvStatus = { ...state.xinlvStatus, ...(await window.ph.xinlv.status().catch(() => ({}))) };
     window.i18n?.mount(data.settings.language);
     window.i18n?.settings();
     state.aiDeployment = deployment;
@@ -2766,6 +2899,10 @@ async function init() {
     state.credentialStatus = credentialStatus;
     if (state.route === 'settings') renderCredentialSettings();
     if ($('#onboardingDialog')?.open) renderOnboarding();
+  });
+  window.ph.xinlv?.onStatus?.((status) => {
+    state.xinlvStatus = { ...state.xinlvStatus, ...(status || {}) };
+    if (state.route === 'settings') renderXinlvSettings();
   });
   window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
   window.ph.shortcuts.onAction((action) => {

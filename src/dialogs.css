@@ -37,6 +37,7 @@
 .onboarding-dialog .onboarding-list button { display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%; padding:14px 16px; border:1px solid var(--border); border-radius:14px; background:var(--ivory-50); color:var(--ink); text-align:left; }
 .onboarding-dialog .onboarding-list button small { color:var(--ink-2); }
 .onboarding-dialog .onboarding-step-copy { color:var(--ink-2); line-height:1.7; }
+.sidebar-bottom .guide-shortcut { color:inherit; width:100%; min-height:32px; padding:4px 12px; text-align:center; opacity:.9; }
 
 /* School dialogs have no form wrapper. Each of the three zones owns its inset. */
 .school-dialog { width:min(760px,calc(100vw - 48px)); padding:0; overflow:hidden; }

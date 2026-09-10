@@ -67,7 +67,7 @@
   const displayedLessons = () => isClassTimetable() ? currentWeek()?.lessons || [] : selectedLessons();
   const btn = (label, action, extra = '', primary = false) => `<button type="button" class="${primary ? 'primary-button' : 'secondary-button'}" data-school-action="${action}" ${extra}>${esc(label)}</button>`;
   const courseReminderLabel = () => prefs().courseReminderMinutes === null || prefs().courseReminderMinutes === undefined ? '上课提醒：未开启' : prefs().courseReminderMinutes === 0 ? '上课提醒：准时' : `上课提醒：提前 ${prefs().courseReminderMinutes} 分钟`;
-  const noData = (title, description, site) => `<div class="school-empty"><span class="school-empty-symbol" aria-hidden="true">${site === 'edupage' ? '▦' : '▤'}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><div class="school-actions">${btn(state.snapshot.accounts?.[site]?.saved ? '修改账号' : '输入账号密码', 'account', `data-site="${site}"`, !state.snapshot.accounts?.[site]?.saved)}${state.snapshot.accounts?.[site]?.saved ? btn('登录并同步', 'connect', `data-source="${site}" ${state.busy.has(site) ? 'disabled' : ''}`, true) : ''}</div><small>账号密码只提交给对应学校网站；学校内容不会自动发送给 AI。</small></div>`;
+  const noData = (title, description, site) => `<div class="school-empty"><span class="school-empty-symbol" aria-hidden="true">${site === 'edupage' ? '▦' : '▤'}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><div class="school-actions">${btn(state.snapshot.accounts?.[site]?.saved ? '修改账号' : '输入账号密码', 'account', `data-site="${site}"`, !state.snapshot.accounts?.[site]?.saved)}${state.snapshot.accounts?.[site]?.saved ? btn('登录并同步', 'connect', `data-source="${site}" ${state.busy.has(site) ? 'disabled' : ''}`, true) : ''}${site === 'edupage' && state.snapshot.cachedWeeks?.length ? btn('查看上次课表', 'cached-week', `data-week="${esc(state.snapshot.cachedWeeks[0])}"`) : ''}</div><small>账号密码只提交给对应学校网站；学校内容不会自动发送给 AI。</small></div>`;
   const warnings = (data) => data?.warnings?.length ? `<details class="school-warnings"><summary>${data.warnings.length} 条核对提示</summary><ul>${data.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></details>` : '';
 
   function groupLessons(lessons) {
@@ -199,7 +199,7 @@
     const data = state.snapshot[source];
     const page = isClassTimetable() ? { title: '班级课表', description: '查看当前账号所属班级的课程与教室安排。' } : state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
     const automatic = `<label class="school-auto-sync"><input type="checkbox" data-school-action="auto-sync" ${prefs().autoSync ? 'checked' : ''}/><span><strong>自动更新课表与课程</strong><small>${prefs().autoSync ? '已开启：仅在当前页面打开且窗口可见时检查更新。' : '默认关闭。开启前会请你确认读取范围。'}</small></span></label>`;
-    root.innerHTML = `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div><div class="school-refresh-preference">${automatic}<span>手动刷新始终可用；学校账号可在“设置 → 网站”中选择保存登录。</span></div>${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${state.route === 'courses' && data ? `<div class="school-sync-line"><span>最近同步 ${esc(stamp(data.fetchedAt))} · 内容仅在本次打开期间保留</span>${btn(state.busy.has('managebac') ? '正在同步…' : '刷新课程与作业', 'sync', `data-source="managebac" ${state.busy.has('managebac') ? 'disabled' : ''}`)}</div>` : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
+    root.innerHTML = `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div><div class="school-refresh-preference">${automatic}<span>手动刷新始终可用；学校账号可在“设置 → 网站”中选择保存登录。</span></div>${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${state.route === 'courses' && data ? `<div class="school-sync-line"><span>最近同步 ${esc(stamp(data.fetchedAt))} · 已验证内容保存在本机，离线时仍可查看</span>${btn(state.busy.has('managebac') ? '正在同步…' : '刷新课程与作业', 'sync', `data-source="managebac" ${state.busy.has('managebac') ? 'disabled' : ''}`)}</div>` : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
     if (state.error) {
       const challenge = /验证码|双重验证|额外验证/.test(state.error);
       root.querySelector('[role="alert"]')?.insertAdjacentHTML('afterend', `<div class="school-actions">${btn('修改登录账号', 'account', `data-site="${source}"`)}${challenge ? btn('完成学校验证', 'login', `data-site="${source}"`, true) : ''}</div>`);
@@ -228,7 +228,7 @@
   }
   function consent(source, callback) {
     if (autoApproved(source)) { callback(); return; }
-    showDialog('连接学校账号', `<p>将连接你的 ${source === 'edupage' ? 'EduPage' : 'ManageBac'} 账号，读取${source === 'edupage' ? '所属班级的课程、教学组、任课老师和教室' : '课程、成绩、作业、讨论与项目摘要'}。选择“登录并同步”时会使用本机保存的账号密码完成此次登录。</p><div class="school-callout">内容仅保留在本次打开期间；不会自动发送给 AI，也不会提交作业、回复讨论、发送邮件或修改学校信息。共享电脑上请先确认这是你自己的账号。</div><p>数据可能识别不完整，请与学校记录核对。只有你主动确认加入计划的课程会保存为本地提醒。</p>`, `${btn('暂不连接', 'close')}${btn('同意并继续', 'consent', `data-source="${source}"`, true)}`);
+    showDialog('连接学校账号', `<p>将连接你的 ${source === 'edupage' ? 'EduPage' : 'ManageBac'} 账号，读取${source === 'edupage' ? '所属班级的课程、教学组、任课老师和教室' : '课程、成绩、作业、讨论与项目摘要'}。选择“登录并同步”时会使用本机保存的账号密码完成此次登录。</p><div class="school-callout">已验证内容会保存在本机，网络不可用时可继续查看上次成功读取的内容；不会自动发送给 AI，也不会提交作业、回复讨论、发送邮件或修改学校信息。共享电脑上请先确认这是你自己的账号。</div><p>数据可能识别不完整，请与学校记录核对。只有你主动确认加入计划的课程会保存为本地提醒。</p>`, `${btn('暂不连接', 'close')}${btn('同意并继续', 'consent', `data-source="${source}"`, true)}`);
     modal.schoolConsentAction = callback;
   }
   async function sync(source, { force = true, weekStart = state.week } = {}) {
@@ -275,7 +275,7 @@
     sync(source, { force: false, weekStart: state.week });
   }
   function autoConsentDialog() {
-    showDialog('开启自动更新课表与课程', '<p>开启后，PH Launcher 会在你正在查看“课表与课程”且窗口可见时，按需读取已登录的 EduPage 与 ManageBac 内容；课表最短 2 分钟、课程与作业最短 3 分钟才会再次检查，并每 5 分钟进行一次可见性检查。</p><div class="school-callout">数据仅保留在本次打开期间，不会发送给 AI，也不会提交作业、发送邮件或修改学校信息。你可随时关闭此选项。</div><p>若希望网站在下次打开时保留登录状态，可在“设置 → 网站”中单独选择保存，自动更新不会替你保存密码。</p>', `${btn('暂不开启', 'close')}${btn('同意并开启', 'auto-sync-consent', '', true)}`);
+    showDialog('开启自动更新课表与课程', '<p>开启后，PH Launcher 会在你正在查看“课表与课程”且窗口可见时，按需读取已登录的 EduPage 与 ManageBac 内容；课表最短 2 分钟、课程与作业最短 3 分钟才会再次检查，并每 5 分钟进行一次可见性检查。</p><div class="school-callout">已验证内容会保存在本机，网络不可用时仍可查看上次成功读取的内容；不会发送给 AI，也不会提交作业、发送邮件或修改学校信息。你可随时关闭此选项。</div><p>若希望网站在下次打开时保留登录状态，可在“设置 → 网站”中单独选择保存，自动更新不会替你保存密码。</p>', `${btn('暂不开启', 'close')}${btn('同意并开启', 'auto-sync-consent', '', true)}`);
   }
   function teachingGroupInference(data) {
     const infer = window.schoolSelectionInference?.inferTeachingGroups;
@@ -361,6 +361,11 @@
   async function onClick(event) {
     const button = event.target.closest('[data-school-action]'); if (!button || button.disabled) return;
     const action = button.dataset.schoolAction;
+    if (action === 'cached-week') {
+      const week = button.dataset.week;
+      if (state.busy.has('edupage') || !state.snapshot.cachedWeeks?.includes(week)) return;
+      state.week = week; state.notice = ''; await loadWeek(week); render(); return;
+    }
     try {
       if (action === 'close') modal?.close();
       if (action === 'account') { modal?.close(); window.openSchoolAccount(button.dataset.site); }

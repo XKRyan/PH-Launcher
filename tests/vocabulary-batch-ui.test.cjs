@@ -55,6 +55,7 @@ function mountUI(data, { coach, prepareBatch, add, lookup, configureAdvisor, imp
     importReadingDocument: importReadingDocument || (async () => ({ canceled: true })),
     review: async (input) => ({ result: vocabulary.reviewCard(data, input, now), snapshot: snapshot(data) }),
     update: async (input) => ({ result: vocabulary.updateCard(data, input), snapshot: snapshot(data) }),
+    batchProgress: async (input) => ({ result: vocabulary.updateBatchProgress(data, input, now), snapshot: snapshot(data) }),
     undo: async () => ({ result: vocabulary.undoReview(data), snapshot: snapshot(data) }),
     configure: async (input) => ({ result: input, snapshot: snapshot(data) }),
     prepareBatch: prepareBatch ? async (input) => { prepareCalls.push(input); return prepareBatch(input); } : undefined,
@@ -108,6 +109,23 @@ test('failed batch preparation renders usable offline preview and a return butto
   assert.ok(ui.document.querySelector('.vocab-new-batch'));
   assert.ok(ui.document.querySelector('[data-vocab-action="return-study"]'));
   assert.equal(ui.prepareCalls.length, 1);
+});
+
+test('reopening midway through previews resumes the next unseen word, then restores remaining recall', async () => {
+  const data = makeData(5); data.settings.mode = 'meaning';
+  const first = await start(data);
+  for (let i = 0; i < 2; i++) { first.document.querySelector('[data-vocab-action="batch-next"]').click(); await flush(); }
+  const word = first.document.querySelector('.vocab-new-preview h3').textContent;
+  assert.equal(data.batch.index, 2);
+  const restarted = await start(data);
+  assert.equal(restarted.document.querySelector('.vocab-new-preview h3').textContent, word);
+  for (let i = 0; i < 2; i++) { restarted.document.querySelector('[data-vocab-action="batch-next"]').click(); await flush(); }
+  restarted.document.querySelector('[data-vocab-action="start-batch-recall"]').click(); await flush();
+  await revealAndRate(restarted);
+  assert.equal(data.batch.ids.length, 4);
+  const again = await start(data);
+  assert.ok(again.document.querySelector('.vocab-study-card'));
+  assert.equal(again.document.querySelector('.vocab-new-preview'), null);
 });
 
 test('five new words all preview before their group enters recall', async () => {
@@ -324,9 +342,10 @@ test('API next-group recommendation sends no consent or request until its separa
   assert.equal(ui.advisorCalls.length, 0);
   assert.ok(ui.document.querySelector('#vocabAdvisorApiConsent'));
   ui.document.querySelector('#vocabAdvisorApiConsent').checked = true;
+  ui.document.querySelector('#vocabRememberApiConsent').checked = true;
   ui.document.querySelector('[data-vocab-action="confirm-advisor-api"]').click();
   await flush();
-  assert.equal(JSON.stringify(ui.advisorCalls), JSON.stringify([{ provider: 'api', apiConsent: true }]));
+  assert.equal(JSON.stringify(ui.advisorCalls), JSON.stringify([{ provider: 'api', apiConsent: true, rememberApiConsent: true }]));
 });
 
 test('drag-selecting an in-reader phrase looks it up and adds its original sentence without re-rendering the reader', async () => {
@@ -406,7 +425,7 @@ test('own expression accepts a local suggestion only when saved and an open edit
   document.querySelector('[data-coach-apply]').click();
   assert.equal(expression.value, 'I use worda in my own sentence. Corrected.');
   assert.equal(data.cards[0].ownExample, '');
-  document.querySelector('#vocabExpressionForm').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  document.querySelector('[data-vocab-action="save-expression"]').click();
   await flush(); await flush();
   assert.equal(data.cards[0].ownExample, 'I use worda in my own sentence. Corrected.');
   assert.equal(data.logs.length, reviewCount);

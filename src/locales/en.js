@@ -43,6 +43,7 @@
       '长期记忆': 'Long-term memory', '只保存你主动希望记住的偏好；不会自动读取邮件或整理私人内容。': 'Save only preferences you actively choose to remember. Email and private material are never collected automatically.',
       '还没有保存的长期记忆。': 'No long-term memory saved yet.', '保存记忆': 'Save memory', '取消编辑': 'Cancel editing', '本次使用长期记忆': 'Use long-term memory this time',
       '聊天记录已加密保存在此设备。': 'Chat history is encrypted and stored on this device.', '此设备的聊天仅在当前打开期间保留。': 'Chats on this device are kept only while this window is open.',
+      '旧聊天记录无法解锁，已保留加密备份；从现在起的新聊天会正常保存。': 'The old chat history could not be unlocked and was kept as an encrypted backup. New chats will now save normally.',
       '这段记录来自另一项 AI 连接。可以查看；继续聊天会新建会话，旧内容不会发送到当前服务。': 'This record belongs to another AI connection. You can view it; continuing starts a new chat and does not send the old content to the current service.',
       '完整权限含收件箱读取，任何写入仍需你确认。': 'Full access includes inbox reading. Any write still needs your confirmation.',
       'AI 操作启动器': 'AI launcher actions', '会话': 'Chats', '＋ 新会话': '＋ New chat', '当前模型': 'Current model', '连接设置': 'Connection settings',
@@ -716,6 +717,34 @@
     '安排每周活动': 'Plan weekly activities', '检查日程冲突': 'Check calendar conflicts',
     '管理待办任务和专注时间；有具体时间的活动请到“我的日程”。': 'Manage tasks and focus time. Use My calendar for activities with specific times.',
     '在“我的课表”查看学校课程': 'View school classes in My timetable'
+  });
+  Object.assign(root.PH_EN.exact, {
+    '使用导览': 'User guide', '继续导览': 'Continue guide',
+    '已学习（下次复习）': 'Learned (next review)', '已学会': 'Already known',
+    '已学会 · 不安排复习': 'Already known · No reviews scheduled',
+    '暂停复习': 'Pause reviews', '已暂停复习': 'Reviews paused', '恢复安排': 'Resume reviews',
+    '查看上次课表': 'View saved timetable',
+    '已标记为“已学会”，不会安排复习；可在我的词书中恢复安排': 'Marked as already known. Reviews are off; resume them in My vocabulary anytime.',
+    '在本机记住授权，下次不用重复确认': 'Remember permission on this device',
+    '撤销 API 授权': 'Revoke API permission', '已撤销 API 授权': 'API permission revoked',
+    '已验证内容会保存在本机，网络不可用时可继续查看上次成功读取的内容；不会自动发送给 AI，也不会提交作业、回复讨论、发送邮件或修改学校信息。共享电脑上请先确认这是你自己的账号。': 'Verified content is saved on this device for offline viewing. It is not automatically sent to AI. This does not submit work, post replies, send mail or change school records. On a shared computer, check that this is your account.',
+    '已验证内容会保存在本机，网络不可用时仍可查看上次成功读取的内容；不会发送给 AI，也不会提交作业、发送邮件或修改学校信息。你可随时关闭此选项。': 'Verified content is saved on this device for offline viewing. It is not sent to AI. This does not submit work, send mail or change school records. You can disable this anytime.'
+  });
+  root.PH_EN.patterns.push(['^已学习 · 下次 (.+)$', 'Learned · Next review: $1']);
+  root.PH_EN.patterns.push(['^最近同步 (.+) · 已验证内容保存在本机，离线时仍可查看$', 'Last synced $1 · Saved on this device for offline viewing']);
+  root.PH_EN.exact["开始新词组时，会发送最多 40 个候选词和 20 条近期学习信号；每组学习时可提前准备下一组。新加入且缺少例句的词会在后台请求造句（每次最多 40 词，每批 5 词），可能收费。翻译和纠错会发送当前词条、例句以及你填写的答案或造句；连接检查只发送一个示例单词。不发送整篇文章、学校数据或密码。可以选择在本机记住本次授权；更换 API 地址、模型或 Key 后需重新确认，可在“连接与检查”中撤销。API 可能按量收费。"] = "Starting a new group sends up to 40 candidate words and 20 recent learning signals. The next group may be prepared ahead. New words missing examples may request sentences in the background (up to 40 words, five per request). Translation and feedback send the current word, example, answer or sentence. A connection test sends one example word. Full articles, school data and passwords are not sent. You can remember permission on this device and revoke it in Connection & test. Changing the API address, model or key requires confirmation again. API charges may apply.";
+  Object.assign(root.PH_EN.exact, {
+    '欢迎使用 PH Launcher': 'Welcome to PH Launcher', '跳过引导': 'Skip guide',
+    '关闭引导': 'Close guide', '上一步': 'Back', '生活': 'Life',
+    '心履与云端同步': 'Xinlv and cloud sync',
+    '只有使用心履或主动同步时才需要登录；学校账号不会自动带入。': 'Sign in only when using Xinlv or syncing. School accounts are not shared automatically.',
+    '未登录心履': 'Not signed in to Xinlv', '心履账号': 'Xinlv account', '登录心履': 'Sign in to Xinlv', '退出登录': 'Sign out',
+    '启用云端同步': 'Enable cloud sync',
+    '同步任务、课程表、日程、笔记、词汇和 IB 进度；附件路径与账号密钥不会上传。': 'Sync tasks, timetables, calendar, notes, vocabulary and IB progress. Attachment paths and account keys are not uploaded.',
+    '允许心履 AI 读取学习资料': 'Allow Xinlv AI to read study information',
+    '仅在你发送消息时附带精简的任务、课表、日程、笔记和词汇摘要。': 'Include brief task, timetable, calendar, note and vocabulary summaries only when you send a message.',
+    '立即同步': 'Sync now',
+    '六套配色，或调成你喜欢的样子。字号覆盖侧栏、设置和学习页面；内嵌的心理模块也会同步主题色。': 'Choose from six palettes or customize your own. Font size applies to the sidebar, settings and study pages. Wellbeing follows your theme too.'
   });
   if (typeof module === 'object' && module.exports) module.exports = root.PH_EN;
 }(typeof window === 'undefined' ? {} : window));

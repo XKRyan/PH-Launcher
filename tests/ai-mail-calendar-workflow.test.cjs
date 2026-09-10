@@ -111,6 +111,7 @@ test('full-access ordinary conversation exposes capabilities without automatic d
   const app = workflowHarness();
   const result = await app.run('你好');
   assert.ok(app.offered[0].includes('create_calendar_events'));
+  assert.ok(app.offered[0].includes('delete_calendar_events'));
   assert.deepEqual(app.mailCalls, []);
   assert.equal(result.proposal, null);
   assert.equal(app.data.calendarEvents.length, 0);

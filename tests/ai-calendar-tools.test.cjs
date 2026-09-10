@@ -9,6 +9,7 @@ const {
   applyActions,
   createAction,
   relevantDataHash,
+  sanitizeCalendarEventDeletion,
   sanitizeCalendarEvents,
   toolKind,
 } = require('../electron/ai-tools.cjs');
@@ -80,9 +81,30 @@ test('calendar changes after preview invalidate the proposal instead of being ov
   assert.equal(data.calendarEvents[0].id, 'manual');
 });
 
+test('calendar deletion uses existing ids, stays pending, and removes only confirmed events', () => {
+  const keep = { id: 'keep-event', color: 'green', ...event({ title: 'Keep this event' }) };
+  const remove = { id: 'remove-event', color: 'purple', ...event({ title: 'Remove this event', date: '2026-10-13' }) };
+  const data = { ...base(), calendarEvents: [keep, remove] };
+  assert.deepEqual(sanitizeCalendarEventDeletion(['remove-event'], data)[0].title, 'Remove this event');
+  assert.throws(() => sanitizeCalendarEventDeletion(['missing-event'], data), /找不到/);
+  assert.throws(() => sanitizeCalendarEventDeletion(['remove-event', 'remove-event'], data), /重复/);
+  const action = createAction('delete_calendar_events', { eventIds: ['remove-event'] }, data);
+  const store = new PendingActionStore();
+  const proposal = store.create([action], data);
+  assert.equal(data.calendarEvents.length, 2, 'proposal must not delete before confirmation');
+  assert.equal(proposal.groups[0].type, 'calendar-events-delete');
+  assert.equal(proposal.groups[0].items[0].primary, 'Remove this event');
+  const result = store.commit(proposal.id, data);
+  assert.equal(result.counts.calendarEventsRemoved, 1);
+  assert.deepEqual(result.data.calendarEvents.map((item) => item.id), ['keep-event']);
+  assert.equal(data.calendarEvents.length, 2, 'commit returns a new data object');
+});
+
 test('calendar creation is a guarded write tool and mail search extends only list_mail', () => {
   assert.equal(toolKind('create_calendar_events'), 'write');
+  assert.equal(toolKind('delete_calendar_events'), 'write');
   assert.ok(AI_TOOLS.some((tool) => tool.function.name === 'create_calendar_events'));
+  assert.ok(AI_TOOLS.some((tool) => tool.function.name === 'delete_calendar_events'));
   const listMail = AI_MAIL_TOOLS.find((tool) => tool.function.name === 'list_mail');
   assert.equal(listMail.function.parameters.properties.query.maxLength, 80);
   assert.equal(listMail.function.parameters.properties.cursor.minimum, 0);

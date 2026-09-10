@@ -140,6 +140,21 @@
   }
   const isNew = (current) => current?.schedule?.state === 0 && current.schedule.reps === 0;
   const queuedCard = (id) => state.snapshot?.cards.find((item) => item.id === id && state.snapshot.queueIds.includes(id));
+  function restorePersistedBatch() {
+    const saved = state.snapshot?.batch;
+    if (!saved || !Array.isArray(saved.ids)) return false;
+    const ids = saved.ids.filter((id) => isNew(queuedCard(id))).slice(0, 5);
+    if (!ids.length) return false;
+    state.batchIds = ids;
+    state.batchPhase = ['preview', 'recall'].includes(saved.phase) ? saved.phase : 'preview';
+    state.batchPreviewIndex = Math.min(Number.isInteger(saved.index) ? saved.index : 0, ids.length - 1);
+    return true;
+  }
+  async function persistBatchProgress() {
+    if (!state.batchIds.length || typeof api()?.batchProgress !== 'function') return true;
+    const result = await mutate(() => api().batchProgress({ ids: [...state.batchIds], phase: state.batchPhase === 'recall' ? 'recall' : 'preview', index: state.batchPreviewIndex }), null, { renderResult: false });
+    return Boolean(result);
+  }
   function beginNewBatch() {
     state.batchIds = state.snapshot.queueIds.map(queuedCard).filter(isNew).slice(0, 5).map((item) => item.id);
     state.batchPreviewIndex = 0;
@@ -168,7 +183,7 @@
       state.batchIds = order;
       state.snapshot.queueIds = [...order, ...state.snapshot.queueIds.filter(id => !order.includes(id))];
     }
-    state.batchPhase = 'recall'; resetCard({ preserveBatch: true }); render(); q('#vocabAnswer')?.focus();
+    state.batchPhase = 'recall'; state.batchPreviewIndex = 0; await persistBatchProgress(); resetCard({ preserveBatch: true }); render(); q('#vocabAnswer')?.focus();
   }
   function batchPreviewCard() {
     const current = card();
@@ -315,10 +330,10 @@
     return `${advisorIntro}<div class="vocab-metrics">${metrics.map(([label, value, note]) => `<div><span>${label}</span><strong>${typeof value === 'number' ? number(value) : value}</strong><small>${note}</small></div>`).join('')}</div>
     <div class="vocab-today-grid"><section class="vocab-start-card"><span class="vocab-chip">今日主任务</span><h3>${taskTitle}</h3>
       <p>${taskText}</p>
+      <div class="vocab-start-bottom"><button class="primary-button" data-vocab-action="${state.snapshot.queueIds.length ? 'start' : 'library'}">${taskButton} <span aria-hidden="true">→</span></button><button class="secondary-button" data-vocab-action="books">获取推荐词书</button><span>${hasReviews && hasNew ? `复习后还有 ${number(newCount)} 个新词可学` : state.snapshot.queueIds.length ? `当前可学 ${number(state.snapshot.queueIds.length)} 个` : '词书、导入和阅读收词都在“我的词书”与“更多工具”中'}</span></div>
       <label class="vocab-start-select"><span>这次想学</span>${subjectSelect('vocabStudySubject')}</label>
       <div class="vocab-study-options"><label><span>新词难度</span><select id="vocabLevel">${[['foundation', '基础'], ['intermediate', '中阶'], ['advanced', '进阶']].map(([value, label]) => option(value, label, level)).join('')}</select></label><button class="text-button" data-vocab-action="harder-level"${level === 'advanced' ? ' disabled' : ''}>太简单，换更难一组</button><small>${study.newAtLevel === 0 ? '当前难度没有新词，可找一本更高阶词书。' : `当前难度可学 ${number(study.newAtLevel || newCount)} 个新词`}</small></div>
       <div class="vocab-study-options vocab-advisor-options"><label><span>下一组推荐</span><select id="vocabAdvisorProvider">${[['local', '本地 AI'], ['api', 'API AI'], ['off', '关闭推荐']].map(([value, label]) => option(value, label, advisorProvider)).join('')}</select></label><button class="secondary-button" data-vocab-action="advisor-connect">连接与检查</button><button class="text-button" data-vocab-action="context-mode">用语境填空学</button><small>${esc(advisor.lastAttempt?.notice || advisor.notice || (advisorProvider === 'off' ? '下一组按离线顺序开始。' : '只在开始一组新词时准备，不影响到期复习。'))}</small></div>
-      <div class="vocab-start-bottom"><button class="primary-button" data-vocab-action="${state.snapshot.queueIds.length ? 'start' : 'library'}">${taskButton} <span aria-hidden="true">→</span></button><button class="secondary-button" data-vocab-action="books">获取推荐词书</button><span>${hasReviews && hasNew ? `复习后还有 ${number(newCount)} 个新词可学` : state.snapshot.queueIds.length ? `当前可学 ${number(state.snapshot.queueIds.length)} 个` : '词书、导入和阅读收词都在“我的词书”与“更多工具”中'}</span></div>
     </section><section class="vocab-week"><div class="vocab-section-heading"><h3>每一次回忆，都算数。</h3><small>最近 7 天 · 复习次数</small></div>
       <div class="vocab-bars" role="img" aria-label="${esc((s.days || []).map((d) => language() === 'en' ? `${d.day}: ${d.count} reviews` : `${d.day}：${d.count} 次`).join('；'))}">${(s.days || []).map((d, i) => `<div class="${i === 6 ? 'today' : ''}"><span>${d.count}</span><div><i style="height:${Math.max(3, Math.round(d.count / max * 100))}%"></i></div><small>${i === 6 ? '今天' : d.day.slice(5).replace('-', '/')}</small></div>`).join('')}</div><p>一天没学也没关系，回来继续。</p></section></div>
     `;
@@ -388,7 +403,10 @@
     return state.snapshot.cards.filter((c) => (!state.subject || c.subject === state.subject)
       && (!search || normal(`${c.word} ${c.meaning} ${c.context}`).includes(search))
       && (!state.filter || state.filter === 'difficult' && c.schedule.lapses >= 3 && !c.suspended
-        || state.filter === 'suspended' && c.suspended || state.filter === 'new' && c.schedule.state === 0 && !c.suspended
+        || state.filter === 'known' && Boolean(c.knownAt) && c.suspended
+        || state.filter === 'suspended' && c.suspended && !c.knownAt
+        || state.filter === 'new' && c.schedule.state === 0 && !c.suspended
+        || state.filter === 'learned' && !c.suspended && c.schedule.state !== 0 && Date.parse(c.schedule.due) > Date.now()
         || state.filter === 'due' && !c.suspended && c.schedule.state !== 0 && Date.parse(c.schedule.due) <= Date.now()));
   }
 
@@ -519,14 +537,14 @@
 
   function renderLibrary() {
     const packs = state.snapshot.packs || [];
-    return `<section class="vocab-library-section"><div class="vocab-section-heading"><div><span class="section-kicker">MY WORD BOOKS</span><h3>我的词书</h3></div><button class="ghost-button" data-vocab-action="add">添加单词</button></div><div class="vocab-library-tools"><label class="vocab-search"><span class="vocab-sr-only">搜索单词、释义或原句</span><input id="vocabSearch" type="search" value="${esc(state.search)}" placeholder="搜索单词、释义或原句"></label>${subjectSelect('vocabLibrarySubject')}<select id="vocabFilter" aria-label="筛选词条">${[['', '全部状态'], ['due', '到期复习'], ['new', '还没学过'], ['difficult', '易忘词 · 失误 3 次以上'], ['suspended', '已暂停']].map(([value, label]) => option(value, label, state.filter)).join('')}</select><button class="ghost-button" data-vocab-action="export">导出词本</button></div><div id="vocabLibraryResults">${renderLibraryRows()}</div></section>${renderCatalog(Array.isArray(packs) ? packs : [])}`;
+    return `<section class="vocab-library-section"><div class="vocab-section-heading"><div><span class="section-kicker">MY WORD BOOKS</span><h3>我的词书</h3></div><button class="ghost-button" data-vocab-action="add">添加单词</button></div><div class="vocab-library-tools"><label class="vocab-search"><span class="vocab-sr-only">搜索单词、释义或原句</span><input id="vocabSearch" type="search" value="${esc(state.search)}" placeholder="搜索单词、释义或原句"></label>${subjectSelect('vocabLibrarySubject')}<select id="vocabFilter" aria-label="筛选词条">${[['', '全部状态'], ['due', '到期复习'], ['new', '还没学过'], ['learned', '已学习（下次复习）'], ['known', '已学会'], ['difficult', '易忘词 · 失误 3 次以上'], ['suspended', '暂停复习']].map(([value, label]) => option(value, label, state.filter)).join('')}</select><button class="ghost-button" data-vocab-action="export">导出词本</button></div><div id="vocabLibraryResults">${renderLibraryRows()}</div></section>${renderCatalog(Array.isArray(packs) ? packs : [])}`;
   }
 
   function renderLibraryRows() {
     const filtered = filteredCards();
     const totalPages = Math.max(1, Math.ceil(filtered.length / 30));
     state.page = Math.min(state.page, totalPages - 1);
-    return `<p class="vocab-library-count">${number(filtered.length)} 个词条${state.filter === 'difficult' ? ' · 困难词适合先补充一条清楚的语境' : ''}</p>${!filtered.length ? '<div class="vocab-empty"><h3>这里还没有单词。</h3><p>换个筛选条件，或收进一个你想学会的词。</p><button class="secondary-button" data-vocab-action="add">添加单词</button></div>' : `<div class="vocab-word-list">${filtered.slice(state.page * 30, state.page * 30 + 30).map((c) => `<article class="vocab-word-row${c.suspended ? ' suspended' : ''}"><div class="vocab-word-main"><div><strong lang="en">${esc(c.word)}</strong><span>${esc(c.subject)}</span>${c.suspended ? '<em>已暂停</em>' : ''}</div><p>${esc(c.meaning)}</p>${c.context ? `<small lang="en">${esc(c.context)}</small>` : ''}</div><div class="vocab-word-status"><span>${c.suspended ? '暂不安排复习' : c.schedule.state === 0 ? '还没学过' : `下次 ${dateText(c.schedule.due)}`}</span><small>${number(c.schedule.reps)} 次回忆 · ${number(c.schedule.lapses)} 次遗忘</small></div><div class="vocab-word-actions"><button class="text-button" data-vocab-action="edit" data-id="${esc(c.id)}" aria-label="编辑 ${esc(c.word)}">编辑</button><button class="text-button" data-vocab-action="suspend" data-id="${esc(c.id)}">${c.suspended ? '恢复' : '暂停'}</button><button class="text-button vocab-danger" data-vocab-action="delete" data-id="${esc(c.id)}" aria-label="删除 ${esc(c.word)}">删除</button></div></article>`).join('')}</div>`}<div class="vocab-pagination"><span>第 ${state.page + 1} / ${totalPages} 页</span><button class="ghost-button" data-vocab-action="previous"${state.page === 0 ? ' disabled' : ''}>上一页</button><button class="ghost-button" data-vocab-action="next"${state.page + 1 >= totalPages ? ' disabled' : ''}>下一页</button></div>`;
+    return `<p class="vocab-library-count">${number(filtered.length)} 个词条${state.filter === 'difficult' ? ' · 困难词适合先补充一条清楚的语境' : ''}</p>${!filtered.length ? '<div class="vocab-empty"><h3>这里还没有单词。</h3><p>换个筛选条件，或收进一个你想学会的词。</p><button class="secondary-button" data-vocab-action="add">添加单词</button></div>' : `<div class="vocab-word-list">${filtered.slice(state.page * 30, state.page * 30 + 30).map((c) => { const known = Boolean(c.knownAt) && c.suspended; const due = c.schedule.state !== 0 && Date.parse(c.schedule.due) <= Date.now(); const status = known ? '已学会 · 不安排复习' : c.suspended ? '暂停复习' : c.schedule.state === 0 ? '还没学过' : due ? '到期复习' : `已学习 · 下次 ${dateText(c.schedule.due)}`; return `<article class="vocab-word-row${c.suspended ? ' suspended' : ''}"><div class="vocab-word-main"><div><strong lang="en">${esc(c.word)}</strong><span>${esc(c.subject)}</span>${known ? '<em>已学会</em>' : c.suspended ? '<em>已暂停复习</em>' : ''}</div><p>${esc(c.meaning)}</p>${c.context ? `<small lang="en">${esc(c.context)}</small>` : ''}</div><div class="vocab-word-status"><span>${status}</span><small>${number(c.schedule.reps)} 次回忆 · ${number(c.schedule.lapses)} 次遗忘</small></div><div class="vocab-word-actions"><button class="text-button" data-vocab-action="edit" data-id="${esc(c.id)}" aria-label="编辑 ${esc(c.word)}">编辑</button><button class="text-button" data-vocab-action="suspend" data-id="${esc(c.id)}">${c.suspended ? '恢复安排' : '暂停复习'}</button><button class="text-button vocab-danger" data-vocab-action="delete" data-id="${esc(c.id)}" aria-label="删除 ${esc(c.word)}">删除</button></div></article>`; }).join('')}</div>`}<div class="vocab-pagination"><span>第 ${state.page + 1} / ${totalPages} 页</span><button class="ghost-button" data-vocab-action="previous"${state.page === 0 ? ' disabled' : ''}>上一页</button><button class="ghost-button" data-vocab-action="next"${state.page + 1 >= totalPages ? ' disabled' : ''}>下一页</button></div>`;
   }
 
   function openDialog(title, content, kind) {
@@ -566,7 +584,7 @@
       <label class="vocab-field"><span>我的表达</span><textarea id="vocabOwnExample" name="ownExample" rows="5" maxlength="1600" placeholder="用 ${esc(current.word)} 说一件与你有关的事。">${esc(current.ownExample)}</textarea></label>
       ${coachUI()?.controls() || ''}<div class="vocab-expression-ai"><p>使用所选 AI 检查表达。建议可能出错，请核对后保存。</p><button type="button" class="secondary-button" data-vocab-action="check-expression" data-id="${esc(current.id)}">AI 检查表达</button></div>
       <div id="vocabExpressionAdvice" class="vocab-expression-advice" role="status" aria-live="polite"></div>
-      <div class="vocab-dialog-actions"><button type="button" class="ghost-button" data-vocab-action="close">取消</button><button class="primary-button" type="submit">保存表达</button></div></form>`, 'expression');
+      <div class="vocab-dialog-actions"><button type="button" class="ghost-button" data-vocab-action="close">取消</button><button class="primary-button" type="button" data-vocab-action="save-expression">保存表达</button></div></form>`, 'expression');
   }
 
   function expressionAdvice(message, error = false, suggestion = null) {
@@ -593,13 +611,13 @@
       <label class="vocab-field"><span>默认练习方式</span><select name="mode">${Object.entries(modes).map(([value, label]) => option(value, label, settings.mode)).join('')}</select></label><div class="vocab-dialog-actions"><button type="button" class="ghost-button" data-vocab-action="close">取消</button><button class="primary-button" type="submit">保存设置</button></div></form>`, 'settings');
   }
 
-  async function setAdvisor(provider, apiConsent = false) {
-    if (typeof api()?.configureAdvisor === 'function') return mutate(() => api().configureAdvisor(apiConsent ? { provider, apiConsent: true } : { provider }), '下一组推荐设置已保存');
+  async function setAdvisor(provider, apiConsent = false, rememberApiConsent = false) {
+    if (typeof api()?.configureAdvisor === 'function') return mutate(() => api().configureAdvisor(apiConsent ? { provider, apiConsent: true, rememberApiConsent } : { provider }), '下一组推荐设置已保存');
     return mutate(() => api().configure({ advisorProvider: provider }), '下一组推荐设置已保存');
   }
   function advisorConnectionDialog() {
     const advisor = state.snapshot.advisor || {};
-    openDialog('连接背单词 AI', `<p class="vocab-dialog-description">使用 AI 学习助手中已保存的模型与 Key，不需要重复填写。连接检查只发送一个示例单词；翻译和纠错仅使用当前例句、答案或造句。</p><div class="vocab-actions"><button class="secondary-button" data-vocab-action="connect-local">使用本地 AI</button><button class="secondary-button" data-vocab-action="connect-api">使用 API AI</button><button class="ghost-button" data-vocab-action="ai-settings">打开 AI 设置</button></div><p id="vocabConnectionResult" role="status">${esc(advisor.lastAttempt?.notice || advisor.notice || '请选择连接方式')}</p><div class="vocab-dialog-actions"><button class="ghost-button" data-vocab-action="close">返回背单词</button><button class="primary-button" data-vocab-action="check-advisor">测试当前连接</button></div>`, 'advisor-connection');
+    openDialog('连接背单词 AI', `<p class="vocab-dialog-description">使用 AI 学习助手中已保存的模型与 Key，不需要重复填写。连接检查只发送一个示例单词；翻译和纠错仅使用当前例句、答案或造句。</p><div class="vocab-actions"><button class="secondary-button" data-vocab-action="connect-local">使用本地 AI</button><button class="secondary-button" data-vocab-action="connect-api">使用 API AI</button><button class="ghost-button" data-vocab-action="ai-settings">打开 AI 设置</button></div>${advisor.apiConsented ? '<button class="text-button" data-vocab-action="revoke-advisor-api">撤销 API 授权</button>' : ''}<p id="vocabConnectionResult" role="status">${esc(advisor.lastAttempt?.notice || advisor.notice || '请选择连接方式')}</p><div class="vocab-dialog-actions"><button class="ghost-button" data-vocab-action="close">返回背单词</button><button class="primary-button" data-vocab-action="check-advisor">测试当前连接</button></div>`, 'advisor-connection');
   }
   async function checkAdvisorConnection(button) {
     const advisor = state.snapshot.advisor || {};
@@ -620,7 +638,7 @@
   }
 
   function advisorApiConsentDialog() {
-    openDialog('允许 API 推荐下一组？', `<div class="vocab-advisor-consent"><p>开始新词组时，会发送最多 40 个候选词和 20 条近期学习信号；每组学习时可提前准备下一组。新加入且缺少例句的词会在后台请求造句（每次最多 40 词，每批 5 词），可能收费。翻译和纠错会发送当前词条、例句以及你填写的答案或造句；连接检查只发送一个示例单词。不发送整篇文章、学校数据或密码。重启后需要再次授权。API 可能按量收费。</p><label class="risk-check"><input id="vocabAdvisorApiConsent" type="checkbox"><span>我同意将以上内容发送给 API 服务商，用于推荐、翻译、纠错和连接检查，并了解可能的费用。</span></label><div class="vocab-dialog-actions"><button class="ghost-button" data-vocab-action="close">取消</button><button class="primary-button" data-vocab-action="confirm-advisor-api">同意并使用 API</button></div></div>`, 'advisor-api-consent');
+    openDialog('允许 API 推荐下一组？', `<div class="vocab-advisor-consent"><p>开始新词组时，会发送最多 40 个候选词和 20 条近期学习信号；每组学习时可提前准备下一组。新加入且缺少例句的词会在后台请求造句（每次最多 40 词，每批 5 词），可能收费。翻译和纠错会发送当前词条、例句以及你填写的答案或造句；连接检查只发送一个示例单词。不发送整篇文章、学校数据或密码。可以选择在本机记住本次授权；更换 API 地址、模型或 Key 后需重新确认，可在“连接与检查”中撤销。API 可能按量收费。</p><label class="risk-check"><input id="vocabAdvisorApiConsent" type="checkbox"><span>我同意将以上内容发送给 API 服务商，用于推荐、翻译、纠错和连接检查，并了解可能的费用。</span></label><label class="risk-check"><input id="vocabRememberApiConsent" type="checkbox" checked><span>在本机记住授权，下次不用重复确认</span></label><div class="vocab-dialog-actions"><button class="ghost-button" data-vocab-action="close">取消</button><button class="primary-button" data-vocab-action="confirm-advisor-api">同意并使用 API</button></div></div>`, 'advisor-api-consent');
   }
 
   async function markAdvisorIntroSeen() {
@@ -690,7 +708,14 @@
     if (action === 'books') { q('#vocabDialog').close(); state.view = 'library'; render(); q('.vocab-packs')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); return; }
     if (action === 'advisor-connect') return advisorConnectionDialog();
     if (action === 'connect-local') { await setAdvisor('local'); advisorConnectionDialog(); return; }
-    if (action === 'connect-api') return advisorApiConsentDialog();
+    if (action === 'connect-api') {
+      if (!state.snapshot.advisor?.apiConsented) return advisorApiConsentDialog();
+      await setAdvisor('api'); advisorConnectionDialog(); return;
+    }
+    if (action === 'revoke-advisor-api') {
+      const result = await mutate(() => api().configureAdvisor({ provider: 'off', revokeApiConsent: true }), '已撤销 API 授权');
+      if (result) advisorConnectionDialog(); return;
+    }
     if (action === 'check-advisor') return checkAdvisorConnection(button);
     if (action === 'import-reading') {
       addReadingDialog();
@@ -698,6 +723,7 @@
     }
     if (action === 'select-reading-document') return importReadingDocument();
     if (action === 'expression' && current) return expressionDialog(current);
+    if (action === 'save-expression') return saveExpressionForm(button.closest('#vocabExpressionForm'));
     if (action === 'check-expression' && current) return checkExpression(current, button);
     if (action === 'apply-expression-advice') {
       const form = q('#vocabExpressionForm');
@@ -726,7 +752,7 @@
     if (action === 'advisor-intro-offline') { await markAdvisorIntroSeen(); render(); return; }
     if (action === 'confirm-advisor-api') {
       if (!q('#vocabAdvisorApiConsent')?.checked) return notify('请先确认 API 上传学习记录的范围', true);
-      const result = await setAdvisor('api', true);
+      const result = await setAdvisor('api', true, Boolean(q('#vocabRememberApiConsent')?.checked));
       if (result) q('#vocabDialog').close();
       return;
     }
@@ -785,22 +811,32 @@
     if (action === 'start') {
       await markAdvisorIntroSeen();
       state.view = 'study'; state.completed = 0; state.feedback = ''; resetCard();
-      if (isNew(card())) { await prepareNewBatch(); q('#vocabAnswer')?.focus(); return; }
+      if (isNew(card())) {
+        const restored = restorePersistedBatch();
+        if (!restored) await prepareNewBatch();
+        else render();
+        q('#vocabAnswer')?.focus(); return;
+      }
       render(); q('#vocabAnswer')?.focus(); return;
     }
-    if (action === 'batch-next') { state.batchPreviewIndex = Math.min(state.batchPreviewIndex + 1, state.batchIds.length - 1); render(); return; }
+    if (action === 'batch-next') {
+      const previous = state.batchPreviewIndex;
+      state.batchPreviewIndex = Math.min(previous + 1, state.batchIds.length - 1);
+      if (!await persistBatchProgress()) state.batchPreviewIndex = previous;
+      render(); return;
+    }
     if (action === 'start-batch-recall') return startBatchRecall();
     if (action === 'known-new') {
       const id = button.dataset.id;
       const previous = [...state.batchIds], index = state.batchPreviewIndex;
-      const result = await mutate(() => api().update({ id, suspended: true, known: true }), '已跳过这个词；它仍保留在“我的词书”的“已暂停”中，可随时恢复', { renderResult: false });
+      const result = await mutate(() => api().update({ id, suspended: true, known: true }), '已标记为“已学会”，不会安排复习；可在我的词书中恢复安排', { renderResult: false });
       if (!result) { render(); return; }
       state.batchIds = previous.filter(item => item !== id);
       refillNewBatch();
       state.batchPreviewIndex = index;
       if (!state.batchIds.length) { resetCard(); render(); }
       else if (index >= state.batchIds.length) await startBatchRecall();
-      else render();
+      else { await persistBatchProgress(); render(); }
       return;
     }
     if (action === 'add') return addDialog();
@@ -826,7 +862,9 @@
         }
         state.completed++; state.feedback = `${learningCard.word} · ${ratings[rating]} · 下次 ${dateText(result.result.nextDue)}`;
         resetCard({ preserveBatch: state.batchPhase === 'recall' && state.batchIds.includes(state.snapshot.queueIds[0]) });
-        if (isNew(card()) && !state.batchIds.length) await prepareNewBatch(); else render();
+        if (isNew(card()) && !state.batchIds.length) {
+          if (restorePersistedBatch()) render(); else await prepareNewBatch();
+        } else render();
         q('#vocabAnswer')?.focus();
       } else render();
       return;
@@ -903,21 +941,31 @@
     if (event.target.id === 'vocabMode') { await mutate(() => api().configure({ mode: event.target.value })); resetCard(); render(); }
     if (event.target.id === 'vocabLevel') { await mutate(() => api().configure({ level: event.target.value }), '下一组新词难度已保存；已预览的词不会变化'); }
     if (event.target.id === 'vocabAdvisorProvider') {
-      if (event.target.value === 'api') { advisorApiConsentDialog(); render(); }
+      if (event.target.value === 'api' && !state.snapshot.advisor?.apiConsented) { advisorApiConsentDialog(); render(); }
       else await setAdvisor(event.target.value);
     }
+  }
+
+  async function saveExpressionForm(form) {
+    if (!form || state.busy || !form.reportValidity()) return null;
+    const id = form.querySelector('[name="id"]')?.value;
+    const ownExample = form.querySelector('[name="ownExample"]')?.value;
+    if (!id || typeof ownExample !== 'string') return notify('表达没有保存，请关闭后重试', true);
+    const result = await mutate(() => api().update({ id, ownExample }), '已保存我的表达');
+    if (result && q('#vocabExpressionForm') === form) q('#vocabDialog').close();
+    return result;
   }
 
   async function onSubmit(event) {
     const form = event.target;
     if (!form.id.startsWith('vocab')) return;
     event.preventDefault();
+    if (form.id === 'vocabExpressionForm') { await saveExpressionForm(form); return; }
     if (state.busy || !form.reportValidity()) return;
     const values = Object.fromEntries(new FormData(form));
     let result;
     if (form.id === 'vocabAddForm') result = await mutate(() => api().add([values]), addedMessage);
     if (form.id === 'vocabEditForm') result = await mutate(() => api().update(values), '已保存原句与自己的表达');
-    if (form.id === 'vocabExpressionForm') result = await mutate(() => api().update({ id: values.id, ownExample: values.ownExample }), '已保存我的表达');
     if (form.id === 'vocabSettingsForm') result = await mutate(() => api().configure({ dailyNewLimit: Number(values.dailyNewLimit), retention: Number(values.retention), mode: values.mode }), '学习设置已保存');
     if (form.id === 'vocabImportForm') result = await mutate(() => api().importText(values.text), addedMessage);
     if (form.id === 'vocabPlacementSelfForm') { await submitPlacement({ level: values.level, exam: values.exam, score: values.score }); return; }
