@@ -41,46 +41,40 @@ test('a recorded folder beats the portable and Lite defaults', () => {
     { root: path.resolve(recorded), source: 'pointer' });
 });
 
-test('portable layout follows portable.flag next to the executable', () => {
-  const dir = freshProfile('portable-profile');
-  assert.equal(resolveDataRoot({ userDataDir: dir, execDir: exec, homeDir: home, env: {} }).source, 'profile');
-  fs.writeFileSync(path.join(exec, 'portable.flag'), '');
-  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: exec, homeDir: home, env: {} }),
-    { root: path.join(exec, 'data'), source: 'portable' });
-  fs.rmSync(path.join(exec, 'portable.flag'));
+test('单一架构：数据永远在 exe 同级的 data/，没有就自动创建', () => {
+  const dir = freshProfile('app-root-profile');
+  const exeDir = path.join(temp, 'app-folder');
+  fs.mkdirSync(exeDir, { recursive: true });
+  // 不看 portable.flag、不看 profile：exe 在哪，data 就在哪
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: exeDir, env: {} }),
+    { root: path.join(exeDir, 'data'), source: 'app' });
+  fs.writeFileSync(path.join(exeDir, 'portable.flag'), '');
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: exeDir, env: {} }),
+    { root: path.join(exeDir, 'data'), source: 'app' }, '便携标记不再影响结果');
+  // 目录不存在时，ensureLayout 负责建出来
+  const layout = ensureLayout(layoutPaths(path.join(exeDir, 'data')));
+  assert.equal(fs.statSync(layout.root).isDirectory(), true);
+  assert.equal(fs.statSync(layout.own).isDirectory(), true);
 });
 
-test('a Pinghe Launcher Lite folder is detected but never adopted on its own', () => {
-  const dir = freshProfile('lite-profile');
-  const lite = path.join(temp, 'lite-home');
-  fs.mkdirSync(lite, { recursive: true });
+test('测试与预览仍可用 PHL_DATA_DIR 或记录的目录改向', () => {
+  const dir = freshProfile('override-profile');
+  const chosen = path.join(temp, 'chosen-again');
+  fs.mkdirSync(chosen, { recursive: true });
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: path.join(temp, 'x'), env: { PHL_DATA_DIR: chosen } }),
+    { root: path.resolve(chosen), source: 'env' });
+  writeRootPointer(dir, chosen);
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: path.join(temp, 'x'), env: {} }),
+    { root: path.resolve(chosen), source: 'pointer' });
+});
+
+test('Lite 目录只用于提示，不参与数据根解析', () => {
+  const lite = path.join(temp, 'lite-again');
   assert.deepEqual(detectLiteRoot({ homeDir: lite }), { root: path.join(lite, '.hellopinghe'), available: false });
-  // Even with a real Lite folder present, this app keeps its own data until the
-  // user explicitly shares the folder.
   fs.mkdirSync(path.join(lite, '.hellopinghe'), { recursive: true });
   fs.writeFileSync(path.join(lite, '.hellopinghe', 'settings.yaml'), 'version: 1\n');
   assert.deepEqual(detectLiteRoot({ homeDir: lite }), { root: path.join(lite, '.hellopinghe'), available: true });
-  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: '', homeDir: lite, env: {} }),
-    { root: path.join(dir, 'data'), source: 'profile' });
-  // Recording the choice is what switches the two applications onto one folder.
-  writeRootPointer(dir, path.join(lite, '.hellopinghe'));
-  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: '', homeDir: lite, env: {} }),
-    { root: path.join(lite, '.hellopinghe'), source: 'pointer' });
 });
-
-test('the fallback root lives in the app profile and every path is derived from it', () => {
-  const dir = freshProfile('plain-profile');
-  const resolved = resolveDataRoot({ userDataDir: dir, execDir: '', homeDir: path.join(temp, 'empty-home'), env: {} });
-  assert.deepEqual(resolved, { root: path.join(dir, 'data'), source: 'profile' });
-  const layout = layoutPaths(resolved.root);
-  assert.equal(layout.settings, path.join(dir, 'data', 'settings.yaml'));
-  assert.equal(layout.schedule, path.join(dir, 'data', 'Schedule'));
-  assert.equal(layout.agent, path.join(dir, 'data', 'agent'));
-  assert.equal(layout.own, path.join(dir, 'data', 'phl'));
-  assert.equal(ownFile(layout, 'launcher'), path.join(dir, 'data', 'phl', 'launcher.json'));
-  assert.throws(() => ownFile(layout, 'unknown'), /未知的私有数据文件/);
-});
-
 test('creating the layout makes exactly the folders both apps expect', () => {
   const root = path.join(temp, 'ensured');
   const layout = ensureLayout(layoutPaths(root));

@@ -34,6 +34,9 @@ function isFile(target) {
  * never writes into another application's data folder on its own.
  */
 function resolveDataRoot({ userDataDir, execDir, env = process.env, homeDir = os.homedir(), exists = fs.existsSync } = {}) {
+  // 只有一种架构：程序文件夹里两个 exe + 一个 data/。数据永远在 exe 同级目录，
+  // 没有就自动创建（ensureLayout 负责）；不再区分 portable/安装版，也不写
+  // %APPDATA%。测试与预览可以用 PHL_DATA_DIR 或记录的目录临时改向。
   const candidates = [];
   const fromEnv = String(env.PHL_DATA_DIR || '').trim();
   if (fromEnv) candidates.push({ root: path.resolve(fromEnv), source: 'env' });
@@ -42,23 +45,15 @@ function resolveDataRoot({ userDataDir, execDir, env = process.env, homeDir = os
     try {
       const recorded = String(fs.readFileSync(pointer, 'utf8')).split(/\r?\n/)[0].trim();
       if (recorded) candidates.push({ root: path.resolve(recorded), source: 'pointer' });
-    } catch { /* no pointer yet */ }
+    } catch { /* 没有记录 */ }
   }
-  if (execDir) candidates.push({ root: path.join(execDir, 'data'), source: 'portable', requireFlag: path.join(execDir, PORTABLE_FLAG) });
-  if (userDataDir) candidates.push({ root: path.join(userDataDir, 'data'), source: 'profile' });
-
+  if (execDir) candidates.push({ root: path.join(execDir, 'data'), source: 'app' });
   for (const candidate of candidates) {
-    if (candidate.requireFlag && !exists(candidate.requireFlag)) continue;
-    // A portable flag or a recorded choice is proof of intent even before the
-    // folder exists; the profile default is created on first run instead.
-    if (!candidate.requireFlag && candidate.source !== 'pointer' && candidate.source !== 'env' && !exists(candidate.root)) continue;
+    if (candidate.source === 'pointer' || candidate.source === 'env') return { root: candidate.root, source: candidate.source };
     return { root: candidate.root, source: candidate.source };
   }
-  // Unreachable for normal callers (the profile candidate is unconditional), but
-  // never return undefined: a wrong root is worse than a temporary one.
-  return { root: path.join(userDataDir || os.tmpdir(), 'data'), source: 'profile' };
+  return { root: path.join(userDataDir || os.tmpdir(), 'data'), source: 'app' };
 }
-
 /** Where a Pinghe Launcher Lite installation keeps its data, if there is one. */
 function detectLiteRoot({ homeDir = os.homedir(), exists = fs.existsSync } = {}) {
   const candidate = path.join(homeDir, '.hellopinghe');

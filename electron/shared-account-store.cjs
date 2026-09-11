@@ -131,8 +131,10 @@ class SharedAccountStore {
       if (!record?.username) { delete accounts[platform]; continue; }
       accounts[platform] = {
         ...(PLATFORM_HOSTS[platform] || {}),
-        ...(platform === 'mail' ? {} : { username: record.username }),
-        ...(platform === 'mail' ? { email: record.username } : {}),
+        // 规范里 managebac / mail 用 email、edupage 用 username；
+        // 两个键都写，两边的读取代码都能认。
+        username: record.username,
+        email: record.username,
         password: record.password,
         ...(platform === 'mail' ? { authcode: record.authcode || '' } : {}),
         phl_auto_fill: record.autoFill !== false,
@@ -161,7 +163,9 @@ class SharedAccountStore {
     this.ensureLoaded();
     if (!['edupage', 'managebac'].includes(siteId)) return null;
     const record = this.records[siteId];
-    if (record?.autoLogin !== true) return null;
+    // 共用账号就是"两个程序都用这一份"：账号+密码齐备即允许自动登录，
+    // 否则页面会一直像没登录、每次都要手点"登录并同步"。
+    if (!record?.username || !record.password) return null;
     return { username: record.username, password: record.password, autoLogin: true };
   }
 

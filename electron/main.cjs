@@ -68,10 +68,15 @@ const {
 let sharedLayout = null;
 function dataRoot() {
   if (!sharedLayout) {
+    // 无头运行（自检/预览/冒烟）时 exe 是 Electron 自身，不能把数据写到它的目录里：
+    // 强制使用隔离的临时数据根；正常运行时才是 exe 同级的 data/。
+    const env = (IS_HEADLESS && !CAPTURE_KEEPS_PROFILE) && headlessUserData
+      ? { ...process.env, PHL_DATA_DIR: path.join(headlessUserData, 'data') }
+      : process.env;
     const choice = resolveDataRoot({
       userDataDir: app.getPath('userData'),
       execDir: process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')),
-      env: process.env,
+      env,
     });
     sharedLayout = { ...layoutPaths(choice.root), source: choice.source };
   }
@@ -1121,6 +1126,33 @@ async function mutateSchoolSession(source, action) {
 function readSchoolDetail(action) {
   assertSchoolSessionReady('managebac');
   return schoolAuthenticator.withSession('managebac', action);
+}
+
+/**
+ * 检测到共用账号就自动同步：启动后（或首次打开学校页面时）只要有保存的账号，
+ * 就自动登录并同步一次，不需要再点"登录并同步"。失败保持静默，页面自己会提示。
+ * 受"设置 → 网站 → 启动时同步学校信息"开关控制。
+ */
+async function startupSchoolSync() {
+  if (secureStore.data.settings.schoolStartupSync === false) return { synced: [] };
+  if (!credentialVault) return { synced: [] };
+  const sites = credentialStatus().sites || {};
+  const synced = [];
+  for (const source of ['edupage', 'managebac']) {
+    if (!sites[source]?.saved) continue;
+    try {
+      const result = await loginSchoolAccount(source, { weekStart: schoolState.week || undefined });
+      if (result?.ok) { synced.push(source); continue; }
+      // loginSchoolAccount 自己吞掉异常并返回 ok:false，必须把原因记下来，
+      // 否则"页面像没登录"就没有任何线索。
+      startupMark(`startup-sync-failed-${source}-${String(result?.error?.code || 'UNKNOWN')}`);
+      console.warn(`Startup sync failed for ${source}:`, String(result?.error?.message || '未知原因').slice(0, 200));
+    } catch (error) {
+      startupMark(`startup-sync-error-${source}`);
+      console.warn(`Startup sync errored for ${source}:`, String(error?.message || error).slice(0, 200));
+    }
+  }
+  return { synced };
 }
 
 async function loginSchoolAccount(source, options = {}) {
@@ -4276,6 +4308,8 @@ app.whenReady().then(() => {
     emit: (deployment) => sendToRenderer('ai:deployment-state', deployment),
   });
   startupMark('services-ready');
+  // 检测到共用账号就自动同步（后台执行，不挡窗口显示）。
+  setTimeout(() => { void startupSchoolSync().then((result) => { if (result.synced.length) startupMark('startup-sync-' + result.synced.join('-')); }); }, 1200);
   configureApplicationMenu();
   registerIpc();
   startupMark('ipc-ready');
