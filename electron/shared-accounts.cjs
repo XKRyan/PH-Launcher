@@ -60,14 +60,18 @@ function planImport(accounts, savedSites = {}) {
  * The `accounts` block to write: platforms this app owns are refreshed, and every
  * other platform already in the file is carried over unchanged.
  */
-function buildAccountsBlock(existing, records = {}, xinlv = {}) {
+function buildAccountsBlock(existing, records = {}, xinlv = {}, { pruneMissing = false } = {}) {
   const merged = {};
   for (const [platform, values] of Object.entries(existing && typeof existing === 'object' ? existing : {})) {
     if (values && typeof values === 'object' && !Array.isArray(values)) merged[platform] = { ...values };
   }
   for (const [platform, siteId] of Object.entries(SITE_BY_PLATFORM)) {
     const record = records?.[siteId];
-    if (!record?.username) continue;
+    if (!record?.username) {
+      // 自动镜像时，本机删掉的账号也要从共享文件里去掉，否则下次启动又会被读回来。
+      if (pruneMissing) delete merged[platform];
+      continue;
+    }
     merged[platform] = {
       ...(PLATFORM_HOSTS[platform] || {}),
       username: clean(record.username),
@@ -76,6 +80,7 @@ function buildAccountsBlock(existing, records = {}, xinlv = {}) {
     };
   }
   if (xinlv?.username && xinlv?.token) merged.xinlv = { username: clean(xinlv.username), token: clean(xinlv.token) };
+  else if (pruneMissing) delete merged.xinlv;
   return merged;
 }
 

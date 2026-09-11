@@ -1906,7 +1906,7 @@ function renderCredentialSettings() {
         : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
       : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
     return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
-  }).join('') + xinlvCredentialCard() + sharedAccountCard();
+  }).join('') + xinlvCredentialCard();
 }
 
 // Accounts can be shared with Pinghe Launcher Lite through settings.yaml. Both

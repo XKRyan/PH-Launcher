@@ -124,6 +124,7 @@ const {
 } = require('./site-settings.cjs');
 const { decideAutoRecovery } = require('./site-recovery.cjs');
 const { CredentialVault } = require('./credential-vault.cjs');
+const { SharedAccountStore } = require('./shared-account-store.cjs');
 const { credentialAutofillScript, isCredentialUrlAllowed, CREDENTIAL_ISOLATED_WORLD_ID } = require('./credential-autofill.cjs');
 const vocabulary = require('./vocabulary.cjs');
 const vocabularyReading = require('./vocabulary-reading.cjs');
@@ -175,6 +176,21 @@ if (IS_HEADLESS && !CAPTURE_KEEPS_PROFILE) {
   // other's keys (or a student's real keys). Keep actual OS encryption enabled.
   if (process.platform === 'darwin') app.setName(`PH Launcher Test ${path.basename(headlessUserData)}`);
   app.setPath('userData', headlessUserData);
+}
+
+// 便携/共用数据根下，Electron 自己的 profile（缓存、学校网站登录态、localStorage）
+// 也放进 data/phl/profile：程序文件夹里只应该有两个 exe 和一个 data/，
+// 不再往 %APPDATA% 写东西；同时 profile 路径固定，凭据库/历史不会再因为
+// 启动方式不同而解不开。
+if (!IS_HEADLESS || CAPTURE_KEEPS_PROFILE) {
+  try {
+    const sharedLayout = dataRoot();
+    if (sharedLayout.source !== 'profile') {
+      const profileDir = path.join(sharedLayout.own, 'profile');
+      fs.mkdirSync(profileDir, { recursive: true });
+      app.setPath('userData', profileDir);
+    }
+  } catch { /* 拿不到数据根就保持默认 profile */ }
 }
 
 // School portals do not need GPU-only features. Software rendering avoids a
@@ -2614,6 +2630,40 @@ function importSharedAccounts() {
 }
 
 /**
+ * 旧版本把账号放在本机凭据库（phl/credentials.json，曾是系统加密）。现在账号
+ * 只认共用 settings.yaml：启动时把旧库里还没进共用文件的账号补写进去，
+ * 旧文件原样保留在 phl/ 下（不删除），之后不再使用。
+ */
+function migrateLegacyCredentialVault() {
+  try {
+    const legacyFile = ownFile(dataRoot(), 'credentials');
+    if (!fs.existsSync(legacyFile)) return 0;
+    const legacy = new CredentialVault({
+      filePath: legacyFile,
+      safeStorage: plainStoreCodec,
+      legacySafeStorage: safeStorage,
+      platform: process.platform,
+      siteIds: SITE_IDS,
+    });
+    legacy.load();
+    if (legacy.loadError) return 0;
+    const current = credentialVault.status()?.sites || {};
+    let moved = 0;
+    for (const siteId of SITE_IDS) {
+      if (current[siteId]?.saved) continue;
+      const record = legacy.getForFill(siteId, { allowDisabled: true });
+      if (!record?.username) continue;
+      credentialVault.saveCredential({ siteId, username: record.username, password: record.password, authcode: record.authcode, autoFill: true, autoLogin: false });
+      moved += 1;
+    }
+    return moved;
+  } catch (error) {
+    console.warn('Legacy account migration skipped:', error.message);
+    return 0;
+  }
+}
+
+/**
  * Writes this app's saved accounts into the shared `accounts` block. The file is
  * plain text by design (see docs/data-format.md §3), so this stays a deliberate
  * action with its own warning in the interface.
@@ -4112,14 +4162,10 @@ app.whenReady().then(() => {
   if (restoredSchool) startupMark(`school-hydrated-${restoredSchool}`);
   selfTestStage('store-ready');
   startupMark('store-ready');
-  credentialVault = new CredentialVault({
-    filePath: ownFile(dataRoot(), 'credentials'),
-    safeStorage: DATA_ENCRYPTION ? safeStorage : plainStoreCodec,
-    legacySafeStorage: safeStorage,
-    platform: process.platform,
-    siteIds: SITE_IDS,
-  });
+  // 账号只认共用 settings.yaml：两个程序读写同一份，没有导入步骤。
+  credentialVault = new SharedAccountStore({ filePath: sharedSettingsFile(), siteIds: SITE_IDS });
   credentialVault.load();
+  startupMark(`legacy-accounts-migrated-${migrateLegacyCredentialVault()}`);
   // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
   // window paints, so both applications show the same day list.
   startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
