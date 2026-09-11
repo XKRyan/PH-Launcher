@@ -59,4 +59,25 @@ function resolveGroupKeys(entries, options) {
   return [...keys];
 }
 
-module.exports = { parseEntries, resolveGroupKeys };
+// 班会 / 国家课程 / 理科轮换课这类"全班都要上"的课：Edupage 有时给它们打组
+// （例如国家理科的 G3），有时不打。两个程序都把它们当作默认必选，
+// 否则同一个人的两份个人课表节数对不上。正则与 PHL 教学组对话框的默认勾选一致。
+const AUTO_DEFAULT = /(?:^|[^a-z])native|班会|homeroom|class\s*meeting/i;
+
+/**
+ * "没有教学组的课 + 默认必选课" —— 班会、国家课程、体育、国家理科一类。
+ * Pinghe Launcher Lite 一直按"全班必修"显示；PH Launcher 必须显示同样的课，
+ * 否则同一个人的两份个人课表节数对不上。
+ */
+function mandatoryKeys(options) {
+  const keys = [];
+  for (const option of Array.isArray(options) ? options : []) {
+    if (!option?.key) continue;
+    const groups = (option.groups || []).map((value) => String(value ?? '').trim()).filter(Boolean);
+    const label = `${option.course || ''} ${(option.groups || []).join(' ')} ${option.label || ''}`;
+    if (!groups.length || AUTO_DEFAULT.test(label)) keys.push(option.key);
+  }
+  return keys;
+}
+
+module.exports = { mandatoryKeys, parseEntries, resolveGroupKeys };

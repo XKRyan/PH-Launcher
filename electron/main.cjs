@@ -1239,8 +1239,11 @@ function sharedLessonEntries() {
 function applySharedLessonSelection(target = null) {
   const current = target && Array.isArray(target.options) ? target : schoolCache.edupage;
   if (!current) return 0;
-  const keys = sharedLessons.resolveGroupKeys(sharedLessonEntries(), current.options);
-  if (!keys.length) return 0;
+  const selected = sharedLessons.resolveGroupKeys(sharedLessonEntries(), current.options);
+  if (!selected.length) return 0;
+  // 没有教学组的课（班会/国家课程/体育）两边都按"全班必修"显示，
+  // 否则 PH Launcher 的个人课表会比 Lite 少一截。
+  const keys = [...new Set([...selected, ...sharedLessons.mandatoryKeys(current.options)])];
   const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
   const unchanged = preferences.accountKey === current.accountKey
     && Array.isArray(preferences.groups) && preferences.groups.length === keys.length

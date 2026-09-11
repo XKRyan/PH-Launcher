@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseEntries, resolveGroupKeys } = require('../electron/shared-lessons.cjs');
+const { mandatoryKeys, parseEntries, resolveGroupKeys } = require('../electron/shared-lessons.cjs');
 
 const SETTINGS = [
   'version: 1',
@@ -79,4 +79,26 @@ test('the same option is only reported once', () => {
 test('resolving against an empty timetable returns nothing instead of throwing', () => {
   assert.deepEqual(resolveGroupKeys([{ subject: 'TOK', group: 'F' }], []), []);
   assert.deepEqual(resolveGroupKeys([{ subject: 'TOK', group: 'F' }], null), []);
+});
+
+test('没有教学组的课（班会/国家课程）两边都按全班必修处理', () => {
+  const options = [
+    { key: 'g1', course: 'TOK', teacher: 'Jiabin Xu', groups: ['F'] },
+    { key: 'n1', course: 'Native History 历史', teacher: '', groups: [] },
+    { key: 'n2', course: 'Physical Education 体育与健康', teacher: 'Someone', groups: ['', '  '] },
+  ];
+  assert.deepEqual(mandatoryKeys(options), ['n1', 'n2'], '空组与只有空白的组都算"没有教学组"');
+  assert.deepEqual(mandatoryKeys([]), []);
+  assert.deepEqual(mandatoryKeys(null), []);
+  assert.deepEqual(mandatoryKeys([{ course: '没有 key 的坏数据', groups: [] }]), [], '缺 key 的坏条目直接跳过');
+});
+
+test('打了教学组但属于"默认必选"的课（国家理科/班会）也算必修', () => {
+  const options = [
+    { key: 's1', course: 'Native Biology 国家生物', teacher: 'Sci', groups: ['G3'] },
+    { key: 's2', course: '班会 Class meeting', teacher: 'Tutor', groups: ['A'] },
+    { key: 's3', course: 'Physics HL1', teacher: 'Jing Jiang', groups: ['A'] },
+  ];
+  assert.deepEqual(mandatoryKeys(options), ['s1', 's2'], '默认必选课不受组号影响');
+  assert.equal(mandatoryKeys(options).includes('s3'), false, '普通选课不受影响');
 });
