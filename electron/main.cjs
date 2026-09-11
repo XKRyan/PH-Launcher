@@ -1088,6 +1088,30 @@ function invalidateSchoolSnapshots(source) {
   for (const site of source ? [source] : ['edupage', 'managebac']) schoolAuthenticator?.invalidate(site);
 }
 
+/**
+ * 同步成功后把规范化数据写进共用文件（Timetable 保留兼容，School 是统一的一份）。
+ * 手动刷新和启动自动同步都要走这里，否则"自动同步好了但另一个程序看不到"。
+ */
+function publishSchoolSnapshot(source, result) {
+  try {
+    if (source === 'edupage') {
+      // 先把共用选课按"刚同步回来的这份课表"解析好，再算 selected_groups，
+      // 否则第一次同步写进共用文件的选择会是空的。
+      try { applySharedLessonSelection(result); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); }
+      sharedTimetable.writeDoc(dataRoot().timetable, sharedTimetable.buildDocFromEdupage(result));
+      const selectedKeys = new Set(secureStore.data.settings.schoolPreferences?.groups || []);
+      const selectedGroups = (result.options || [])
+        .filter((option) => selectedKeys.has(option.key))
+        .map((option) => [option.course, (option.groups || []).join('/'), option.teacher].filter(Boolean).join(' · '));
+      sharedSchool.updateSchool(dataRoot().school, { edupage: sharedSchool.edupageSection(result, { selectedGroups }) });
+    } else if (source === 'managebac') {
+      sharedSchool.updateSchool(dataRoot().school, { managebac: sharedSchool.managebacSection(result) });
+    }
+  } catch (error) {
+    console.warn('Shared school data write skipped:', error.message);
+  }
+}
+
 async function syncSchool(source, options = {}) {
   if (!['managebac', 'edupage'].includes(source)) throw new Error('未知学校数据源');
   assertSchoolSessionReady(source);
@@ -1097,23 +1121,11 @@ async function syncSchool(source, options = {}) {
     const result = source === 'managebac'
       ? await schoolClient.syncManageBac() : await schoolClient.syncEduPage({ weekStart: options.weekStart });
     siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
-    // 同步成功后把规范化数据写进共用文件（Timetable 保留兼容，School 是统一的一份）。
-    try {
-      if (source === 'edupage') {
-        sharedTimetable.writeDoc(dataRoot().timetable, sharedTimetable.buildDocFromEdupage(result));
-        const selectedKeys = new Set(secureStore.data.settings.schoolPreferences?.groups || []);
-        const selectedGroups = (result.options || [])
-          .filter((option) => selectedKeys.has(option.key))
-          .map((option) => [option.course, (option.groups || []).join('/'), option.teacher].filter(Boolean).join(' · '));
-        sharedSchool.updateSchool(dataRoot().school, { edupage: sharedSchool.edupageSection(result, { selectedGroups }) });
-      } else if (source === 'managebac') {
-        sharedSchool.updateSchool(dataRoot().school, { managebac: sharedSchool.managebacSection(result) });
-      }
-    } catch (error) {
-      console.warn('Shared school data write skipped:', error.message);
-    }
+    publishSchoolSnapshot(source, result);
     return result;
   }));
+  // 同步回来的这份课表现在是"当前课表"，共用选课要按它重新解析一次。
+  if (source === 'edupage') { try { applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); } }
   scheduleReminderTick();
   return schoolSnapshot();
 }
@@ -1149,7 +1161,9 @@ async function startupSchoolSync() {
   for (const source of ['edupage', 'managebac']) {
     if (!sites[source]?.saved) continue;
     try {
-      const result = await loginSchoolAccount(source, { weekStart: schoolState.week || undefined });
+      // 全新安装时还没有任何已同步的一周，用"上海时间的本周一"兜底，
+      // 否则 schoolState.key 会因为 weekStart 为空直接抛 INVALID_DATE。
+      const result = await loginSchoolAccount(source, { weekStart: schoolState.week || currentSchoolWeek() });
       if (result?.ok) { synced.push(source); continue; }
       failed.push(source);
       // loginSchoolAccount 自己吞掉异常并返回 ok:false，必须把原因记下来，
@@ -1179,13 +1193,64 @@ async function loginSchoolAccount(source, options = {}) {
       const result = source === 'edupage'
         ? await schoolClient.syncEduPage({ weekStart: options.weekStart }) : await schoolClient.syncManageBac();
       siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
+      // 自动登录（启动时或点了"登录并同步"）也要把结果写进共用文件，
+      // 否则同步确实成功了，但另一个程序打开还是看不到新数据。
+      publishSchoolSnapshot(source, result);
       return result;
     });
+    try { if (source === 'edupage') applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); }
     return { ok: true, snapshot: schoolSnapshot(options) };
   } catch (error) {
     const known = error instanceof SchoolAuthError || error instanceof SchoolDataError;
     return { ok: false, error: { code: known ? error.code : 'LOGIN_FAILED', message: known ? error.message : '登录或同步未完成，请稍后重试' }, snapshot: schoolSnapshot(options) };
   }
+}
+
+/** 选中的组标识 → 共用 settings.yaml 的 lessons:[{subject,teacher,group}]。 */
+function publishSelectedLessons(groupKeys) {
+  const current = schoolCache.edupage;
+  if (!current) return false;
+  const selected = new Set(groupKeys || []);
+  const lessons = (current.options || [])
+    .filter((option) => selected.has(option.key))
+    .map((option) => ({ subject: String(option.course || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), teacher: String(option.teacher || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), group: String((option.groups || []).join('/')).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 40) }));
+  if (!lessons.length) return false;
+  const file = sharedSettingsFile();
+  const text = sharedSettings.readTextFile(file);
+  const body = lessons.map((lesson) => ['- subject: ' + lesson.subject, '  teacher: ' + lesson.teacher, "  group: '" + lesson.group + "'"].join('\n')).join('\n');
+  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'lessons', 'lessons:\n' + body + '\n'));
+  return true;
+}
+
+/** 共用 settings.yaml 的 lessons 段：两个程序同一份选课（科目 + 教学组 + 老师）。 */
+function sharedLessonEntries() {
+  return sharedLessons.parseEntries(sharedSettings.readTextFile(sharedSettingsFile()));
+}
+
+/**
+ * 把共用 settings.yaml 的选课落到本机偏好，让"个人课表"只显示自己选的组。
+ * 每次都按当前这份课表重新解析：共用快照与本机登录快照的组标识不同，
+ * 存下来的旧标识换一份课表就对不上了（个人课表会变空）。
+ * 解析不到任何组时不写入，免得用空选择覆盖用户手动勾的教学组。
+ *
+ * @param {{options?: unknown[], accountKey?: string}|null} target 指定用哪份课表解析；
+ *   不传就用当前缓存（同步操作内部还没换成新快照，所以同步时要显式传 result）。
+ */
+function applySharedLessonSelection(target = null) {
+  const current = target && Array.isArray(target.options) ? target : schoolCache.edupage;
+  if (!current) return 0;
+  const keys = sharedLessons.resolveGroupKeys(sharedLessonEntries(), current.options);
+  if (!keys.length) return 0;
+  const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
+  const unchanged = preferences.accountKey === current.accountKey
+    && Array.isArray(preferences.groups) && preferences.groups.length === keys.length
+    && keys.every((key) => preferences.groups.includes(key));
+  if (unchanged) return keys.length;
+  preferences.groups = keys;
+  preferences.accountKey = current.accountKey;
+  secureStore.save();
+  startupMark('lessons-from-shared-settings');
+  return keys.length;
 }
 
 function updateSchoolPreferences(input) {
@@ -1211,6 +1276,10 @@ function updateSchoolPreferences(input) {
   if (Array.isArray(input.courseOrder)) next.courseOrder = input.courseOrder.filter((x) => typeof x === 'string' && x.length < 120).slice(0, 500);
   secureStore.data.settings.schoolPreferences = next;
   try { secureStore.save(); } catch (error) { secureStore.data.settings.schoolPreferences = old; throw error; }
+  // 选课也写进共用 settings.yaml 的 lessons 段（Lite 的原生字段，两边同一份）。
+  if (Array.isArray(input.groups)) {
+    try { publishSelectedLessons(next.groups || []); } catch (error) { console.warn('Shared lessons write skipped:', error.message); }
+  }
   scheduleReminderTick();
   return schoolSnapshot();
 }
@@ -2647,8 +2716,37 @@ const sharedSettings = require('./settings-yaml.cjs');
 const sharedAccounts = require('./shared-accounts.cjs');
 const sharedTimetable = require('./shared-timetable.cjs');
 const sharedSchool = require('./shared-school.cjs');
+const sharedLessons = require('./shared-lessons.cjs');
 
 function sharedSettingsFile() { return dataRoot().settings; }
+
+/** "名字 <地址>" 或只有地址；共享文件里发件人只留这一行文字。 */
+function mailSenderText(from) {
+  const list = Array.isArray(from) ? from : [];
+  return list.map((item) => {
+    const address = String(item?.address || '').trim();
+    const name = String(item?.name || '').trim();
+    if (!address) return name;
+    return name && name !== address ? `${name} <${address}>` : address;
+  }).filter(Boolean).join(', ').slice(0, 160);
+}
+
+/**
+ * 收件箱摘要 → 共用 data/School 的 mail 段：只有未读数和邮件头部
+ * （发件人、主题、日期），正文与附件一律不进共享文件。
+ */
+function publishMailSummary(listing) {
+  const items = Array.isArray(listing?.items) ? listing.items : [];
+  if (!items.length) return false;
+  const recent = items.slice(0, 30).map((item) => ({
+    uid: item.uid, from: mailSenderText(item.from), subject: item.subject, date: item.date, unread: item.unread === true,
+  }));
+  sharedSchool.updateSchool(dataRoot().school, {
+    // 时间戳一律带本地时区偏移（数据规范要求），不用 toISOString() 的 UTC Z 写法。
+    mail: sharedSchool.mailSection({ unread: items.filter((item) => item.unread).length, recent, fetchedAt: sharedSchool.localIso(new Date()) }),
+  });
+  return true;
+}
 
 /** What the other launcher already wrote into the shared settings.yaml. */
 function sharedAccountsSnapshot() {
@@ -2836,7 +2934,13 @@ function registerIpc() {
   for (const name of ['status', 'list', 'read', 'contacts', 'download', 'send', 'openLink']) {
     ipcMain.handle(`mail:${name}`, async (event, input) => {
       assertMainRenderer(event);
-      return mailbox[name](input);
+      const result = await mailbox[name](input);
+      // 读完整个收件箱后，把摘要（未读数 + 头部字段）写进共用 data/School，
+      // 让另一个程序不用登录也能看到"有几封未读"。正文一律不进共享文件。
+      if (name === 'list' && input && input.unread === false) {
+        try { publishMailSummary(result); } catch (error) { console.warn('Shared mail summary skipped:', error.message); }
+      }
+      return result;
     });
   }
   // Xinlv (心履) is a native API integration, not an embedded webpage.
@@ -4178,7 +4282,17 @@ app.whenReady().then(() => {
   selfTestStage('app-ready');
   startupMark('app-ready');
   armSelfTestTimeout();
-  ensureLayout(dataRoot());
+  // 数据只放在 exe 同级的 data/ 里，没有就自动建。装到没有写权限的目录
+  // （例如 Program Files）时要说清楚原因，不能一句英文报错就退出。
+  try {
+    ensureLayout(dataRoot());
+  } catch (error) {
+    startupMark('data-root-unwritable');
+    dialog.showErrorBox('PH Launcher 无法创建数据文件夹',
+      `程序需要在自身所在文件夹里创建 data 目录来保存设置、课表和账号：\n${path.join(dataRoot().root, '')}\n\n系统拒绝写入（${error.code || error.message}）。\n\n请把 PH Launcher 移动到你有写入权限的位置（例如 D:\\PH Launcher），或者用安装器的默认"仅为我安装"方式重新安装，再打开。`);
+    app.exit(0);
+    return;
+  }
   // 同系列互斥：PHL 与 PHL Lite 共享同一批文件，不能同时运行。
   const runLock = appMutex.acquire({ dataDir: dataRoot().root, kind: 'phl' });
   if (!runLock.ok) {
@@ -4234,6 +4348,8 @@ app.whenReady().then(() => {
             preferences.accountKey = edupageSeen.accountKey;
             secureStore.save();
           }
+          // 共用 settings.yaml 里的选课（Lite 选的）优先用于个人课表过滤。
+          try { applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons read skipped:', error.message); }
         }
       }
     }

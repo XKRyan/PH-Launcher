@@ -18,6 +18,13 @@ function fixture(authenticate = async () => {}) {
     SITES: { edupage: { partition: 'fixture' }, managebac: { partition: 'fixture2' } },
     session: { fromPartition: (id) => id }, siteStoragePersistence: { schedule: () => calls.push('flush') },
     schoolSnapshot: () => ({ epochs: { edupage: 2 } }),
+    // 同步结果要写进共用文件：这个函数定义在 loginSchoolAccount 之前，
+    // 不在下面的切片里，所以在这里打桩并记录调用顺序。
+    publishSchoolSnapshot: (site) => calls.push(['publish', site]),
+    // applySharedLessonSelection 与 loginSchoolAccount 在同一段切片里（真身会跑），
+    // 没有课表缓存时它立刻返回 0，不会写任何偏好。
+    schoolCache: { edupage: null },
+    console,
   });
   vm.runInContext(source.slice(source.indexOf('function assertSchoolSessionReady('), source.indexOf('function readSchoolDetail(')), context);
   vm.runInContext(source.slice(source.indexOf('async function loginSchoolAccount('), source.indexOf('function updateSchoolPreferences(')), context);
@@ -31,7 +38,7 @@ test('explicit account login locks session changes, authenticates once, then rea
   assert.throws(() => f.context.assertSchoolSessionReady('edupage'), /正在更新/);
   finish();
   assert.equal((await pending).ok, true);
-  assert.deepEqual(f.calls, ['invalidate', ['authenticate', 'edupage', true], 'invalidate', ['sync', 'edupage', true], 'read', 'flush']);
+  assert.deepEqual(f.calls, ['invalidate', ['authenticate', 'edupage', true], 'invalidate', ['sync', 'edupage', true], 'read', 'flush', ['publish', 'edupage']]);
 });
 
 test('direct login validates source/date before touching credentials', async () => {

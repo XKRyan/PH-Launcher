@@ -18,6 +18,14 @@ const digest = (value) => createHash('sha256').update(String(value)).digest('hex
 const clean = (value, max = 160) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
 const validTime = (value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value || '');
+// 共享文件的时间戳一律带本地时区偏移（数据规范第 8 节），不写 UTC 的 Z 形式。
+const localIso = (date) => {
+  const moment = date instanceof Date ? date : new Date(date);
+  const offset = -moment.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  const pad = (value) => String(Math.floor(Math.abs(value))).padStart(2, '0');
+  return `${moment.getFullYear()}-${pad(moment.getMonth() + 1)}-${pad(moment.getDate())}T${pad(moment.getHours())}:${pad(moment.getMinutes())}:${pad(moment.getSeconds())}${sign}${pad(offset / 60)}:${pad(offset % 60)}`;
+};
 
 /** 读取共享课表；缺失/损坏一律按"没有课表"处理。 */
 function readTimetable(filePath) {
@@ -134,14 +142,14 @@ function buildDocFromEdupage(data, { app = 'PH Launcher', now = () => new Date()
     version: 1,
     kind: KIND,
     app,
-    updated_at: now().toISOString(),
+    updated_at: localIso(now()),
     days,
   };
 }
 
 /** 原子写入共享课表（UTF-8 无 BOM, \n, 同目录临时文件 + rename）。 */
 function writeDoc(filePath, doc, { now = () => new Date() } = {}) {
-  const payload = { ...doc, updated_at: now().toISOString() };
+  const payload = { ...doc, updated_at: localIso(now()) };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
