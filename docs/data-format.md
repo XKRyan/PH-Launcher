@@ -60,6 +60,21 @@
   重新安装到同一目录即可继续用。不做这件事的话,electron-builder 默认的
   `RMDir /r $INSTDIR` 会把课表、日程、账号和 AI 会话一起删掉。
 - 解析结果在进程内缓存一次(`dataRoot()`),避免同一进程里读到两个不同的根。
+- PLL 侧的解析顺序与这里对称(`hellopinghe/paths.py`):`PHLL_DATA_DIR` →
+  程序目录下的 `portable.flag` → `~/.hellopinghe`。它的 Windows 安装包(MSI)
+  会写入 `portable.flag`,所以**装到哪个文件夹,数据就在那个文件夹里**——
+  两个程序装进同一个文件夹时,两边的 `data/` 就是同一个目录。
+- 两端一起跑的自检脚本(用副本目录,别拿真实数据当靶子):
+
+  ```
+  node scripts/interop-check.cjs seed  <dataDir>
+  set PHLL_DATA_DIR=<dataDir> && python -X utf8 <PLL 仓库>/scripts/interop_check.py check
+  set PHLL_DATA_DIR=<dataDir> && python -X utf8 <PLL 仓库>/scripts/interop_check.py write
+  node scripts/interop-check.cjs check <dataDir>
+  ```
+
+  覆盖 `settings.yaml` / `Schedule` / `agent/` / `Timetable` / `School` 的双向读写、
+  未知字段保留、日程 id 不复用。
 
 `layoutPaths(root)` 由根派生出全部固定路径;`ensureLayout()` 只创建
 `data/`、`data/phl/`、`data/agent/`、`data/logs/`、`data/_backups/`
