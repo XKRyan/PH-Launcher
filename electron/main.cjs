@@ -4304,6 +4304,11 @@ app.whenReady().then(() => {
     app.exit(0);
     return;
   }
+  // 心跳：定期刷新自己的运行标记。只靠 PID 会被系统回收的 PID 骗到，
+  // 对方 90 秒没刷新就当作它已经不在（app-mutex 里判断）。
+  const runLockTimer = setInterval(() => appMutex.touch({ dataDir: dataRoot().root, kind: 'phl' }), appMutex.HEARTBEAT_MS);
+  runLockTimer.unref?.();
+  app.once('will-quit', () => clearInterval(runLockTimer));
   // Copy-only migration from the old profile location; the original files stay
   // where they are, so nothing is ever lost by starting this version.
   try {
