@@ -59,6 +59,11 @@
   只删程序文件,`data/` 原地保留;卸载后安装目录里只剩用户自己的数据,
   重新安装到同一目录即可继续用。不做这件事的话,electron-builder 默认的
   `RMDir /r $INSTDIR` 会把课表、日程、账号和 AI 会话一起删掉。
+- **`fresh.flag`(干净测试环境)**:程序目录里放一个空的 `fresh.flag`(PLL 用同一个约定)时,
+  启动会跳过**全部**旧数据迁移——旧 profile(`ph-launcher.secure/school/credentials`)、
+  旧账号库都不动,而且拿不到数据根时也不会退回本机默认 profile(改用临时目录)。
+  启动日志里会写 `fresh-env-skip-migration`。测试环境里放这个标记,第一次打开就是彻底空的;
+  正式安装不要放。
 - 解析结果在进程内缓存一次(`dataRoot()`),避免同一进程里读到两个不同的根。
 - PLL 侧的解析顺序与这里对称(`hellopinghe/paths.py`):`PHLL_DATA_DIR` →
   程序目录下的 `portable.flag` → `~/.hellopinghe`。它的 Windows 安装包(MSI)

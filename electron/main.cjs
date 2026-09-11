@@ -170,6 +170,14 @@ const CAPTURE_SITE = process.argv.find((arg) => arg.startsWith('--capture-site='
 const IS_HEADLESS = IS_SMOKE_TEST || IS_CAPTURE || IS_SELF_TEST || Boolean(CAPTURE_SITE);
 const CAPTURE_ROUTE = process.argv.find((arg) => arg.startsWith('--capture-route='))?.split('=')[1] || 'today';
 const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-variant='))?.split('=')[1] || '';
+// 干净测试环境的标记：程序目录里有 fresh.flag 时不迁移任何旧数据
+// （与 Pinghe Launcher Lite 的 fresh.flag 同一套约定，见 docs/data-format.md §1）。
+const FRESH_ENV = (() => {
+  try {
+    const dir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+    return fs.existsSync(path.join(dir, 'fresh.flag'));
+  } catch { return false; }
+})();
 let headlessUserData = '';
 // A preview run may deliberately point at a real profile to check how cached
 // data renders; every other headless run must stay isolated.
@@ -188,14 +196,22 @@ if (IS_HEADLESS && !CAPTURE_KEEPS_PROFILE) {
 // 不再往 %APPDATA% 写东西；同时 profile 路径固定，凭据库/历史不会再因为
 // 启动方式不同而解不开。
 if (!IS_HEADLESS || CAPTURE_KEEPS_PROFILE) {
+  let profileReady = false;
   try {
     const sharedLayout = dataRoot();
     if (sharedLayout.source !== 'profile') {
       const profileDir = path.join(sharedLayout.own, 'profile');
       fs.mkdirSync(profileDir, { recursive: true });
       app.setPath('userData', profileDir);
+      profileReady = true;
     }
   } catch { /* 拿不到数据根就保持默认 profile */ }
+  // 干净测试环境（fresh.flag）绝不允许退回本机默认 profile：那是旧登录态
+  // （学校网站 Cookie）和旧数据的入口，一退回去"干净"就不成立了。
+  if (FRESH_ENV && !profileReady) {
+    headlessUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-launcher-fresh-'));
+    app.setPath('userData', headlessUserData);
+  }
 }
 
 // School portals do not need GPU-only features. Software rendering avoids a
@@ -4314,11 +4330,17 @@ app.whenReady().then(() => {
   app.once('will-quit', () => clearInterval(runLockTimer));
   // Copy-only migration from the old profile location; the original files stay
   // where they are, so nothing is ever lost by starting this version.
-  try {
-    const migrated = migrateProfile({ layout: dataRoot(), userDataDir: app.getPath('userData') });
-    if (migrated.length) startupMark(`profile-migrated-${migrated.length}`);
-  } catch (error) {
-    console.error('Profile migration skipped:', error.message);
+  // `fresh.flag`（与 Pinghe Launcher Lite 同一个约定）表示"这是一套干净的测试环境"：
+  // 一律不做任何旧数据迁移，保证第一次打开是彻底空的。
+  if (FRESH_ENV) {
+    startupMark('fresh-env-skip-migration');
+  } else {
+    try {
+      const migrated = migrateProfile({ layout: dataRoot(), userDataDir: app.getPath('userData') });
+      if (migrated.length) startupMark(`profile-migrated-${migrated.length}`);
+    } catch (error) {
+      console.error('Profile migration skipped:', error.message);
+    }
   }
   secureStore = new SecureStore(ownFile(dataRoot(), 'launcher'));
   secureStore.load();
@@ -4332,7 +4354,7 @@ app.whenReady().then(() => {
   // 账号只认共用 settings.yaml：两个程序读写同一份，没有导入步骤。
   credentialVault = new SharedAccountStore({ filePath: sharedSettingsFile(), siteIds: SITE_IDS });
   credentialVault.load();
-  startupMark(`legacy-accounts-migrated-${migrateLegacyCredentialVault()}`);
+  startupMark(`legacy-accounts-migrated-${FRESH_ENV ? 0 : migrateLegacyCredentialVault()}`);
   // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
   // window paints, so both applications show the same day list.
   startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
