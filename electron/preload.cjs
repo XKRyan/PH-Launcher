@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('ph', {
     save: (credential) => ipcRenderer.invoke('credentials:save', credential),
     remove: (siteId) => ipcRenderer.invoke('credentials:remove', siteId),
     fill: (siteId) => ipcRenderer.invoke('credentials:fill', siteId),
+    discardUnreadable: () => ipcRenderer.invoke('credentials:discard-unreadable'),
     onChanged: (callback) => on('credentials:changed', callback),
   },
   xinlv: {

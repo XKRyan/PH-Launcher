@@ -81,10 +81,12 @@ function normalizeStoredRecord(record, siteId) {
 }
 
 class CredentialVault {
-  constructor({ filePath, safeStorage, platform = process.platform, siteIds = DEFAULT_SITE_IDS, now = () => new Date(), fileSystem = fs } = {}) {
+  constructor({ filePath, safeStorage, legacySafeStorage = null, platform = process.platform, siteIds = DEFAULT_SITE_IDS, now = () => new Date(), fileSystem = fs } = {}) {
     if (!filePath) throw new Error('Credential vault requires a file path');
     this.filePath = filePath;
     this.safeStorage = safeStorage;
+    // 旧文件可能由系统密钥（safeStorage）加密：能解就迁移到当前格式。
+    this.legacySafeStorage = legacySafeStorage && legacySafeStorage !== safeStorage ? legacySafeStorage : null;
     this.platform = platform;
     this.siteIds = normalizeSiteIds(siteIds);
     this.now = now;
@@ -134,7 +136,15 @@ class CredentialVault {
       if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
         throw new Error('invalid credential ciphertext');
       }
-      const decrypted = this.safeStorage.decryptString(Buffer.from(encoded, 'base64'));
+      let decrypted;
+      try {
+        decrypted = this.safeStorage.decryptString(Buffer.from(encoded, 'base64'));
+      } catch (primaryError) {
+        if (!this.legacySafeStorage) throw primaryError;
+        // 旧版本用系统密钥加密：能解就迁移到当前格式（下次保存时落盘）。
+        decrypted = this.legacySafeStorage.decryptString(Buffer.from(encoded, 'base64'));
+        this._needsRewrite = true;
+      }
       const parsed = JSON.parse(decrypted);
       if (parsed?.version !== CREDENTIAL_VERSION || !parsed?.records || typeof parsed.records !== 'object' || Array.isArray(parsed.records)) {
         throw new Error('unsupported credential vault');
@@ -155,6 +165,26 @@ class CredentialVault {
 
   ensureLoaded() {
     if (!this.loaded) this.load();
+  }
+
+  /**
+   * 显式放弃一份解不开的旧凭据库（先改名留档，绝不删除）。
+   * 场景：共享数据目录被换了启动方式/系统账户，旧密钥解不开；用户选择
+   * 重建后即可重新保存账号或从共用 settings.yaml 导入。
+   */
+  discardUnreadable() {
+    if (!this.loadError) return false;
+    const backup = `${this.filePath}.unreadable-${Date.now()}`;
+    try {
+      this.fileSystem.renameSync(this.filePath, backup);
+    } catch (error) {
+      throw new Error(`无法留档旧凭据文件：${String(error.message || error).slice(0, 120)}`);
+    }
+    this.records = {};
+    this.loaded = true;
+    this.loadError = '';
+    this._needsRewrite = true;
+    return { backup };
   }
 
   persistRecords(records) {

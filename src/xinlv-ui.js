@@ -120,7 +120,7 @@
       <div class="xinlv-login-copy">
         <span class="section-kicker">XINLV ACCOUNT</span>
         <h3>${isRegister ? '注册心履账号' : '登录心履'}</h3>
-        <p>心履账号与学校账号相互独立。账号、密码与登录令牌只保存在本机系统加密存储里，仅用于连接 <code translate="no">xin.lv.com</code> 的心履服务；PH Launcher 不会把心情记录发给 AI 或学校。</p>
+        <p>心履账号与学校账号相互独立。账号、密码与登录令牌只保存在本机（当前未加密），仅用于连接 <code translate="no">xin.lv.com</code> 的心履服务；PH Launcher 不会把心情记录发给 AI 或学校。</p>
       </div>
       <form class="xinlv-login-form" data-xinlv-login-form>
         <label><span>账号</span><input name="username" maxlength="200" autocomplete="username" value="${esc(login.username)}" placeholder="心履账号" required></label>
@@ -314,7 +314,7 @@
       </section>
       <section class="xinlv-card xinlv-about">
         <header class="xinlv-card-head"><div><span class="section-kicker">ABOUT</span><h3>关于心履</h3></div></header>
-        <p>心履是一个情绪记录与陪伴工具。它通过官方 API 同步你的心情记录，所有记录加密保存在本机，只有你主动同步时才会发到心履服务器。</p>
+        <p>心履是一个情绪记录与陪伴工具。它通过官方 API 同步你的心情记录，所有记录保存在本机，只有你主动同步时才会发到心履服务器。</p>
         <p class="xinlv-muted">同步采用“时间戳较新者胜出”的规则，删除的记录会以墓碑形式同步，不会在另一台设备上复活。</p>
         <div class="xinlv-profile-actions"><button type="button" class="secondary-button" data-xinlv-open-url="https://xin-lv.com/">在浏览器打开心履官网 ↗</button></div>
       </section>

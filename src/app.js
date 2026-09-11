@@ -1887,15 +1887,18 @@ function renderCredentialSettings() {
   }
   if (!status.supported || status.issue) {
     const reason = status.issue || status.reason || '当前系统无法安全保存密码';
-    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small></div>`;
+    // 旧加密文件解不开（换了启动方式/系统账户）时给一条显式重建出路：
+    // 旧文件先改名留档，之后可以重新保存或从共用 settings.yaml 导入。
+    const rebuildable = String(reason).includes('无法解锁');
+    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small>${rebuildable ? '<div class="credential-actions"><button type="button" class="danger" data-discard-credentials>留档旧文件并重建账号记忆</button></div>' : ''}</div>`;
     return;
   }
   container.innerHTML = Object.entries(BUILTIN_SITE_META).map(([siteId, site]) => {
     const credential = credentialEntry(siteId);
     const statusText = credential.saved
       ? siteId === 'mail'
-        ? `已加密保存 ${credential.displayUsername || '账号'} · 用于本地收件箱`
-        : `已加密保存 ${credential.displayUsername || '账号'} · ${credential.autoLogin ? '允许自动重新登录' : credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
+        ? `已保存 ${credential.displayUsername || '账号'} · 用于本地收件箱`
+         : `已保存 ${credential.displayUsername || '账号'} · ${credential.autoLogin ? '允许自动重新登录' : credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
       : siteId === 'mail' ? '尚未登录；添加账号后可使用本地收件箱' : '未保存密码；仍可使用网站自己的保持登录';
     const actions = credential.saved
       ? siteId === 'mail'
@@ -1915,7 +1918,7 @@ function sharedAccountCard() {
   const known = shared.platforms.filter((entry) => entry.supported);
   if (!known.length) return '';
   const names = known.map((entry) => `${entry.platform}${entry.username ? `（${entry.username}）` : ''}`).join('、');
-  return `<div class="credential-setting shared-account-setting"><div class="site-card-icon blue">${icon('#i-check')}</div><div><strong>共用 settings.yaml 里的账号</strong><small>检测到 ${escapeHtml(names)}；导入后本机加密保存，不会自动登录</small></div><div class="credential-actions"><button type="button" data-import-shared-accounts>导入账号</button><button type="button" data-export-shared-accounts>写入共用文件</button></div></div>`;
+  return `<div class="credential-setting shared-account-setting"><div class="site-card-icon blue">${icon('#i-check')}</div><div><strong>共用 settings.yaml 里的账号</strong><small>检测到 ${escapeHtml(names)}；导入后保存在本机，不会自动登录</small></div><div class="credential-actions"><button type="button" data-import-shared-accounts>导入账号</button><button type="button" data-export-shared-accounts>写入共用文件</button></div></div>`;
 }
 
 // Xinlv signs in through its own REST API, so it shares this login list but
@@ -1962,8 +1965,8 @@ function openCredentialDialog(siteId) {
       ? '如需保留原密码，请留空；保存后不会显示密码。'
       : '保存后不会显示密码；如需更新，请重新输入。';
   $('#credentialIntro').textContent = isMail
-    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，使用当前系统用户密钥加密保存；邮件内容不会交给 AI。'
-    : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
+    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，以明文保存在本机共享数据目录（当前版本未启用加密）；邮件内容不会交给 AI。'
+    : `密码以明文保存在本机共享数据目录（当前版本未启用加密），只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
   $('#saveCredentialButton').textContent = '保存并登录';
@@ -1984,13 +1987,13 @@ function openXinlvLoginDialog() {
   $('#credentialUsername').value = account.username || '';
   $('#credentialPassword').required = true;
   $('#credentialPasswordLabel').textContent = '密码';
-  $('#credentialPasswordNote').textContent = '密码与登录令牌使用当前系统用户密钥加密保存，只用于登录心履，保存后不会再次显示。';
+  $('#credentialPasswordNote').textContent = '密码与登录令牌以明文保存在本机共享数据目录（当前版本未启用加密），只用于登录心履，保存后不会再次显示。';
   $('#credentialAuthcodeRow').hidden = true;
   if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
   $('#credentialAutoFillRow').hidden = true;
   $('#credentialAutoLoginRow').hidden = true;
   $('#credentialDialogTitle').textContent = '心履登录';
-  $('#credentialIntro').textContent = '心履账号与学校账号相互独立。账号和密码只用于调用心履官方 API；心情记录加密保存在本机，只有你主动同步时才会发送到心履服务器。登录失败不会自动重试，避免账号被锁定。';
+  $('#credentialIntro').textContent = '心履账号与学校账号相互独立。账号和密码只用于调用心履官方 API；心情记录保存在本机（当前未加密），只有你主动同步时才会发送到心履服务器。登录失败不会自动重试，避免账号被锁定。';
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
   $('#saveCredentialButton').textContent = account.configured ? '重新登录' : '登录心履';
@@ -2294,7 +2297,7 @@ function renderSettings() {
   $('#reminderSetting').value = String(settings.defaultReminderMinutes ?? 10);
   $('#encryptionStatus').textContent = state.data.meta?.encrypted
     ? state.data.meta?.platform === 'darwin' ? '本地数据已使用 macOS 钥匙串保护' : '本地数据已使用当前系统用户密钥加密'
-    : '当前系统无法提供加密，数据仅保存在本机';
+    : '本地数据以明文保存在共享数据目录（当前版本未启用加密）';
   const meta = state.data.meta || {};
   const shared = Array.isArray(meta.sharedFiles) && meta.sharedFiles.length ? meta.sharedFiles.join(' / ') : '';
   $('#dataPathLabel').textContent = [
@@ -2335,13 +2338,23 @@ async function refreshSharedAccounts() {
   catch { state.sharedAccounts = { available: false, platforms: [] }; }
 }
 
+async function discardCredentials() {
+  if (!await localizedConfirm('把解不开的旧账号文件留档并重建？旧文件会改名保留在同目录，不会删除；之后可重新保存账号，或从共用 settings.yaml 导入。')) return;
+  try {
+    const result = await window.ph.credentials.discardUnreadable();
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    toast(`已重建账号记忆；旧文件留档在 ${result.backup}`);
+  } catch (error) { toast(`重建失败：${error.message}`, 'error'); }
+}
+
 async function importSharedAccounts() {
   try {
     const result = await window.ph.school.importSharedAccounts();
     state.credentialStatus = result.status;
     renderCredentialSettings();
     const imported = (result.imported || []).map((entry) => entry.platform).join('、');
-    toast(imported ? `已导入 ${imported}；密码仍只在本机加密保存` : '没有可导入的账号（本机已有或字段不全）');
+    toast(imported ? `已导入 ${imported}；账号保存在本机` : '没有可导入的账号（本机已有或字段不全）');
   } catch (error) { toast(`导入失败：${error.message}`, 'error'); }
 }
 
@@ -2481,7 +2494,7 @@ function renderOnboarding() {
     { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
     { title: 'Try Wellbeing (optional)', copy: 'Xinlv runs natively inside the launcher through its official API for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
   ] : [
-    { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会在本机加密保存，也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
+    { title: '先连接学校服务', copy: '先设置 EduPage、ManageBac 和平和邮箱。密码会保存在本机（当前未加密），也可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">之后可在“设置 → 网站”修改账号。</p>` },
     { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
     { title: '试试心履（可选）', copy: '心履通过官方 API 原生接入启动器，用于记录心情与获得陪伴建议；登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心履</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心履”打开。</p>' },
   ];
@@ -2846,6 +2859,7 @@ function bindEvents() {
     if (event.target.closest('[data-edit-xinlv]')) return openXinlvLoginDialog();
     if (event.target.closest('[data-connect-xinlv]')) return connectWithSavedCredential(XINLV_ACCOUNT.id);
     if (event.target.closest('[data-remove-xinlv]')) return removeCredential(XINLV_ACCOUNT.id);
+    if (event.target.closest('[data-discard-credentials]')) return discardCredentials();
     if (event.target.closest('[data-import-shared-accounts]')) return importSharedAccounts();
     if (event.target.closest('[data-export-shared-accounts]')) return exportSharedAccounts();
   });

@@ -92,6 +92,7 @@ function sharedDataChoice() {
   };
 }
 const { createAiMailReader } = require('./ai-mail.cjs');
+const appMutex = require('./app-mutex.cjs');
 const { AI_LAUNCHER_READ_TOOLS, createAiLauncherReader } = require('./ai-launcher-reader.cjs');
 const LAUNCHER_READ_NAMES = new Set(AI_LAUNCHER_READ_TOOLS.map((tool) => tool.function.name));
 // School writes (mail, submission, discussion reply) need the signed-in session,
@@ -365,6 +366,17 @@ function mergeXinlvState(current, incoming) {
   };
 }
 
+// 数据明文化（与 Pinghe Launcher Lite 对齐的既定选择，2026-09-10）：phl/ 下的
+// 存储先不再加密，文件格式前缀与迁移逻辑全部保留——之后要恢复加密，把
+// DATA_ENCRYPTION 改回 true 即可，旧的明文文件会在下次保存时自动转为加密。
+const DATA_ENCRYPTION = false;
+// 明文编解码：文件里是 base64(JSON)，不是加密；读写保持与旧格式相同的容器。
+const plainStoreCodec = {
+  isEncryptionAvailable: () => true,
+  encryptString: (text) => Buffer.from(text, 'utf8'),
+  decryptString: (buffer) => buffer.toString('utf8'),
+};
+
 class SecureStore {
   constructor(filePath) {
     this.filePath = filePath;
@@ -405,7 +417,7 @@ class SecureStore {
   save() {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const json = JSON.stringify(this.data);
-    const payload = safeStorage.isEncryptionAvailable()
+    const payload = DATA_ENCRYPTION && safeStorage.isEncryptionAvailable()
       ? `ENC1:${safeStorage.encryptString(json).toString('base64')}`
       : `PLAIN1:${Buffer.from(json, 'utf8').toString('base64')}`;
     const temporaryPath = `${this.filePath}.tmp`;
@@ -564,7 +576,7 @@ class SecureStore {
       dataRoot: dataRoot().root,
       dataRootSource: dataRoot().source,
       sharedFiles: ['settings.yaml', 'Schedule', 'agent'],
-      encrypted: safeStorage.isEncryptionAvailable(),
+      encrypted: DATA_ENCRYPTION && safeStorage.isEncryptionAvailable(),
       platform: process.platform,
       arch: process.arch,
     };
@@ -1064,6 +1076,14 @@ async function syncSchool(source, options = {}) {
     const result = source === 'managebac'
       ? await schoolClient.syncManageBac() : await schoolClient.syncEduPage({ weekStart: options.weekStart });
     siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
+    // EduPage 同步成功后把规范化课表写进共享文件，对方程序直接可用。
+    if (source === 'edupage') {
+      try {
+        sharedTimetable.writeDoc(dataRoot().timetable, sharedTimetable.buildDocFromEdupage(result));
+      } catch (error) {
+        console.warn('Shared timetable write skipped:', error.message);
+      }
+    }
     return result;
   }));
   scheduleReminderTick();
@@ -2565,6 +2585,7 @@ const sharedScheduleApi = require('./shared-schedule.cjs');
 const sharedCalendarBridge = require('./shared-calendar-bridge.cjs');
 const sharedSettings = require('./settings-yaml.cjs');
 const sharedAccounts = require('./shared-accounts.cjs');
+const sharedTimetable = require('./shared-timetable.cjs');
 
 function sharedSettingsFile() { return dataRoot().settings; }
 
@@ -2928,6 +2949,12 @@ function registerIpc() {
   ipcMain.handle('credentials:status', (event) => {
     assertMainRenderer(event);
     return credentialStatus();
+  });
+  ipcMain.handle('credentials:discard-unreadable', (event) => {
+    assertMainRenderer(event);
+    const result = credentialVault.discardUnreadable();
+    sendToRenderer('credentials:changed', credentialStatus());
+    return { ok: true, backup: result.backup, status: credentialStatus() };
   });
   ipcMain.handle('credentials:save', async (event, input) => {
     assertMainRenderer(event);
@@ -3796,15 +3823,16 @@ async function runSelfTest() {
     };
   })()`);
   const stored = fs.readFileSync(secureStore.filePath, 'utf8');
-  checks.encryptedStore = stored.startsWith('ENC1:');
+  checks.plainStoreReadable = stored.startsWith('PLAIN1:')
+    && JSON.parse(Buffer.from(stored.slice('PLAIN1:'.length), 'base64').toString('utf8')).tasks instanceof Array;
   const historyPath = path.join(app.getPath('userData'), 'self-test.ai-history');
-  const historyOptions = { filePath: historyPath, encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value) };
+  const historyOptions = { filePath: historyPath, encrypt: (value) => Buffer.from(value, 'utf8'), decrypt: (value) => value.toString('utf8') };
   const historyFixture = new AiHistoryStore(historyOptions);
   historyFixture.load();
   historyFixture.saveSession({ id: 'self-test-chat', title: 'Local study session', connectionKey: 'local:self-test-model', messages: [{ role: 'user', content: 'Explain a study idea.' }, { role: 'assistant', content: 'First understand the context.' }] });
   historyFixture.saveMemory({ id: 'self-test-memory', text: 'I prefer concise examples.' });
   const restoredHistory = new AiHistoryStore(historyOptions).load();
-  checks.aiHistoryEncrypted = fs.readFileSync(historyPath, 'utf8').startsWith('PHAIH1:') && !fs.readFileSync(historyPath, 'utf8').includes('Explain a study idea');
+  checks.aiHistoryStored = fs.readFileSync(historyPath, 'utf8').startsWith('PHAIH1:') && !fs.readFileSync(historyPath, 'utf8').includes('Explain a study idea');
   checks.aiHistoryReloaded = restoredHistory.sessions[0]?.messages.length === 2 && restoredHistory.memories[0]?.text === 'I prefer concise examples.';
   const dictionaryResult = offlineDictionary.lookup('analyze');
   checks.dictionaryLookup = dictionaryResult.exact?.word === 'analyze' && Boolean(dictionaryResult.exact.translation);
@@ -4056,6 +4084,17 @@ app.whenReady().then(() => {
   startupMark('app-ready');
   armSelfTestTimeout();
   ensureLayout(dataRoot());
+  // 同系列互斥：PHL 与 PHL Lite 共享同一批文件，不能同时运行。
+  const runLock = appMutex.acquire({ dataDir: dataRoot().root, kind: 'phl' });
+  if (!runLock.ok) {
+    startupMark(`run-conflict-${runLock.conflict}`);
+    const message = runLock.conflict === 'phl'
+      ? 'PH Launcher 已经在运行。请先退出已运行的窗口，再重新打开。'
+      : `检测到 ${runLock.name} 正在运行。两个程序共用同一份数据，不能同时打开；请先退出对方，再启动 PH Launcher。`;
+    dialog.showErrorBox('PH Launcher', message);
+    app.exit(0);
+    return;
+  }
   // Copy-only migration from the old profile location; the original files stay
   // where they are, so nothing is ever lost by starting this version.
   try {
@@ -4068,14 +4107,41 @@ app.whenReady().then(() => {
   secureStore.load();
   // Restore last session's school snapshots before any window paints, so the
   // UI never starts empty and no download is needed just to show the data.
-  schoolStore = new SchoolStore({ filePath: ownFile(dataRoot(), 'school'), safeStorage });
+  schoolStore = new SchoolStore({ filePath: ownFile(dataRoot(), 'school'), safeStorage: DATA_ENCRYPTION ? safeStorage : null });
   const restoredSchool = schoolState.hydrate(schoolStore.load());
   if (restoredSchool) startupMark(`school-hydrated-${restoredSchool}`);
+  // 共享课表：对方程序（Pinghe Launcher Lite）同步的课表直接可用——
+  // 只在本机没有同一周自己的同步缓存时补位，自己的同步永远优先。
+  try {
+    const shared = sharedTimetable.readTimetable(dataRoot().timetable);
+    if (shared.exists && Object.keys(shared.days).length) {
+      const entry = sharedTimetable.toCacheEntry(
+        { days: shared.days, updated_at: shared.mtime ? new Date(shared.mtime).toISOString() : '' },
+        { at: shared.mtime },
+      );
+      if (!schoolState.entries.has(entry.key)) {
+        const imported = schoolState.hydrate({ week: entry.key.slice('edupage:'.length), entries: [entry] });
+        if (imported) {
+          startupMark(`shared-timetable-${entry.data.lessons.length}`);
+          // 个人视图的教学组选择指向共享课表的组（仅当本机还没有自己的选课）。
+          const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
+          if (!Array.isArray(preferences.groups) || !preferences.groups.length) {
+            preferences.groups = entry.groupKeys;
+            preferences.accountKey = entry.data.accountKey;
+            secureStore.save();
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Shared timetable skipped:', error.message);
+  }
   selfTestStage('store-ready');
   startupMark('store-ready');
   credentialVault = new CredentialVault({
     filePath: ownFile(dataRoot(), 'credentials'),
-    safeStorage,
+    safeStorage: DATA_ENCRYPTION ? safeStorage : plainStoreCodec,
+    legacySafeStorage: safeStorage,
     platform: process.platform,
     siteIds: SITE_IDS,
   });
@@ -4128,8 +4194,13 @@ app.whenReady().then(() => {
   });
   try {
     if (!safeStorage.isEncryptionAvailable()) throw Error('系统加密不可用，AI 历史暂不保存');
+    // 明文存储：内容是可读 JSON；遇到旧的系统密钥加密文件时回退解锁并迁移。
+    const decryptAiHistory = (buffer) => {
+      const text = buffer.toString('utf8');
+      try { JSON.parse(text); return text; } catch { return safeStorage.decryptString(buffer); }
+    };
     aiHistoryStore = new AiHistoryStore({ filePath: ownFile(dataRoot(), 'aiHistory'), sharedDirectory: dataRoot().agent,
-      encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value) });
+      encrypt: (value) => Buffer.from(value, 'utf8'), decrypt: decryptAiHistory });
     aiHistoryStore.load();
   } catch { aiHistoryError = '无法解锁或保存 AI 历史，原有文件不会被覆盖'; aiHistoryStore = null; }
   pendingAiActions = new PendingActionStore();
@@ -4192,6 +4263,8 @@ app.on('will-quit', () => {
   // Destroy the tray explicitly: a killed process leaves a ghost icon in the
   // notification area until the user hovers it.
   destroyTray();
+  // 释放共享数据根里的运行标记，让同系列软件可以接着启动。
+  try { appMutex.release({ dataDir: dataRoot().root, kind: 'phl' }); } catch { /* 标记有 PID 存活检测兜底 */ }
   reminderScheduler?.dispose();
   reminderWindows?.dispose();
   vocabularyStudy?.cancel();

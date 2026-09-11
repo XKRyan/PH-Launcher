@@ -83,7 +83,7 @@
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));
-      status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyAvailable ? '聊天记录已加密保存在此设备。' : '此设备的聊天仅在当前打开期间保留。';
+      status.innerHTML = historyError ? `${esc(historyError)}${historyAvailable && current?.connectionKey ? ' <button type="button" data-agent-history-retry>重试</button>' : ''}` : historyAvailable ? '聊天记录保存在本机（当前未加密）。' : '此设备的聊天仅在当前打开期间保留。';
     }
     const notice = document.getElementById('agentSessionNotice');
     if (notice) {
