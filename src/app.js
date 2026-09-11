@@ -3092,6 +3092,13 @@ async function init() {
     if ($('#onboardingDialog')?.open) renderOnboarding();
   });
   window.ph.vocabulary?.onChanged?.((payload) => updateVocabularyBadge(payload));
+  // 主进程检测到账号会自动登录同步，完成后刷新学校页面数据。
+  window.ph.school.onSynced?.((payload) => {
+    void window.schoolUI?.refresh?.();
+    if (Array.isArray(payload?.synced) && payload.synced.length) {
+      window.setTimeout(() => { void window.schoolUI?.refresh?.(); }, 1500);
+    }
+  });
   window.ph.school.onPlanImported((schedule) => {
     state.data.schedule = schedule;
     renderSchedule(); renderDashboard();

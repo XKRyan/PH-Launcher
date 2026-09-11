@@ -1138,21 +1138,26 @@ async function startupSchoolSync() {
   if (!credentialVault) return { synced: [] };
   const sites = credentialStatus().sites || {};
   const synced = [];
+  const failed = [];
   for (const source of ['edupage', 'managebac']) {
     if (!sites[source]?.saved) continue;
     try {
       const result = await loginSchoolAccount(source, { weekStart: schoolState.week || undefined });
       if (result?.ok) { synced.push(source); continue; }
+      failed.push(source);
       // loginSchoolAccount 自己吞掉异常并返回 ok:false，必须把原因记下来，
       // 否则"页面像没登录"就没有任何线索。
       startupMark(`startup-sync-failed-${source}-${String(result?.error?.code || 'UNKNOWN')}`);
       console.warn(`Startup sync failed for ${source}:`, String(result?.error?.message || '未知原因').slice(0, 200));
     } catch (error) {
+      failed.push(source);
       startupMark(`startup-sync-error-${source}`);
       console.warn(`Startup sync errored for ${source}:`, String(error?.message || error).slice(0, 200));
     }
   }
-  return { synced };
+  // 通知渲染进程：学校数据已就绪，页面自己刷新，不需要用户手点"登录并同步"。
+  try { sendToRenderer('school:synced', { synced, failed, week: schoolState.week || '' }); } catch { /* 窗口可能还没建好 */ }
+  return { synced, failed };
 }
 
 async function loginSchoolAccount(source, options = {}) {

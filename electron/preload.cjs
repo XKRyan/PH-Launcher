@@ -143,6 +143,7 @@ contextBridge.exposeInMainWorld('ph', {
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
     openUrl: (url) => ipcRenderer.invoke('school:open-url', url),
     onPlanImported: (callback) => on('school:plan-imported', callback),
+    onSynced: (callback) => on('school:synced', callback),
   },
   mail: {
     status: () => ipcRenderer.invoke('mail:status'),
