@@ -94,17 +94,31 @@ function mergeManagebac(existing, incoming) {
   };
 }
 
+/** 某一天所在那一周的周一；解析不了就原样返回。 */
+function weekStartOf(day) {
+  const value = clean(day, 20);
+  if (!validDate(value)) return value;
+  const date = new Date(`${value}T00:00:00Z`);
+  const weekday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - weekday);
+  return date.toISOString().slice(0, 10);
+}
+
 /**
- * edupage 段只保留"当前这一周"：周不同就整段替换（否则文件会越攒越多、
+ * edupage 段只保留"当前这一周"：**不在同一周**就整段替换（否则文件会越攒越多、
  * 而且会把上周的课当成这周的）；同一周则按日期 + 时间 + 科目 + 教学组取并集。
+ *
+ * 同一周按"周一"比较而不是比对字符串：Pinghe Launcher Lite 是按天算课表的
+ * （`personal(day)`），它写回来的 `week_start` 可能落在本周内的某一天。
  */
 function mergeEdupaged(existing, incoming) {
   if (!existing || typeof existing !== 'object') return incoming || null;
   if (!incoming || typeof incoming !== 'object') return existing;
-  if (clean(existing.week_start, 20) !== clean(incoming.week_start, 20)) return incoming;
+  if (weekStartOf(existing.week_start) !== weekStartOf(incoming.week_start)) return incoming;
   const keyOf = (row) => [clean(row?.date, 20), clean(row?.start, 5), clean(row?.subject), clean(row?.group, 80)].join('|');
   return {
     ...incoming,
+    week_start: validDate(existing.week_start) ? existing.week_start : incoming.week_start,
     lessons: mergeRows(existing.lessons, incoming.lessons, keyOf, 2000),
     selected_groups: (Array.isArray(incoming.selected_groups) && incoming.selected_groups.length) ? incoming.selected_groups : existing.selected_groups,
   };

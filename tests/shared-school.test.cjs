@@ -123,6 +123,24 @@ test('edupage：同一周取并集，换了一周就整段替换（不攒历史�
   assert.equal(nextWeek.week_start, '2026-09-14');
 });
 
+test('对方按天写课表（week_start 落在本周内）也按同一周并集，不整段替换', () => {
+  const lesson = (date, subject, group) => ({ date, start: '08:00', end: '08:40', subject, teacher: 'T', room: 'R', group, cancelled: false });
+  // PLL 按天算课表：它写 2026-09-16 那天，week_start 会是当天的周一，而不是整周的周一。
+  const merged = shared.mergeEdupaged(
+    { week_start: '2026-09-14', fetched_at: 'a', lessons: [lesson('2026-09-15', 'PHL 写的课', 'A')] },
+    { week_start: '2026-09-16', fetched_at: 'b', lessons: [lesson('2026-09-16', 'PLL 按天写的课', '')] },
+  );
+  assert.equal(merged.lessons.length, 2, '两天的课都要在');
+  assert.equal(merged.week_start, '2026-09-14', '保留整周的周一起始日');
+  // 真的换了一周才替换
+  const replaced = shared.mergeEdupaged(
+    { week_start: '2026-09-14', fetched_at: 'a', lessons: [lesson('2026-09-15', '旧课', 'A')] },
+    { week_start: '2026-09-21', fetched_at: 'b', lessons: [lesson('2026-09-21', '新课', 'A')] },
+  );
+  assert.equal(replaced.lessons.length, 1);
+  assert.equal(replaced.week_start, '2026-09-21');
+});
+
 test('合并遇到空段或坏段不会抛错', () => {
   assert.equal(shared.mergeManagebac(null, null), null);
   assert.deepEqual(shared.mergeManagebac({ courses: 'bad', tasks: null }, { courses: [{ id: '1' }], tasks: [] }).courses, [{ id: '1' }]);
