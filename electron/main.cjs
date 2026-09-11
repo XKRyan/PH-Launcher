@@ -4110,14 +4110,27 @@ app.whenReady().then(() => {
   schoolStore = new SchoolStore({ filePath: ownFile(dataRoot(), 'school'), safeStorage: DATA_ENCRYPTION ? safeStorage : null });
   const restoredSchool = schoolState.hydrate(schoolStore.load());
   if (restoredSchool) startupMark(`school-hydrated-${restoredSchool}`);
+  selfTestStage('store-ready');
+  startupMark('store-ready');
+  credentialVault = new CredentialVault({
+    filePath: ownFile(dataRoot(), 'credentials'),
+    safeStorage: DATA_ENCRYPTION ? safeStorage : plainStoreCodec,
+    legacySafeStorage: safeStorage,
+    platform: process.platform,
+    siteIds: SITE_IDS,
+  });
+  credentialVault.load();
+  // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
+  // window paints, so both applications show the same day list.
+  startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
   // 共享课表：对方程序（Pinghe Launcher Lite）同步的课表直接可用——
   // 只在本机没有同一周自己的同步缓存时补位，自己的同步永远优先。
   try {
-    const shared = sharedTimetable.readTimetable(dataRoot().timetable);
-    if (shared.exists && Object.keys(shared.days).length) {
+    const sharedTimetableDoc = sharedTimetable.readTimetable(dataRoot().timetable);
+    if (sharedTimetableDoc.exists && Object.keys(sharedTimetableDoc.days).length) {
       const entry = sharedTimetable.toCacheEntry(
-        { days: shared.days, updated_at: shared.mtime ? new Date(shared.mtime).toISOString() : '' },
-        { at: shared.mtime },
+        { days: sharedTimetableDoc.days, updated_at: sharedTimetableDoc.mtime ? new Date(sharedTimetableDoc.mtime).toISOString() : '' },
+        { at: sharedTimetableDoc.mtime },
       );
       if (!schoolState.entries.has(entry.key)) {
         const imported = schoolState.hydrate({ week: entry.key.slice('edupage:'.length), entries: [entry] });
@@ -4136,19 +4149,6 @@ app.whenReady().then(() => {
   } catch (error) {
     console.warn('Shared timetable skipped:', error.message);
   }
-  selfTestStage('store-ready');
-  startupMark('store-ready');
-  credentialVault = new CredentialVault({
-    filePath: ownFile(dataRoot(), 'credentials'),
-    safeStorage: DATA_ENCRYPTION ? safeStorage : plainStoreCodec,
-    legacySafeStorage: safeStorage,
-    platform: process.platform,
-    siteIds: SITE_IDS,
-  });
-  credentialVault.load();
-  // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
-  // window paints, so both applications show the same day list.
-  startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
   xinlvService = new XinlvService({
     getData: () => secureStore.xinlvData(),
     updateData: (patch) => {
@@ -4199,9 +4199,22 @@ app.whenReady().then(() => {
       const text = buffer.toString('utf8');
       try { JSON.parse(text); return text; } catch { return safeStorage.decryptString(buffer); }
     };
-    aiHistoryStore = new AiHistoryStore({ filePath: ownFile(dataRoot(), 'aiHistory'), sharedDirectory: dataRoot().agent,
-      encrypt: (value) => Buffer.from(value, 'utf8'), decrypt: decryptAiHistory });
-    aiHistoryStore.load();
+    const historyFile = ownFile(dataRoot(), 'aiHistory');
+    try {
+      aiHistoryStore = new AiHistoryStore({ filePath: historyFile, sharedDirectory: dataRoot().agent,
+        encrypt: (value) => Buffer.from(value, 'utf8'), decrypt: decryptAiHistory });
+      aiHistoryStore.load();
+    } catch {
+      // 旧加密文件在换了启动方式/系统账户后解不开：留档后以空历史继续
+      //（旧文件改名为 *.unreadable-<时间戳>，绝不删除），共享的 Lite 会话照常列出。
+      try {
+        fs.renameSync(historyFile, `${historyFile}.unreadable-${Date.now()}`);
+      } catch { /* 原文件不存在等情况 */ }
+      aiHistoryStore = new AiHistoryStore({ filePath: historyFile, sharedDirectory: dataRoot().agent,
+        encrypt: (value) => Buffer.from(value, 'utf8'), decrypt: decryptAiHistory });
+      aiHistoryStore.load();
+      aiHistoryError = '以前的本地聊天记录已留档（未加密版本不迁移）；共享会话仍可查看';
+    }
   } catch { aiHistoryError = '无法解锁或保存 AI 历史，原有文件不会被覆盖'; aiHistoryStore = null; }
   pendingAiActions = new PendingActionStore();
   localAiDeployment = new LocalAiDeploymentManager({
