@@ -68,6 +68,7 @@ function layoutPaths(root) {
     settings: path.join(root, 'settings.yaml'),
     schedule: path.join(root, 'Schedule'),
     timetable: path.join(root, 'Timetable'),
+    school: path.join(root, 'School'),
     agent: path.join(root, 'agent'),
     own: path.join(root, 'phl'),
     logs: path.join(root, 'logs'),

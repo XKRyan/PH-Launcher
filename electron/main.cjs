@@ -1097,13 +1097,20 @@ async function syncSchool(source, options = {}) {
     const result = source === 'managebac'
       ? await schoolClient.syncManageBac() : await schoolClient.syncEduPage({ weekStart: options.weekStart });
     siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
-    // EduPage 同步成功后把规范化课表写进共享文件，对方程序直接可用。
-    if (source === 'edupage') {
-      try {
+    // 同步成功后把规范化数据写进共用文件（Timetable 保留兼容，School 是统一的一份）。
+    try {
+      if (source === 'edupage') {
         sharedTimetable.writeDoc(dataRoot().timetable, sharedTimetable.buildDocFromEdupage(result));
-      } catch (error) {
-        console.warn('Shared timetable write skipped:', error.message);
+        const selectedKeys = new Set(secureStore.data.settings.schoolPreferences?.groups || []);
+        const selectedGroups = (result.options || [])
+          .filter((option) => selectedKeys.has(option.key))
+          .map((option) => [option.course, (option.groups || []).join('/'), option.teacher].filter(Boolean).join(' · '));
+        sharedSchool.updateSchool(dataRoot().school, { edupage: sharedSchool.edupageSection(result, { selectedGroups }) });
+      } else if (source === 'managebac') {
+        sharedSchool.updateSchool(dataRoot().school, { managebac: sharedSchool.managebacSection(result) });
       }
+    } catch (error) {
+      console.warn('Shared school data write skipped:', error.message);
     }
     return result;
   }));
@@ -2639,6 +2646,7 @@ const sharedCalendarBridge = require('./shared-calendar-bridge.cjs');
 const sharedSettings = require('./settings-yaml.cjs');
 const sharedAccounts = require('./shared-accounts.cjs');
 const sharedTimetable = require('./shared-timetable.cjs');
+const sharedSchool = require('./shared-school.cjs');
 
 function sharedSettingsFile() { return dataRoot().settings; }
 
@@ -4206,6 +4214,32 @@ app.whenReady().then(() => {
   // Bring in any shared Schedule entries (from Pinghe Launcher Lite) before the
   // window paints, so both applications show the same day list.
   startupMark(`shared-schedule-${reconcileSharedSchedule()}`);
+  // 共用学校数据 data/School：课程/作业/课表/选课都在这份文件里，
+  // 本机没有自己的同步缓存时直接用它，省掉重新登录。
+  try {
+    const shared = sharedSchool.readSchool(dataRoot().school);
+    if (shared.doc) {
+      const entries = [];
+      const managebacSeen = sharedSchool.managebacToSnapshot(shared.doc.managebac);
+      if (managebacSeen && !schoolState.entries.has('managebac:')) entries.push({ key: 'managebac:', at: shared.mtime, data: managebacSeen });
+      const edupageSeen = sharedSchool.edupageToSnapshot(shared.doc.edupage);
+      if (edupageSeen && !schoolState.entries.has(`edupage:${edupageSeen.weekStart}`)) entries.push({ key: `edupage:${edupageSeen.weekStart}`, at: shared.mtime, data: edupageSeen });
+      if (entries.length) {
+        const imported = schoolState.hydrate({ week: edupageSeen?.weekStart || schoolState.week || '', entries });
+        if (imported) {
+          startupMark(`shared-school-${entries.length}`);
+          const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
+          if (edupageSeen && (!Array.isArray(preferences.groups) || !preferences.groups.length)) {
+            preferences.groups = edupageSeen.selectedGroups?.length ? edupageSeen.selectedGroups : edupageSeen.options.map((option) => option.key);
+            preferences.accountKey = edupageSeen.accountKey;
+            secureStore.save();
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Shared school data import skipped:', error.message);
+  }
   // 共享课表：对方程序（Pinghe Launcher Lite）同步的课表直接可用——
   // 只在本机没有同一周自己的同步缓存时补位，自己的同步永远优先。
   try {
