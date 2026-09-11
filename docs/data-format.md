@@ -15,7 +15,8 @@
 1. **两个程序各自拥有自己的私有数据,只共用三个文件。** PHL 的私有数据全部关在
    `data/phl/` 里,PLL 的私有数据全部关在 `data/phll/` 里;两侧都**不读写**
    对方的私有目录(第 6 节)。
-2. **共享的只有三样**:`settings.yaml`(账号与配置)、`Schedule`(按天日程)、
+2. **共享的只有五样**:`settings.yaml`(账号与配置+选课)、`Schedule`(按天日程)、
+   `Timetable`(按天课表)、`School`(抓到的学校信息:课表/课程作业/邮箱摘要)、
    `agent/`(AI 会话)。其余一律不共用。
 3. **只写自己拥有的字段。** 共享文件一律"读 → 改 → 写",并且只替换自己负责的
    区块;别人的段落、注释、未知字段与文件其余字节必须原样保留(第 3、8 节)。
@@ -25,8 +26,9 @@
 6. **删除要证明所有权。** PHL 只删除"自己写的、且内容没有被对方改过"的共享条目;
    其余情况只做本地隐藏(第 4、5 节)。
 7. **迁移只复制,不移动、不删除。** 旧布局的文件原地保留(第 7 节)。
-8. **共享目录是用户的选择,不是自动行为。** 只有便携布局或用户明确点选之后,
-   PHL 才会把数据根指向 PLL 的目录(第 1 节)。
+8. **只有一种架构:数据永远在 exe 同级的 `data/`。** 没有便携版/安装版两套布局,
+   不收 `portable.flag`,也不写 `%APPDATA%`;程序文件夹里就是
+   `PH Launcher.exe` + `PingheLauncherLite.exe` + `data/`(第 1 节)。
 
 ---
 
@@ -35,24 +37,24 @@
 数据根目录由 `electron/data-layout.cjs` 的 `resolveDataRoot()` 单点解析,
 **任何模块都不许自己拼 `getPath('userData')` 或 `os.homedir()`**。
 
-解析顺序(先命中者胜,`resolveDataRoot` 会回报 `source` 说明命中原因):
-
 | 顺序 | `source` | 条件 | 结果 |
 |---|---|---|---|
-| 1 | `env` | 环境变量 `PHL_DATA_DIR` 有值 | 用它,路径不存在也会用(测试/便携) |
+| 1 | `env` | 环境变量 `PHL_DATA_DIR` 有值 | 用它(自动化测试、预览、高级用户改向) |
 | 2 | `pointer` | profile 下的 `data-root.txt` 记着一行路径 | 用它(用户在设置里选择过的目录) |
-| 3 | `portable` | 程序目录(或 `PORTABLE_EXECUTABLE_DIR`)下的 `portable.flag` 存在 | `<程序目录>/data`,与 PLL 便携版完全一致 |
-| 4 | `profile` | 以上都不成立 | `<userData>/data` |
+| 3 | `app` | 以上都没有 | `<exe 所在目录>/data`,不存在就自动创建 |
 
 要点:
 
-- **不会**因为"检测到 `~/.hellopinghe`"就自动把数据写进 PLL 的目录。
-  设置页会显示检测到的 Lite 目录,并给出两个显式按钮:
-  `改用 Lite 的数据目录`(写 `data-root.txt`)与 `恢复本应用自己的目录`。
-  写指针文件后需要重启才生效,因此不存在"迁移到一半"的状态。
-- 两个程序装在**同一个文件夹**且都用便携模式时,第 3 条会让它们自动指向
-  同一个 `data/`,不需要任何设置。
-- 想看当前用的是哪个目录:设置 → 数据与隐私,或 IPC `system:data-choice`。
+- **不需要任何标记文件**:装到哪个文件夹,`data/` 就长在那个文件夹里。
+  用户看到的软件文件夹只有两个 exe 和一个 `data/`。
+- **不会**因为"检测到 `~/.hellopinghe`"就自动把数据写进 PLL 的目录,
+  也不会自动接管别人的数据目录;共用要么是同文件夹(第 3 条),
+  要么由用户在设置页明确点选(写 `data-root.txt`,重启生效)。
+- 第 2 条是给测试和高级用户留的后门,正常安装的机器上不存在这个文件。
+- 想换目录:设置 → 数据与隐私,或 IPC `system:data-choice`。
+- `<exe 目录>/data` 建不出来(例如装在需要管理员权限的目录)时,
+  程序会明确提示"没有写入权限,请移动程序或按用户安装",不会静默换目录——
+  静默换目录会让两个程序各写各的,数据就分家了。
 - 解析结果在进程内缓存一次(`dataRoot()`),避免同一进程里读到两个不同的根。
 
 `layoutPaths(root)` 由根派生出全部固定路径;`ensureLayout()` 只创建
@@ -64,24 +66,29 @@
 ## 2. 目录总览
 
 ```
-data/                          ← 数据根目录(便携:<程序目录>\data)
-├── settings.yaml              [共享] 账号与 PHL/PLL 共有配置(第 3 节)
-├── Schedule                   [共享] 按天日程(第 4 节)
-├── agent/                     [共享] AI 会话,一会话一文件(第 5 节)
-│   └── <session-id>.json
-├── phl/                       [PHL 私有] 不读不写 PLL 数据的人请勿进入(第 6 节)
-│   ├── launcher.json          学习数据(加密)
-│   ├── school.json            学校快照缓存(加密)
-│   ├── credentials.json       账号记忆/凭据库(加密)
-│   ├── ai-history.json        AI 会话与长期记忆的加密主副本
-│   ├── state.json             运行小状态(预留)
-│   └── migrated.json          迁移记录(从哪来、何时)
-├── phll/                      [PLL 私有] PHL 只读都不读
-├── logs/                      [共享目录,各自文件] 诊断日志
-│   ├── startup.jsonl          PHL:--debug-log 的启动耗时
-│   └── ai-deployment.jsonl    PHL:本地 AI 部署日志
-├── _backups/                  [共享目录,各自文件] 备份
-└── _migrated_backup/          [PLL 私有] PLL 的旧布局归档
+<程序文件夹>/                  ← 用户在资源管理器里看到的全部内容
+├── PH Launcher.exe            本程序
+├── PingheLauncherLite.exe     另一个程序(可选,同装一个文件夹即共用数据)
+└── data/                      ← 数据根目录(程序自动生成,不需要用户手动建)
+    ├── settings.yaml          [共享] 账号与 PHL/PLL 共有配置(第 3 节)
+    ├── Schedule               [共享] 按天日程(第 4 节)
+    ├── Timetable              [共享] 按天课表(第 4 节)
+    ├── School                 [共享] 学校信息快照:课表/课程作业/邮箱摘要(第 9 节)
+    ├── agent/                 [共享] AI 会话,一会话一文件(第 5 节)
+    │   └── <session-id>.json
+    ├── phl/                   [PHL 私有] 不读不写 PLL 数据的人请勿进入(第 6 节)
+    │   ├── launcher.json       学习数据
+    │   ├── school.json         学校快照缓存
+    │   ├── credentials.json    旧版账号记忆(已迁到 settings.yaml,留档)
+    │   ├── ai-history.json     AI 会话与长期记忆
+    │   ├── state.json          运行小状态(预留)
+    │   └── migrated.json       迁移记录(从哪来、何时)
+    ├── phll/                  [PLL 私有] PHL 只读都不读
+    ├── logs/                  [共享目录,各自文件] 诊断日志
+    │   ├── startup.jsonl       PHL:--debug-log 的启动耗时
+    │   └── ai-deployment.jsonl PHL:本地 AI 部署日志
+    ├── _backups/              [共享目录,各自文件] 备份
+    └── _migrated_backup/      [PLL 私有] PLL 的旧布局归档
 ```
 
 编码与格式(第 8 节给出实现细节):所有文本文件 **UTF-8 无 BOM**、换行 `\n`;

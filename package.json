@@ -17,7 +17,7 @@
     "dictionary": "node scripts/build-dictionary.cjs",
     "dictionary:prepare": "npm run dictionary:fetch && npm run dictionary",
     "test": "node -e \"require('electron')\" && node --test tests/*.test.cjs",
-    "dist": "electron-builder --win portable --x64",
+    "dist": "electron-builder --win nsis --x64",
     "dist:installer": "electron-builder --win nsis --x64",
     "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
     "dist:mac:preview": "electron-builder --config build/mac-preview-builder.cjs --mac dmg zip --universal --publish never",
@@ -63,7 +63,7 @@
         }
       ],
       "target": [
-        "portable"
+        "nsis"
       ]
     },
     "mac": {
@@ -109,9 +109,6 @@
         }
       ]
     },
-    "portable": {
-      "artifactName": "PH-Launcher-${version}-Portable.${ext}"
-    },
     "pkg": {
       "installLocation": "/Applications",
       "allowAnywhere": false,
@@ -124,10 +121,15 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PH Launcher"
+      "shortcutName": "PH Launcher",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PH-Launcher-${version}-Setup.${ext}",
+      "include": "build/installer.nsh"
     }
   },
   "dependencies": {

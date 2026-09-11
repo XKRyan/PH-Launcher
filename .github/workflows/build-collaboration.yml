@@ -38,7 +38,9 @@ jobs:
         timeout-minutes: 3
       - name: Windows preview
         if: runner.os == 'Windows'
-        run: npx electron-builder --win portable nsis --x64 --publish never
+        # 只有一种发布形态：安装版（数据固定放在 exe 同级的 data/ 里，
+        # 便携版会把程序解压到临时目录，数据就跟着跑偏了）。
+        run: npx electron-builder --win nsis --x64 --publish never
       - name: Unsigned universal macOS preview
         if: runner.os == 'macOS'
         # Ad-hoc identity only; no signing credentials or publishing token are supplied.
