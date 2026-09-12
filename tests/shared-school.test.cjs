@@ -152,6 +152,17 @@ test('edupage：同一周取并集，换了一周就整段替换（不攒历史�
   assert.equal(nextWeek.week_start, '2026-09-14');
 });
 
+test('空的一周不许清掉对方写好的课表', () => {
+  const lesson = (date, subject) => ({ date, start: '08:00', end: '08:40', subject, teacher: 'T', room: 'R', group: 'A', cancelled: false });
+  const existing = { week_start: '2026-09-07', fetched_at: 'a', lessons: [lesson('2026-09-07', 'Math'), lesson('2026-09-08', 'Physics')] };
+  // 对方按天写: 周末(空) 或下一周(空) 的写入不能把这一周清掉
+  assert.equal(shared.mergeEdupaged(existing, { week_start: '2026-09-07', fetched_at: 'b', lessons: [] }).lessons.length, 2);
+  assert.equal(shared.mergeEdupaged(existing, { week_start: '2026-09-14', fetched_at: 'b', lessons: [] }).lessons.length, 2);
+  assert.equal(shared.mergeEdupaged(existing, { week_start: '2026-09-14', lessons: [lesson('2026-09-14', 'New')] }).lessons.length, 1, '真有课的一周才替换');
+  // 双方都空时按传入的来(不然永远写不进空段)
+  assert.equal(shared.mergeEdupaged({ week_start: '2026-09-07', lessons: [] }, { week_start: '2026-09-14', lessons: [] }).week_start, '2026-09-14');
+});
+
 test('对方按天写课表（week_start 落在本周内）也按同一周并集，不整段替换', () => {
   const lesson = (date, subject, group) => ({ date, start: '08:00', end: '08:40', subject, teacher: 'T', room: 'R', group, cancelled: false });
   // PLL 按天算课表：它写 2026-09-16 那天，week_start 会是当天的周一，而不是整周的周一。

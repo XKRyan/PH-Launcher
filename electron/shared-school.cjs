@@ -117,6 +117,11 @@ function weekStartOf(day) {
 function mergeEdupaged(existing, incoming) {
   if (!existing || typeof existing !== 'object') return incoming || null;
   if (!incoming || typeof incoming !== 'object') return existing;
+  // 空段绝不许删数据: 对方是按天写的, 周末或还没同步的那一周会写出空数组,
+  // 一旦命中"换周替换"就会把这边写好的整周课表清掉。
+  const incomingLessons = Array.isArray(incoming.lessons) ? incoming.lessons.filter((row) => row && typeof row === 'object') : [];
+  const existingLessons = Array.isArray(existing.lessons) ? existing.lessons.filter((row) => row && typeof row === 'object') : [];
+  if (!incomingLessons.length) return existingLessons.length ? existing : incoming;
   if (weekStartOf(existing.week_start) !== weekStartOf(incoming.week_start)) return incoming;
   const keyOf = (row) => [clean(row?.date, 20), clean(row?.start, 5), clean(row?.subject), clean(row?.group, 80)].join('|');
   return {
