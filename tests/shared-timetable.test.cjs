@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { buildDocFromEdupage, readTimetable, toCacheEntry, writeDoc } = require('../electron/shared-timetable.cjs');
+const { buildDocFromEdupage, lessonGroup, readTimetable, toCacheEntry, writeDoc } = require('../electron/shared-timetable.cjs');
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'phl-shared-timetable-'));
 const file = path.join(temp, 'Timetable');
@@ -37,8 +37,28 @@ test('非法日期/时间/空科目的课卡被跳过，合法的按天分组', 
   assert.equal(read.days['2026-09-14'].length, 1);
 });
 
-test('缓存条目还原：lesson 键映射、组标识稳定、选项可构建', () => {
-  const doc = { version: 1, kind: 'pinghe-timetable', days: { '2026-09-14': [lesson()] } };
+test('写共享课表时保留教学组：本机课卡放在 groups[] 里也不能丢', () => {
+  // PHL 同步回来的课卡只有 groups: ['A']（没有 group 字段）。只取 lesson.group 会写成
+  // 空字符串，读方（Lite）就把这节课当成"全班必修"——个人课表会变成整班课表。
+  const doc = buildDocFromEdupage({
+    lessons: [
+      { date: '2026-09-14', start: '08:00', end: '08:40', course: 'Math AA HL1', teacher: 'T', room: 'R', groups: ['A'], cancelled: false },
+      { date: '2026-09-14', start: '09:35', end: '10:15', course: '物理', teacher: 'T2', groups: ['G1', 'G2'] },
+      { date: '2026-09-14', start: '10:20', end: '11:00', course: '班会', teacher: 'T3', groups: [] },
+      { date: '2026-09-14', start: '11:05', end: '11:45', course: '已经带组的课', teacher: 'T4', group: 'B', groups: ['C'] },
+    ],
+  });
+  const cards = doc.days['2026-09-14'];
+  assert.equal(cards[0].group, 'A', 'groups[] 里的组要写进共享课表');
+  assert.equal(cards[1].group, 'G1 / G2', '多个组用 / 连接');
+  assert.equal(cards[2].group, '', '真的没有组才算全班必修');
+  assert.equal(cards[3].group, 'B', 'group 字段优先');
+  assert.equal(lessonGroup({ groups: ['A'] }), 'A');
+  assert.equal(lessonGroup({ group: 'P', groups: ['A'] }), 'P');
+  assert.equal(lessonGroup({}), '');
+});
+
+test('缓存条目还原：lesson 键映射、组标识稳定、选项可构建', () => {  const doc = { version: 1, kind: 'pinghe-timetable', days: { '2026-09-14': [lesson()] } };
   const entry = toCacheEntry(doc, { at: 12345 });
   assert.equal(entry.key, 'edupage:2026-09-14');
   assert.equal(entry.data.source, 'edupage');

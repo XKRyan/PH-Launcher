@@ -71,6 +71,35 @@ test('PHL 快照 → 共享段 → PHL 快照 往返不丢关键信息', () => {
   assert.equal(seen.tasks[0].pastDue, false);
 });
 
+test('作业 id 统一成 ManageBac 作业号：两个程序写的同一条作业在并集里不会变成两条', () => {
+  // PHL 内部用复合 id；共享文件里必须写裸作业号（Lite 写的就是裸号）。
+  assert.equal(shared.sharedTaskId('managebac:11:22'), '22');
+  assert.equal(shared.sharedTaskId('22'), '22');
+  assert.equal(shared.sharedTaskId(''), '');
+
+  const phlSection = shared.managebacSection({
+    source: 'managebac', fetchedAt: 'a',
+    courses: [{ id: '11', name: 'Biology' }],
+    tasks: [{ id: 'managebac:11:22', courseId: '11', course: 'Biology', title: 'Lab' }],
+  });
+  assert.equal(phlSection.tasks[0].id, '22');
+  assert.equal(phlSection.tasks[0].phl_id, 'managebac:11:22', 'PHL 自己的复合 id 作为额外字段保留');
+
+  const liteSection = { fetched_at: 'b', courses: [{ id: '11', name: 'Biology' }],
+    tasks: [{ id: '22', course_id: '11', course: 'Biology', title: 'Lab', due_at: '2026-09-20T23:59', status: 'Pending' }] };
+  const merged = shared.mergeManagebac(phlSection, liteSection);
+  assert.equal(merged.tasks.length, 1, '同一条作业只应剩一条');
+
+  // 读回来时拼回 PHL 的复合 id（详情/提交按"课程号 + 作业号"取）。
+  const back = shared.managebacToSnapshot(merged);
+  assert.equal(back.tasks[0].id, 'managebac:11:22');
+  assert.equal(back.tasks[0].taskId, '22');
+  // 老数据（裸 id 没有 course_id）也不能崩
+  const bare = shared.managebacToSnapshot({ tasks: [{ id: '99', title: '旧数据' }] });
+  assert.equal(bare.tasks[0].id, '99');
+  assert.equal(bare.tasks[0].taskId, '99');
+});
+
 test('邮箱段只带摘要，不带正文', () => {
   const section = shared.mailSection({ unread: 2, fetchedAt: 'x', recent: [{ uid: '7', from: 'a@b.com', subject: 'Hi', date: 'y', unread: true, body: 'SECRET' }] });
   assert.equal(section.unread, 2);

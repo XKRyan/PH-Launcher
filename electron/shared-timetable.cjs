@@ -134,7 +134,10 @@ function buildDocFromEdupage(data, { app = 'PH Launcher', now = () => new Date()
       room: clean(lesson.room, 60),
       start: clean(lesson.start, 5),
       end: clean(lesson.end, 5),
-      group: clean(lesson.group),
+      // 教学组是"这是不是我的课"的唯一依据: 本机的课卡有的把组放在 groups[] 里,
+      // 只取 lesson.group 会写成空字符串, 读方(Lite)就会把这节课当成"全班必修"
+      // 显示出来 —— 个人课表变成整班课表就是这么来的。
+      group: lessonGroup(lesson),
       cancelled: lesson.cancelled === true,
     });
   }
@@ -147,6 +150,14 @@ function buildDocFromEdupage(data, { app = 'PH Launcher', now = () => new Date()
   };
 }
 
+/** 课卡的教学组文本: 优先 lesson.group, 其次 groups[](多组用 / 连接)。 */
+function lessonGroup(lesson) {
+  const single = clean(lesson?.group, 80);
+  if (single) return single;
+  const list = Array.isArray(lesson?.groups) ? lesson.groups.map((value) => clean(value, 80)).filter(Boolean) : [];
+  return list.join(' / ');
+}
+
 /** 原子写入共享课表（UTF-8 无 BOM, \n, 同目录临时文件 + rename）。 */
 function writeDoc(filePath, doc, { now = () => new Date() } = {}) {
   const payload = { ...doc, updated_at: localIso(now()) };
@@ -157,4 +168,4 @@ function writeDoc(filePath, doc, { now = () => new Date() } = {}) {
   return payload;
 }
 
-module.exports = { KIND, buildDocFromEdupage, readTimetable, toCacheEntry, writeDoc };
+module.exports = { KIND, buildDocFromEdupage, lessonGroup, readTimetable, toCacheEntry, writeDoc };

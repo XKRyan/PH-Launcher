@@ -87,10 +87,13 @@ function mergeRows(existing, incoming, keyOf, limit) {
 function mergeManagebac(existing, incoming) {
   if (!existing || typeof existing !== 'object') return incoming || null;
   if (!incoming || typeof incoming !== 'object') return existing;
+  // id 先归一化再比: 老版本写过复合 id(`managebac:<课程>:<作业>`), 新版写裸作业号,
+  // 不归一化的话同一条作业会被当成两条留在文件里。
+  const keyOf = (row) => sharedTaskId(row?.id || row?.phl_id);
   return {
     fetched_at: clean(incoming.fetched_at, 40) || clean(existing.fetched_at, 40),
     courses: mergeRows(existing.courses, incoming.courses, (row) => clean(row?.id, 32), 60),
-    tasks: mergeRows(existing.tasks, incoming.tasks, (row) => clean(row?.id, 120), 600),
+    tasks: mergeRows(existing.tasks, incoming.tasks, keyOf, 600),
   };
 }
 
@@ -166,6 +169,20 @@ function edupageSection(data, { selectedGroups = [] } = {}) {
   };
 }
 
+/**
+ * 作业 id 统一成"ManageBac 自己的作业号"。
+ *
+ * PH Launcher 内部用的是复合 id（`managebac:<课程号>:<作业号>`），Lite 写的是裸作业号。
+ * 共用文件两边都写，id 形式不一致的话，同一条作业在"按 id 取并集"时会变成两条
+ * （同一条作业在两个程序里各显示一遍）。这里统一写裸作业号，PHL 自己的复合 id
+ * 作为额外字段 `phl_id` 保留（Lite 不认识但会原样保留）。
+ */
+function sharedTaskId(value) {
+  const text = clean(value, 120);
+  const match = /^managebac:\d+:(\d+)$/.exec(text);
+  return match ? match[1] : text;
+}
+
 /** PH Launcher 的 managebac 快照 → 共享段。 */
 function managebacSection(data) {
   if (!data || data.source !== 'managebac') return null;
@@ -175,7 +192,8 @@ function managebacSection(data) {
     grade: clean(course.grade, 80),
   }));
   const tasks = (Array.isArray(data.tasks) ? data.tasks : []).slice(0, 600).map((task) => ({
-    id: clean(task.id, 120),
+    id: sharedTaskId(task.taskId || task.id),
+    phl_id: clean(task.id, 120),
     course_id: clean(task.courseId, 32),
     course: clean(task.course, 200),
     title: clean(task.title, 200),
@@ -191,17 +209,24 @@ function managebacSection(data) {
 function managebacToSnapshot(section) {
   if (!section || typeof section !== 'object') return null;
   const courses = (Array.isArray(section.courses) ? section.courses : []).map((course) => ({ id: clean(course.id, 32), name: clean(course.name, 200), grade: clean(course.grade, 80) }));
-  const tasks = (Array.isArray(section.tasks) ? section.tasks : []).map((task) => ({
-    id: clean(task.id, 120),
-    courseId: clean(task.course_id, 32),
-    course: clean(task.course, 200),
-    title: clean(task.title, 200),
-    dueAt: clean(task.due_at, 40),
-    dueText: clean(task.due_text, 160),
-    status: clean(task.status, 80),
-    score: clean(task.score, 80),
-    pastDue: Boolean(task.due_at) && Date.parse(task.due_at) < Date.now(),
-  }));
+  const tasks = (Array.isArray(section.tasks) ? section.tasks : []).map((task) => {
+    const courseId = clean(task.course_id, 32);
+    const taskId = sharedTaskId(task.id || task.phl_id);
+    return {
+      // PHL 内部沿用复合 id（详情/提交按"课程号 + 作业号"取，界面上取最后一段）；
+      // 共享文件里存的是裸作业号，这里拼回来，两边写入时不至于各存一份。
+      id: courseId && taskId ? `managebac:${courseId}:${taskId}` : (taskId || clean(task.id, 120)),
+      taskId,
+      courseId,
+      course: clean(task.course, 200),
+      title: clean(task.title, 200),
+      dueAt: clean(task.due_at, 40),
+      dueText: clean(task.due_text, 160),
+      status: clean(task.status, 80),
+      score: clean(task.score, 80),
+      pastDue: Boolean(task.due_at) && Date.parse(task.due_at) < Date.now(),
+    };
+  });
   return {
     source: 'managebac',
     fetchedAt: clean(section.fetched_at, 40),
@@ -275,4 +300,4 @@ function mailSection({ unread = 0, recent = [], fetchedAt = '' } = {}) {
   };
 }
 
-module.exports = { KIND, edupageSection, edupageToSnapshot, emptyDoc, localIso, localStamp, mailSection, managebacSection, managebacToSnapshot, mergeEdupaged, mergeManagebac, mergeRows, readSchool, updateSchool };
+module.exports = { KIND, edupageSection, edupageToSnapshot, emptyDoc, localIso, localStamp, mailSection, managebacSection, managebacToSnapshot, mergeEdupaged, mergeManagebac, mergeRows, readSchool, sharedTaskId, updateSchool };
