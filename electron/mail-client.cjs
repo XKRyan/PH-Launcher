@@ -209,10 +209,16 @@ function messageAttachments(uid, parsed) {
   return (Array.isArray(parsed.attachments) ? parsed.attachments : []).map((attachment, index) => {
     const content = Buffer.isBuffer(attachment.content) ? attachment.content : Buffer.from(attachment.content || []);
     const size = Number.isSafeInteger(attachment.size) && attachment.size >= 0 ? attachment.size : content.length;
+    const disposition = String(attachment.contentDisposition || attachment.disposition || '').toLowerCase();
     return {
       id: attachmentId(uid, index, { ...attachment, size }),
       name: cleanFilename(attachment.filename, `附件-${index + 1}`),
       size,
+      contentType: String(attachment.contentType || 'application/octet-stream').slice(0, 120),
+      // 内嵌图片靠 `cid:` 引用：把 Content-ID 一并交给渲染进程，
+      // 它才能把 `<img src="cid:…">` 换成能取到字节的自定义协议地址。
+      contentId: cleanInline(attachment.cid || '', 200).replace(/^<|>$/g, ''),
+      inline: disposition === 'inline',
       _content: content,
     };
   });
@@ -594,7 +600,8 @@ class SchoolMailClient {
       text,
       html,
       links: links.map(({ id, label, host }) => ({ id, label, host })),
-      attachments: attachments.map(({ id, name, size }) => ({ id, name, size })),
+      attachments: attachments.map(({ id, name, size, contentType, contentId, inline }) =>
+        ({ id, name, size, contentType, contentId, inline })),
       contactCandidates,
       markedSeen,
       markSeenError,
@@ -721,9 +728,12 @@ class SchoolMailClient {
       if (!attachment || typeof attachment !== 'object' || attachment.path || attachment.href || attachment.url) {
         fail('INVALID_DRAFT', '附件只能使用本地已读取的字节，不能传入路径或网址');
       }
-      const original = attachment.bytes ?? attachment.content;
-      if (!Buffer.isBuffer(original) && !(original instanceof Uint8Array)) fail('INVALID_DRAFT', '附件内容必须是 Buffer 或 Uint8Array');
-      const content = Buffer.from(original);
+      const original = attachment.bytes ?? attachment.content ?? attachment.data;
+      if (!Buffer.isBuffer(original) && !(original instanceof Uint8Array) && !(original instanceof ArrayBuffer)) {
+        fail('INVALID_DRAFT', '附件内容必须是 Buffer 或 Uint8Array');
+      }
+      const content = Buffer.isBuffer(original) ? original
+        : original instanceof Uint8Array ? Buffer.from(original) : Buffer.from(new Uint8Array(original));
       totalBytes += content.length;
       if (content.length > MAX_ATTACHMENT_BYTES || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
         fail('INVALID_DRAFT', '附件总大小不能超过 20 MiB');
