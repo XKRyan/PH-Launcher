@@ -205,13 +205,15 @@ test('xinlv profile reads server stats and logout clears the local session', asy
   assert.match(ui.document.querySelector('#xinlvPage').textContent, /登录心履/);
 });
 
-test('xinlv sync button reports pushed and pulled counts', async () => {
+// 2026-09-19 用户要求：「所有同步、刷新全都自动，不要让用户察觉，最多来一行不起眼的小字
+// 在角落」。所以心履页上没有「同步」按钮：打开页面（数据过期时）就自己同步，角落留时间。
+test('心履没有同步按钮：打开页面自动同步，角落只留一行「当前数据：<时间>」', async () => {
   const ui = harness();
   await ui.window.xinlvUI.open();
   await settle();
-  const before = ui.calls.sync;
-  click(ui.window, ui.document.querySelector('#xinlvPage [data-xinlv-sync]'));
   await settle();
-  assert.equal(ui.calls.sync, before + 1);
+  assert.equal(ui.document.querySelector('#xinlvPage [data-xinlv-sync]'), null, '同步按钮已去掉');
+  assert.ok(ui.calls.sync >= 1, '打开页面就自动同步');
   assert.match(ui.document.querySelector('#xinlvPage').textContent, /同步完成：上传 1 条，下载 2 条/);
+  assert.match(ui.document.querySelector('.xinlv-data-stamp').textContent, /当前数据：/);
 });

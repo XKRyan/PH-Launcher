@@ -8,7 +8,19 @@ const vm = require("node:vm");
 const { parseHTML } = require("linkedom");
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-const weekStart = "2026-09-07";
+
+/**
+ * 本周一。原来这里写死 `2026-09-07`，而 school-ui 打开课表时读的是**当前这一周**
+ * （`state.week = monday()`），于是过了一周这份 fixture 就变成"另一周的数据"：
+ * `currentWeek()` 取不到 → 界面走空态 → `[data-school-action="groups"]` 根本不存在，
+ * 6 个用例集体报 `missing [data-school-action="groups"]`（典型的定时炸弹测试）。
+ * 改成按当天算，任何时候跑都是同一周。
+ */
+const weekStart = (() => {
+  const now = new Date();
+  const offset = (now.getUTCDay() + 6) % 7;
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - offset)).toISOString().slice(0, 10);
+})();
 
 function lesson(date, start, course, groupKey, groups, teacher, room) {
   return { id: `${course}-${groupKey}-${start}`, date, start, end: `${start.slice(0, 2)}:45`, course, teacher, room, groups, groupKey, cancelled: false };
@@ -60,6 +72,9 @@ const click = (window, document, selector) => {
 async function openGroups(ui) {
   ui.context.window.schoolUI.open("timetable");
   await settle();
+  // `open()` 会先渲染、再异步 `refresh()`（拿快照 + 建周缓存），所以第一次 tick 时
+  // 工具条还是空态。等到「选择教学组」真的出现再点，别靠固定 tick 数赌时序。
+  for (let i = 0; i < 8 && !ui.document.querySelector('[data-school-action="groups"]'); i += 1) await settle();
   click(ui.window, ui.document, '[data-school-action="groups"]');
   await settle();
   return ui.document.querySelector("dialog");
@@ -85,7 +100,8 @@ test("expanding a subject shows its teaching groups with teacher, room and time"
   assert.match(rows[0].textContent, /A/);
   assert.match(rows[0].textContent, /Ms A/);
   assert.match(rows[0].textContent, /教室 A301/);
-  assert.match(rows[0].textContent, /时间 2026-09-07 08:00–08:45/);
+  // 断言跟着 fixture 的周走，别写死日期（同 weekStart 的理由）。
+  assert.match(rows[0].textContent, new RegExp(`时间 ${weekStart.replace(/-/g, "\\-")} 08:00`));
 });
 
 test("native courses and homeroom are checked by default on a fresh profile", async () => {

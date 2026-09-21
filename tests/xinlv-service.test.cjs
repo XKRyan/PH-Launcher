@@ -237,3 +237,94 @@ test('xinlv sync batches large local histories at 500 entries per request', asyn
   await service.sync({});
   assert.deepEqual(calls.push.map((batch) => batch.length), [500, 500, 200]);
 });
+
+// ---------------------------------------------------------------- 自动同步 / 自动登录
+// 用户 2026-09-19：「心履的账号自动用 phix 账号登录」「同步功能好像不好使，
+// 每次产生更改都和服务器同步一次，服务器端产生更改也同步，用轮询的方法，一秒一次，
+// 但是不要让用户察觉」。
+
+test('记一笔/改一笔/删一笔都会马上安排一次推送（合并 300ms 内的连续操作）', async () => {
+  const store = makeStore({ token: 'token-abc', username: 'student' });
+  const { client, calls } = makeClient();
+  const service = serviceWith(store, client);
+  const scheduled = [];
+  service.scheduleSync = (delay) => { scheduled.push(delay === undefined ? 300 : delay); };
+  const entry = service.addMood({ date: '2026-09-20', mood: 'calm' });
+  service.editMood(entry.uuid, { note: '改一下' });
+  service.deleteMood(entry.uuid);
+  assert.equal(scheduled.length, 3, '三次本地改动三次都安排了推送');
+  assert.ok(scheduled.every((delay) => delay <= 300), '延迟很短，用户察觉不到');
+});
+
+test('一秒一轮的自动同步：有脏数据就推、没脏数据就是一次 pull 探测', async () => {
+  const store = makeStore({ token: 'token-abc', username: 'student' });
+  const { client, calls } = makeClient();
+  const service = serviceWith(store, client);
+  // 没脏数据：只 pull 一次
+  const first = await service.tick();
+  assert.equal(calls.pull.length, 1);
+  assert.equal(calls.push.length, 0);
+  assert.equal(first.pulled, 0);
+  // 记一笔之后再 tick：先 push 再 pull
+  service.scheduleSync = () => {};
+  service.addMood({ date: '2026-09-20', mood: 'happy' });
+  await service.tick();
+  assert.equal(calls.push.length, 1, '脏数据被推上去了');
+  assert.equal(calls.push[0].length, 1);
+  assert.equal(store.store.dirty.length, 0, '推成功后脏标记清掉');
+  // 没登录：什么都不做
+  store.store.token = '';
+  await service.tick();
+  assert.equal(calls.pull.length, 2, '没令牌就不再请求');
+});
+
+test('后台拉到别的设备写的记录时通知界面（不弹提示）', async () => {
+  const store = makeStore({ token: 'token-abc', username: 'student', serverTime: 't0' });
+  const { client } = makeClient({ pullResult: { serverTime: 't1', entries: [{ uuid: 'remote-1', date: '2026-09-19', mood: 'calm', updated_at: '2026-09-19T10:00:00Z' }] } });
+  const changed = [];
+  const service = new XinlvService({ getData: store.getData, updateData: store.updateData, xinlvClientFactory: () => client, onChanged: (result) => changed.push(result) });
+  await service.tick();
+  assert.equal(changed.length, 1, '拉到新记录要通知界面');
+  assert.equal(changed[0].pulled, 1);
+  assert.equal(store.store.entries['remote-1'].mood, 'calm', '记录已经落盘');
+});
+
+test('用 phix 账号自动登录心履：同账号不重复登录，登录后自动开始轮询', async () => {
+  const store = makeStore();
+  const { client, calls } = makeClient();
+  const service = serviceWith(store, client);
+  const started = [];
+  service.startAutoSync = () => started.push(Date.now());
+  await service.adoptAccount('hzq', '123456');
+  assert.deepEqual(calls.login, [{ username: 'hzq', password: '123456' }]);
+  assert.equal(store.store.token, 'token-abc');
+  assert.equal(started.length, 1, '登录成功后开始一秒一轮的同步');
+  // 同一个账号再来一次：不再打登录接口
+  await service.adoptAccount('hzq', '123456');
+  assert.equal(calls.login.length, 1);
+  // 换了账号：重新登录
+  await service.adoptAccount('other', 'pw');
+  assert.equal(calls.login.length, 2);
+});
+
+test('心履登录失败不会把 phix 登录链路带崩（只记错误）', async () => {
+  const store = makeStore();
+  const { client } = makeClient();
+  client.login = async () => { const error = new Error('账号或密码不正确'); error.code = 'xinlv_api'; throw error; };
+  const service = serviceWith(store, client);
+  const status = await service.adoptAccount('hzq', 'wrong');
+  assert.equal(status.configured, false, '没登上就是没登上');
+  assert.match(service.lastError, /账号或密码不正确/, '错误留在服务里，不往外抛');
+});
+
+test('启动兜底：存着账号密码但没有令牌时会自动重新登录一次', async () => {
+  const store = makeStore({ username: 'hzq', password: '123456' });
+  const { client, calls } = makeClient();
+  const service = serviceWith(store, client);
+  service.startAutoSync = () => {};
+  await service.ensureLogin();
+  assert.deepEqual(calls.login, [{ username: 'hzq', password: '123456' }], '令牌没了就用存着的账号密码补登');
+  // 已经有令牌：不再打登录接口
+  await service.ensureLogin();
+  assert.equal(calls.login.length, 1);
+});

@@ -109,12 +109,15 @@ test('app exposes the school account dialog and keeps automatic re-login opt-in'
   assert.match(indexSource, /id="credentialAutoLogin" type="checkbox"\/>/);
 });
 
-test('the shared account list includes the native Xinlv login card', () => {
+// 2026-09-18 用户要求：心履**不再**出现在"设置 → 网站"的账号列表里 ——
+// 心履账号就是 phix 账号，同一个东西，单独列一张卡会让人以为要再登录一次。
+// 心履页面本身没动（侧栏还能用），它的登录表单在 src/xinlv-ui.js 里。
+test('设置 → 网站里不再有心履那张账号卡（心履 = phix 账号）', () => {
   assert.match(appSource, /function xinlvCredentialCard\(\)/);
-  assert.match(appSource, /data-edit-xinlv/);
-  assert.match(appSource, /data-connect-xinlv/);
-  assert.match(appSource, /data-remove-xinlv/);
-  assert.match(appSource, /\.join\(''\) \+ xinlvCredentialCard\(\)/, 'the Xinlv card renders in the same list as mail and ManageBac');
-  assert.match(appSource, /function openXinlvLoginDialog\(\)/);
-  assert.match(appSource, /credentialAuthcodeRow'\)\.hidden = true/, 'Xinlv needs no mail auth code');
+  assert.match(appSource, /function xinlvCredentialCard\(\) \{\s*return '';/, '这张卡现在返回空串');
+  assert.doesNotMatch(appSource, /data-edit-xinlv/);
+  assert.doesNotMatch(appSource, /data-connect-xinlv/);
+  assert.doesNotMatch(appSource, /data-remove-xinlv/);
+  // 心履页面自己的登录表单还在（登出/登录都在那儿）
+  assert.ok(indexSource.includes('id="xinlvPage"'), '心履页面要保留');
 });

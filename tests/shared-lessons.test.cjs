@@ -38,6 +38,52 @@ test('missing or broken settings text never throws', () => {
   assert.deepEqual(parseEntries('lessons:\n- teacher: nobody\n'), []);
 });
 
+// 2026-09-18 实测：phix 云同步落盘时 lessons 段是按**字母序**写的
+// （group → subject → teacher），而 PLL 自己写的时候 subject 在最前面。
+// 旧实现只在遇到 `- subject:` 时才新建记录，于是同步下来的那份一条都读不出来 ——
+// 个人课表显示"先选择你的教学组"，哪怕用户明明选过。另外真机上的文件是 **CRLF**，
+// 旧实现 `split('\n')` 把行尾的 \r 留在字符串里，同样读不出来。
+test('lessons 段的键顺序无关（phix 同步写的是字母序：group 在前）', () => {
+  const entries = parseEntries([
+    'lessons:',
+    "- group: 'P'",
+    "  subject: 'Computer Science HL'",
+    "  teacher: 'Anqi Wang'",
+    "- group: 'L'",
+    "  subject: 'English B SL'",
+    "  teacher: 'Xiaotian Xu'",
+    '',
+  ].join('\n'));
+  assert.equal(entries.length, 2, '字母序那份也要能读出来');
+  assert.deepEqual(entries[0], { group: 'P', subject: 'Computer Science HL', teacher: 'Anqi Wang' });
+  assert.deepEqual(entries[1], { group: 'L', subject: 'English B SL', teacher: 'Xiaotian Xu' });
+});
+
+test('CRLF 行尾（Windows 上真机就是这种）照样能读', () => {
+  const crlf = [
+    'lessons:',
+    "- group: 'P'",
+    "  subject: 'Computer Science HL'",
+    "  teacher: 'Anqi Wang'",
+    'accounts:',
+    '  edupage:',
+    '    username: someone@example.com',
+    '',
+  ].join('\r\n');
+  const entries = parseEntries(crlf);
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0], { group: 'P', subject: 'Computer Science HL', teacher: 'Anqi Wang' });
+});
+
+test('列表项自带键（- group: P + 下一行 subject）也能合并成一条', () => {
+  const entries = parseEntries('lessons:\n- group: P\n  subject: A\n- subject: B\n  group: L\n');
+  assert.deepEqual(entries, [{ group: 'P', subject: 'A' }, { subject: 'B', group: 'L' }]);
+});
+
+test('没有 subject 的残留记录不算一条', () => {
+  assert.deepEqual(parseEntries('lessons:\n- group: P\n- subject: OK\n'), [{ subject: 'OK' }]);
+});
+
 test('teacher disambiguates the same subject taught in several groups', () => {
   const options = [
     { key: 'k1', course: 'English B SL', teacher: 'Xiaotian Xu', groups: ['L'] },

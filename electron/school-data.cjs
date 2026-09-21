@@ -61,8 +61,13 @@ function readUrl(site, raw, method = 'GET') {
     if (/^\/student\/classes\/\d+\/discussions\/\d+\/replies$/.test(path) && !url.search) return url.href;
   }
   if (site === 'managebac' && method === 'GET') {
+    if (path === '/student' || path === '/student/') return url.href;
+    if (path === '/student/notifications' && !url.search) return url.href;
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
-    if (path === '/student/tasks_and_deadlines' && [...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))) return url.href;
+    // 不带参数＝页面默认视图（通知/待办卡片读的就是它）；带参数只允许三个视图。
+    if (path === '/student/tasks_and_deadlines'
+      && ([...params.keys()].length === 0
+        || ([...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
@@ -132,8 +137,119 @@ function parseDropboxUploadForm(html) {
   }
   return null;
 }
-function parseDropboxLinks(html, courseId, taskId) {
+// ---------------------------------------------------------------- 通知 / 待办
+// 与网页端（webapp_mb_stream.py 的 fetch_notifications / parse_deadline_rows）
+// **同一套口径**：ManageBac 的「通知」正文由独立服务（mnn-hub）下发，页面里只有
+// 一个带 `data-count` 的触发器 —— 所以：
+//   * `unread_count` 从 `/student` 上那个触发器**如实读**（读不到就是 null，不编）；
+//   * `notifications` 用 `/student/tasks_and_deadlines` 上真实的 `.f-task-tile` 待办；
+//   * 通知中心给一个直达链接，不假装读过正文。
+const MB_MONTHS_LOWER = Object.fromEntries(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+  .map((name, index) => [name, index + 1]));
+
+/** `Sep 20, 11:55 PM` → `2026-09-20 23:55`；解析不出来回空串（界面显示原文）。 */
+function parseDueText(value, reference = new Date()) {
+  const raw = clean(String(value || ''), 80);
+  if (!raw) return '';
+  const match = raw.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?(?:\s*,?\s*(\d{1,2}):(\d{2})\s*(AM|PM)?)?/i);
+  if (!match) return '';
+  const month = MB_MONTHS_LOWER[match[1].slice(0, 3).toLowerCase()];
+  const day = Number(match[2]);
+  if (!month || !day) return '';
+  let hour = match[4] ? Number(match[4]) % 12 : 23;
+  const minute = match[5] ? Number(match[5]) : 59;
+  if (match[6] && match[6].toUpperCase() === 'PM') hour += 12;
+  const year = match[3] ? Number(match[3]) : reference.getFullYear();
+  let date = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (Number.isNaN(date.getTime())) return '';
+  // 页面不给年份：算出来已经过去 180 天以上就当明年（学期截止日期总在前方）。
+  if (!match[3] && (reference.getTime() - date.getTime()) > 180 * 86400000) {
+    date = new Date(year + 1, month - 1, day, hour, minute, 0, 0);
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** `/student` 上那个通知触发器：未读数（权威）、hub、命名空间、通知中心链接。 */
+function parseNotificationMeta(html) {
   const doc = htmlDocument(html);
+  const el = doc.querySelector('.js-messages-and-notifications-trigger')
+    || doc.querySelector('[data-mnn-hub-endpoint]') || doc.querySelector('[data-count]');
+  const out = { unreadCount: null, hub: '', namespace: '', url: `${ORIGINS.managebac}/student/notifications` };
+  if (el) {
+    const count = Number(String(el.getAttribute('data-count') || '').trim());
+    out.unreadCount = Number.isInteger(count) && count >= 0 ? count : null;
+    out.hub = clean(el.getAttribute('data-mnn-hub-endpoint'), 200);
+    out.namespace = clean(el.getAttribute('data-namespace'), 40);
+  }
+  const anchor = doc.querySelector('a[href*="/student/notifications"]');
+  const href = anchor ? clean(anchor.getAttribute('href'), 400) : '';
+  if (href) {
+    try {
+      const url = new URL(href, ORIGINS.managebac);
+      if (url.origin === ORIGINS.managebac) out.url = url.href;
+    } catch { /* 用默认链接 */ }
+  }
+  return out;
+}
+
+/** `/student/tasks_and_deadlines` 上的待办条目（照真实 `.f-task-tile` 结构解析）。 */
+function parseDeadlineTiles(html, { reference = new Date() } = {}) {
+  const doc = htmlDocument(html);
+  const tiles = doc.querySelectorAll('.f-task-tile').length
+    ? doc.querySelectorAll('.f-task-tile') : doc.querySelectorAll('.js-tasks .f-tile');
+  const rows = [];
+  for (const tile of tiles) {
+    const titleEl = tile.querySelector('.f-tile__title-link') || tile.querySelector('.f-tile__title');
+    const title = clean(titleEl?.textContent, 200);
+    if (!title) continue;
+    const href = clean(titleEl?.getAttribute('href'), 400);
+    let link = '';
+    let classId = '';
+    try {
+      const url = new URL(href, ORIGINS.managebac);
+      if (url.origin === ORIGINS.managebac && !url.username && !url.password) {
+        link = url.href;
+        classId = (url.pathname.match(/\/classes\/(\d+)/) || [])[1] || '';
+      }
+    } catch { /* 没有链接也能显示 */ }
+    const desc = tile.querySelector('.f-tile__description');
+    let course = '';
+    if (desc) {
+      for (const anchor of desc.querySelectorAll('a[href*="/classes/"]')) {
+        if (/\/classes\/\d+\/?$/.test(String(anchor.getAttribute('href') || ''))) {
+          course = clean(anchor.textContent, 200);
+          if (!classId) classId = (String(anchor.getAttribute('href')).match(/\/classes\/(\d+)/) || [])[1] || '';
+          break;
+        }
+      }
+    }
+    const dueText = desc ? clean(desc.querySelector('span')?.textContent, 80) : '';
+    const labels = [...tile.querySelectorAll('.badge .badge-label')].map((badge) => clean(badge.textContent, 60)).filter(Boolean);
+    const statusEl = tile.querySelector('.badge[data-bs-title]');
+    const status = clean(statusEl?.textContent, 60) || labels[labels.length - 1] || '';
+    const due = parseDueText(dueText, reference);
+    rows.push({
+      id: createHash('sha256').update(`${title}|${link}|${dueText}`).digest('hex').slice(0, 20),
+      type: 'assignment',
+      title,
+      content: labels.join(' · '),
+      course,
+      classId,
+      date: due || dueText,
+      due: due || dueText,
+      dueText,
+      status,
+      score: '',
+      link,
+      read: null,
+      author: '',
+    });
+  }
+  return rows;
+}
+
+function parseDropboxLinks(html, courseId, taskId) {  const doc = htmlDocument(html);
   const found = [];
   for (const link of doc.querySelectorAll('a[href]')) {
     const href = String(link.getAttribute('href') || '');
@@ -750,6 +866,67 @@ class SchoolDataClient {
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
     return { kind, ...parseCoreOverview(await this.request('managebac', path), kind), url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
   }
+  /**
+   * 通知 + 待办（与网页端 `fetch_notifications` 同一口径，但**多抓两个视图**）。
+   *
+   * 真实结构：ManageBac 的「通知」正文由独立服务（mnn-hub）+ JWT 下发，
+   * `/student` 页面上只有一个触发器元素带 `data-count`。所以：
+   *   * 未读数从那个元素如实读；
+   *   * 待办从 `/student/tasks_and_deadlines` 的 `.f-task-tile` 读
+   *     （默认视图 + `?view=overdue`：默认视图只列即将截止的，
+   *     已经过期还没交的在 overdue 视图里，只读默认视图会漏掉它们）；
+   *   * 通知中心给直达链接。
+   * 三处任一失败都不影响其他几处（分别记 warnings）。
+   */
+  async getNotifications() {
+    const warnings = [];
+    let meta = { unreadCount: null, hub: '', namespace: '', url: `${ORIGINS.managebac}/student/notifications` };
+    try {
+      meta = parseNotificationMeta(await this.request('managebac', '/student'));
+    } catch (error) {
+      if (error.code === 'LOGIN_REQUIRED') throw error;
+      warnings.push('未读到 ManageBac 通知未读数');
+    }
+    const items = [];
+    const seen = new Set();
+    let readAny = false;
+    for (const path of ['/student/tasks_and_deadlines', '/student/tasks_and_deadlines?view=overdue']) {
+      try {
+        const rows = parseDeadlineTiles(await this.request('managebac', path), { reference: new Date(this.now()) });
+        readAny = true;
+        for (const row of rows) {
+          const key = row.id || `${row.title}|${row.course}|${row.dueText}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          items.push(row);
+        }
+        await this.pause(120);
+      } catch (error) {
+        if (error.code === 'LOGIN_REQUIRED') throw error;
+      }
+    }
+    if (!readAny) warnings.push('未读到待办与截止日期');
+    // 排序和「作业与截止」那一栏一个口径：还没到期的在前（越近越靠前），
+    // 已经过期的在后 —— 过期那些**最近的排最前**（刚错过的比几个月前的老账更该看），
+    // 否则 overdue 视图里几个月前的老作业会顶在最上面。
+    const now = this.now().getTime();
+    const dueTs = (row) => (row.due && Number.isFinite(Date.parse(row.due)) ? Date.parse(row.due) : Infinity);
+    items.sort((a, b) => {
+      const tsA = dueTs(a); const tsB = dueTs(b);
+      const pastA = tsA < now ? 1 : 0; const pastB = tsB < now ? 1 : 0;
+      if (pastA !== pastB) return pastA - pastB;
+      return (pastA ? tsB - tsA : tsA - tsB) || String(a.title).localeCompare(String(b.title), 'zh-CN');
+    });
+    return {
+      items: items.slice(0, 100),
+      unreadCount: meta.unreadCount,
+      notificationsUrl: meta.url,
+      hub: meta.hub,
+      namespace: meta.namespace,
+      warnings,
+      fetchedAt: this.now().toISOString(),
+    };
+  }
   async getDeadlines({ views = ['upcoming', 'overdue'], daysBefore = 14, daysAhead = 365 } = {}) {
     const items = []; const seen = new Set(); const warnings = [];
     for (const view of views) {
@@ -810,4 +987,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows, parseNotificationMeta, parseDeadlineTiles, parseDueText };

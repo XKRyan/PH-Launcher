@@ -76,34 +76,30 @@ test('an empty workspace still explains the wait', async () => {
   assert.match(ui.document.querySelector('#schoolPage').textContent, /先登录 EduPage|先选择你的教学组|正在读取学校数据/);
 });
 
-test('automatic school refresh is opt-in, explicitly consented, and uses non-forced sync', async () => {
+// 2026-09-19 用户要求：「所有同步、刷新全都自动，不要让用户察觉，最多来一行不起眼的小字
+// 在角落：当前数据：<时间>」。所以没有「自动更新」开关、也没有刷新按钮：
+// 只要这个平台登录过（本机存了账号）、页面可见、数据过期，就自己悄悄对一次。
+test('school sync is fully automatic: no toggle, no refresh button, non-forced background sync', async () => {
+  const weekStart = monday();
+  const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: {}, accounts: { edupage: { saved: true } }, status: { edupage: { state: 'stale', updatedAt: old } } };
+  const ui = harness(snapshot);
+  ui.context.window.schoolUI.mount(); await settle();
+  assert.equal(ui.calls.sync[0].source, 'edupage');
+  assert.equal(ui.calls.sync[0].options.weekStart, weekStart);
+  assert.equal(ui.calls.sync[0].options.force, false, '自动同步不强制');
+  assert.equal(ui.document.querySelector('[data-school-action="auto-sync"]'), null, '没有「自动更新」开关');
+  assert.equal(ui.document.querySelector('[data-school-action="sync"]'), null, '没有刷新按钮');
+  const stamp = ui.document.querySelector('.school-data-stamp');
+  assert.ok(stamp, '角落里那行小字在');
+  assert.match(stamp.textContent, /当前数据：/);
+});
+
+test('没登录过的平台不会被后台读取（自动同步只碰已登录的账号）', async () => {
   const weekStart = monday();
   const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: {}, status: { edupage: { state: 'stale', updatedAt: old } } };
   const ui = harness(snapshot);
   ui.context.window.schoolUI.mount(); await settle();
-  assert.equal(ui.calls.sync.length, 0, 'default-off must not create school network work');
-  ui.click('[data-school-action="auto-sync"]');
-  assert.match(ui.document.querySelector('dialog').textContent, /不会发送给 AI/);
-  ui.click('[data-school-action="auto-sync-consent"]'); await settle();
-  assert.equal(ui.calls.preferences.length, 1);
-  assert.equal(ui.calls.preferences[0].autoSync, true);
-  assert.equal(ui.calls.sync[0].source, 'edupage');
-  assert.equal(ui.calls.sync[0].options.weekStart, weekStart);
-  assert.equal(ui.calls.sync[0].options.force, false);
-});
-
-test('saved automatic approval refreshes stale visible content, while manual refresh remains forced', async () => {
-  const weekStart = monday();
-  const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: { autoSync: true }, status: { edupage: { state: 'stale', updatedAt: old } } };
-  const ui = harness(snapshot);
-  ui.context.window.schoolUI.mount(); await settle();
-  assert.equal(ui.calls.sync[0].source, 'edupage');
-  assert.equal(ui.calls.sync[0].options.weekStart, weekStart);
-  assert.equal(ui.calls.sync[0].options.force, false);
-  ui.click('[data-school-action="sync"]'); await settle();
-  assert.equal(ui.calls.sync.at(-1).source, 'edupage');
-  assert.equal(ui.calls.sync.at(-1).options.weekStart, weekStart);
-  assert.equal(ui.calls.sync.at(-1).options.force, true);
+  assert.equal(ui.calls.sync.length, 0, '没存账号就不该产生学校网络请求');
 });
 
 test('a response for another week cannot replace the selected timetable', async () => {
@@ -118,13 +114,12 @@ test('a response for another week cannot replace the selected timetable', async 
 test('a temporary refresh failure retains verified timetable content and shows a clean error', async () => {
   const weekStart = monday();
   const lesson = { id: 'lesson-1', date: weekStart, start: '08:00', end: '08:40', course: 'Biology', room: 'A101', teacher: 'T', groups: [], groupKey: 'g', cancelled: false };
-  const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [lesson], options: [], missingDates: [] }, managebac: null, preferences: { groups: ['g'] }, status: { edupage: { state: 'stale', updatedAt: old, error: '网络暂时不可用' } } };
+  const snapshot = { edupage: { weekStart, fetchedAt: old, lessons: [lesson], options: [], missingDates: [] }, managebac: null, preferences: { groups: ['g'] }, accounts: { edupage: { saved: true } }, status: { edupage: { state: 'stale', updatedAt: old, error: '网络暂时不可用' } } };
   const ui = harness(snapshot, { syncError: "Error invoking remote method 'school:sync': 网络暂时不可用" });
   ui.context.window.schoolUI.mount(); await settle();
-  ui.click('[data-school-action="sync"]'); ui.click('[data-school-action="consent"]'); await settle();
   assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1);
   assert.match(ui.document.querySelector('#schoolPage').textContent, /网络暂时不可用/);
-  assert.match(ui.document.querySelector('.school-cache-status').textContent, /上次读取/);
+  assert.match(ui.document.querySelector('.school-data-stamp').textContent, /当前数据：/);
 });
 
 test('authoritative null and account changes clear cached weeks', async () => {
@@ -141,22 +136,16 @@ test('authoritative null and account changes clear cached weeks', async () => {
   assert.match(ui.document.querySelector('#schoolPage').textContent, /把一周安排放在眼前/);
 });
 
-test('a fresh prior week never suppresses a missing selected-week refresh, and manual consent alone does not enable it', async () => {
+test('a fresh prior week never suppresses a missing selected-week refresh', async () => {
   const firstWeek = monday();
   const date = new Date(`${firstWeek}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + 7); const nextWeek = date.toISOString().slice(0, 10);
   const fresh = new Date().toISOString();
-  const initial = { edupage: { weekStart: firstWeek, fetchedAt: fresh, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: { autoSync: true }, status: { edupage: { updatedAt: fresh } } };
+  const initial = { edupage: { weekStart: firstWeek, fetchedAt: fresh, lessons: [], options: [], missingDates: [] }, managebac: null, preferences: {}, accounts: { edupage: { saved: true } }, status: { edupage: { updatedAt: fresh } } };
   const ui = harness(initial, { getResult: (options, count, snapshot) => count === 1 ? snapshot : { ...snapshot, edupage: null } });
   ui.context.window.schoolUI.mount(); await settle();
   ui.click('[data-school-action="week"][data-delta="7"]'); await settle();
   assert.equal(ui.calls.sync.at(-1).options.weekStart, nextWeek);
   assert.equal(ui.calls.sync.at(-1).options.force, false);
-
-  const manual = harness({ ...initial, preferences: {} });
-  manual.context.window.schoolUI.mount(); await settle();
-  manual.click('[data-school-action="sync"]'); manual.click('[data-school-action="consent"]'); await settle();
-  manual.click('[data-school-action="week"][data-delta="7"]'); await settle();
-  assert.equal(manual.calls.sync.length, 1, 'one-time manual consent must not become background refresh consent');
 });
 
 test('personal and class timetables are independent routes with distinct teaching-group scope', async () => {
@@ -182,11 +171,14 @@ test('personal and class timetables are independent routes with distinct teachin
   assert.equal(ui.calls.preferences.length, 0, 'class viewing cannot overwrite personal group selection');
 });
 
-test('course workspace owns its course/task/core sections without aggregate school tabs', async () => {
+test('course workspace owns its course/notification/task/core sections without aggregate school tabs', async () => {
   const ui = harness({ edupage: null, managebac: { fetchedAt: old, courses: [{ id: '21', name: 'Biology', grade: '6' }], tasks: [], warnings: [] }, preferences: {}, status: {} });
   ui.context.window.schoolUI.open('courses'); await settle();
   assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课程');
-  assert.equal(ui.document.querySelectorAll('[data-course-tab]').length, 3);
+  // 2026-09-19 用户要求加「通知」栏（抓所有通知，和网页版一样）+「讨论」栏 → 现在五个标签。
+  assert.equal(ui.document.querySelectorAll('[data-course-tab]').length, 5);
+  assert.ok(ui.document.querySelector('[data-course-tab="notifications"]'), '要有通知这一栏');
+  assert.ok(ui.document.querySelector('[data-course-tab="discussions"]'), '要有讨论这一栏');
   assert.equal(ui.document.querySelector('.school-tabs'), null);
   assert.equal(ui.document.querySelectorAll('.school-course-card').length, 1);
   ui.click('[data-course-tab="tasks"]');
@@ -211,9 +203,8 @@ test('reopening the same route after account invalidation reconciles local epoch
 });
 
 test('school login errors show only the readable explanation, not IPC or error-class prefixes', async () => {
-  const ui = harness({ edupage: null, managebac: null, preferences: {}, status: {} }, { syncError: "Error invoking remote method 'school:sync': Error: SchoolAuthError: 学校登录需要人工完成验证码，请在内置网页继续" });
+  const ui = harness({ edupage: null, managebac: null, preferences: {}, accounts: { edupage: { saved: true } }, status: {} }, { syncError: "Error invoking remote method 'school:sync': Error: SchoolAuthError: 学校登录需要人工完成验证码，请在内置网页继续" });
   ui.context.window.schoolUI.open('timetable'); await settle();
-  ui.click('[data-school-action="sync"]'); ui.click('[data-school-action="consent"]'); await settle();
   assert.equal(ui.document.querySelector('[role="alert"]').textContent, '学校登录需要人工完成验证码，请在内置网页继续');
 });
 
@@ -234,7 +225,10 @@ test('explicit approved login connects once and failure stops automatic retries 
   assert.equal(await ui.context.window.schoolUI.connect('edupage', { approved: true }), false);
   assert.equal(ui.calls.login.length, 1);
   assert.match(ui.document.querySelector('[role="alert"]').textContent, /账号密码未通过验证/);
+  // 自动同步是常态了，但登录失败后**必须停手**（authBlocked），不能反复撞学校网站。
+  const syncsAfterFailure = ui.calls.sync.length;
   await ui.context.window.schoolUI.refresh();
-  assert.equal(ui.calls.sync.length, 0);
+  await settle();
+  assert.equal(ui.calls.sync.length, syncsAfterFailure, '登录失败后不再自动重试');
   assert.equal(ui.calls.login.length, 1);
 });

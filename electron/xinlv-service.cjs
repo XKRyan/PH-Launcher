@@ -41,11 +41,16 @@ function newUuid() {
 }
 
 class XinlvService {
-  constructor({ getData, updateData, xinlvClientFactory = null } = {}) {
+  constructor({ getData, updateData, xinlvClientFactory = null, onChanged = null } = {}) {
     this._getData = typeof getData === 'function' ? getData : () => ({ xinlv: defaultData() });
     this._updateData = typeof updateData === 'function' ? updateData : () => {};
     this._clientFactory = xinlvClientFactory;
     this._clientCache = null;
+    /** 后台同步拉到新记录时的回调（主进程用它通知界面刷新，用户无感）。 */
+    this._onChanged = typeof onChanged === 'function' ? onChanged : null;
+    this._pollTimer = null;
+    this._syncing = false;
+    this._pushTimer = null;
   }
 
   _data() {
@@ -88,6 +93,10 @@ class XinlvService {
       totalEntries: total,
       pendingSync: data.dirty.length,
       lastServerTime: data.serverTime,
+      // 一秒一轮的静默同步：界面上只显示个状态，不摆按钮（用户 2026-09-19）。
+      autoPollMs: XinlvService.POLL_MS,
+      polling: Boolean(this._pollTimer),
+      lastError: this.lastError || '',
     };
   }
 
@@ -172,6 +181,7 @@ class XinlvService {
     data.entries[uuid] = entry;
     if (!data.dirty.includes(uuid)) data.dirty.push(uuid);
     this._commit(data);
+    this.scheduleSync();
     return entry;
   }
 
@@ -184,6 +194,7 @@ class XinlvService {
     data.entries[existing.uuid] = updated;
     if (!data.dirty.includes(existing.uuid)) data.dirty.push(existing.uuid);
     this._commit(data);
+    this.scheduleSync();
     return updated;
   }
 
@@ -195,6 +206,7 @@ class XinlvService {
     existing.updated_at = new Date().toISOString();
     if (!data.dirty.includes(existing.uuid)) data.dirty.push(existing.uuid);
     this._commit(data);
+    this.scheduleSync();
     return true;
   }
 
@@ -266,6 +278,95 @@ class XinlvService {
     if (!result.offline && !result.errors.length) data.dirty = [];
     this._commit(data);
     return { ...result, total: Object.values(data.entries).filter((entry) => !entry.deleted).length };
+  }
+
+  // ---------------------------------------------------------------- 自动同步
+  //
+  // 用户 2026-09-19：「同步功能好像不好使，每次产生更改都和服务器同步一次，
+  // 服务器端产生更改也同步，用轮询的方法，一秒一次，但是不要让用户察觉」。
+  //
+  //   * 本地记一笔/改一笔/删一笔 → 300ms 后自动推一轮（`scheduleSync`）；
+  //   * 平时一秒一轮 `sync()`：有脏数据就推、没脏数据就是一次 pull 探测
+  //     （`/api/v1/sync/pull/?since=<server_time>`，服务端没变就回空数组）。
+  // 全程静默：成功不提示，失败只留最后一条错误给界面按需显示。
+  static get POLL_MS() { return 1000; }
+
+  startAutoSync() {
+    if (this._pollTimer) return;
+    this._pollTimer = setInterval(() => { void this.tick(); }, XinlvService.POLL_MS);
+    if (typeof this._pollTimer.unref === 'function') this._pollTimer.unref();
+    this.lastError = '';
+  }
+
+  stopAutoSync() {
+    if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+    if (this._pushTimer) { clearTimeout(this._pushTimer); this._pushTimer = null; }
+  }
+
+  /** 本地改了东西：马上安排一轮推送（合并 300ms 内的连续操作）。 */
+  scheduleSync(delay = 300) {
+    if (this._pushTimer) clearTimeout(this._pushTimer);
+    this._pushTimer = setTimeout(() => {
+      this._pushTimer = null;
+      void this.tick();
+    }, delay);
+    if (typeof this._pushTimer.unref === 'function') this._pushTimer.unref();
+  }
+
+  /** 一轮自动同步：没登录就什么都不做；同一时刻只允许一轮。 */
+  async tick() {
+    if (this._syncing) return null;
+    const credentials = this._credentials();
+    if (!credentials.token) return null;
+    this._syncing = true;
+    try {
+      const result = await this.sync({});
+      this.lastError = '';
+      if (result.pulled && this._onChanged) {
+        try { this._onChanged(result); } catch { /* 通知失败不影响同步 */ }
+      }
+      return result;
+    } catch (error) {
+      // 静默：一秒一轮会自动重试，不需要每次都弹给用户看。
+      this.lastError = String(error?.message || error);
+      return null;
+    } finally {
+      this._syncing = false;
+    }
+  }
+
+  /**
+   * 用 phix 账号登录心履（用户 2026-09-19：「心履的账号自动用 phix 账号登录」）。
+   * 已经登录着同一个账号就什么都不做；换了账号就重新登录。
+   * 失败**只记错误、不抛**：调用方是 phix 登录链路，不该被心履的登录失败带崩。
+   */
+  async adoptAccount(username, password) {
+    const account = String(username || '').trim();
+    if (!account || !password) return this.status();
+    const credentials = this._credentials();
+    if (credentials.token && credentials.username === account) return this.status();
+    if (credentials.username === account && credentials.password === String(password) && credentials.token) return this.status();
+    try {
+      const status = await this.login(account, password);
+      this.startAutoSync();
+      return status;
+    } catch (error) {
+      this.lastError = String(error?.message || error);
+      this._log(`心履自动登录失败：${this.lastError}`);
+      return this.status();
+    }
+  }
+
+  /** 启动时兜底：有账号密码但没令牌（或令牌过期被清）→ 自动重新登录一次。 */
+  async ensureLogin() {
+    const credentials = this._credentials();
+    if (credentials.token) { this.startAutoSync(); return this.status(); }
+    if (credentials.username && credentials.password) return this.adoptAccount(credentials.username, credentials.password);
+    return this.status();
+  }
+
+  _log(message) {
+    try { console.warn(String(message).slice(0, 300)); } catch { /* 无控制台 */ }
   }
 }
 

@@ -4,24 +4,17 @@
 .school-top p { color:var(--ink-2); margin:0; }
 .school-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .school-actions button { white-space:nowrap; }
-.school-refresh-preference { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 18px; color:var(--ink-3); font-size: 0.9375rem; line-height:1.6; }
-.school-auto-sync { display:flex; align-items:center; gap:10px; color:var(--ink-2); cursor:pointer; }
-.school-auto-sync input { width:17px; height:17px; accent-color:var(--green-800); flex:0 0 auto; }
-.school-auto-sync strong,.school-auto-sync small { display:block; }
-.school-auto-sync strong { font-size: 1rem; color:var(--ink-1); }
-.school-auto-sync small { color:var(--ink-3); }
+/* 角落那行不起眼的小字：当前数据时间（同步全部自动，界面上没有刷新按钮）。 */
+.school-data-stamp { position:fixed; right:18px; bottom:8px; z-index:1; color:var(--ink-3); font-size:.7rem; opacity:.65; pointer-events:none; }
 .school-course-tabs { display:flex; gap:6px; padding:5px; border:1px solid var(--border); border-radius:14px; background:var(--ivory-50); margin-bottom:25px; width:fit-content; max-width:100%; overflow-x:auto; }
 .school-course-tabs button { background:transparent; border-radius:10px; padding:10px 20px; color:var(--ink-2); font-weight:650; white-space:nowrap; }
 .school-course-tabs button.active { color:var(--white); background:var(--green-800); box-shadow:var(--shadow-sm); }
-.school-section-head,.school-weekbar,.school-sync-line { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:18px 0; }
+.school-section-head,.school-weekbar { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:18px 0; }
 .school-section-head h2 { margin:3px 0 0; font-size: 1.5625rem; line-height:1.4; }
 .school-section-head h2 small { color:var(--ink-3); font-size: 1rem; font-weight:500; }
 .school-weekbar strong { font-size: 0.9375rem; letter-spacing:.02em; }
-.school-meta,.school-sync-line,.school-footnote { color:var(--ink-3); font-size: 1rem; }
+.school-meta,.school-footnote { color:var(--ink-3); font-size: 1rem; }
 .school-meta { margin:14px 0; }
-.school-cache-status { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin:12px 0; color:var(--green-800); font-size: 0.9375rem; line-height:1.6; }
-.school-cache-status span + span::before { content:'·'; margin-right:7px; color:var(--ink-3); }
-.school-cache-status.is-stale { color:var(--wine-700); }
 .school-view-switch { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:15px 0; }
 .school-view-switch>span { color:var(--ink-3); font-size: 0.9375rem; }
 .school-footnote { margin:14px 0 22px; line-height:1.8; }
@@ -37,40 +30,47 @@
 .school-empty h3 { margin:20px 0 6px; font-size: 1.375rem; }
 .school-empty p { max-width:440px; color:var(--ink-2); line-height:1.8; margin:6px 0 20px; }
 .school-empty small { color:var(--ink-3); margin-top:20px; }
-.school-timetable-scroll { max-width:100%; overflow:auto; border:1px solid var(--border); background:var(--ivory-50); border-radius:18px; }
-.school-timetable.school-days-5 { min-width:800px; }
-.school-timetable.school-days-7 { min-width:1050px; }
-.school-grid-header { display:grid; background:var(--ivory-50); position:sticky; top:0; z-index:3; padding:14px 0; border-bottom:1px solid var(--border); }
-.school-grid-header.school-days-5,.school-grid-body.school-days-5 { grid-template-columns:62px repeat(5,minmax(0,1fr)); }
-.school-grid-header.school-days-7,.school-grid-body.school-days-7 { grid-template-columns:62px repeat(7,minmax(0,1fr)); }
-.school-grid-header>div { display:flex; justify-content:center; gap:8px; color:var(--ink-2); font-size: 1rem; }
-.school-grid-header>div.is-today { color:var(--gold-600); }
-.school-grid-header>div span { font-variant-numeric:tabular-nums; color:var(--ink-3); }
-.school-zone { font-size: 0.8125rem; color:var(--ink-3); display:grid; place-items:center; }
-.school-grid-body { display:grid; margin-top:14px; }
-.school-time-axis,.school-day-column { position:relative; }
-.school-time-axis { color:var(--ink-3); }
-.school-axis-time { position:absolute; width:100%; text-align:center; font-size: 0.9375rem; font-variant-numeric:tabular-nums; transform:translateY(-7px); display:flex; flex-direction:column; align-items:center; }
-.school-axis-time small { font-size:.75rem; color:var(--ink-3); }
-.school-day-column { border-left:1px solid var(--border); }
-.school-day-column.is-today { background:color-mix(in srgb,var(--gold-100) 22%,transparent); }
-.school-period-zone { position:absolute; left:0; right:0; border-radius:6px; pointer-events:none; }
-.school-period-zone.school-period-class { background: rgba(42, 114, 90, .03); }
-.school-period-zone.school-period-lunch { background: rgba(197, 160, 90, .06); }
-.school-period-zone.school-period-evening { background: rgba(91, 91, 214, .04); }
-.school-hour-line { position:absolute; left:0; right:0; border-top:1px dashed rgba(24,35,30,.06); }
-.school-day-empty { color:var(--ink-3); text-align:center; font-size: 0.9375rem; margin:30px 4px; line-height:1.8; }
-.school-lesson { position:absolute; display:flex; flex-direction:column; align-items:flex-start; padding:6px 8px; border-radius:9px; text-align:left; gap:2px; border-left:4px solid var(--school-color); background:var(--school-tint); color:var(--school-color); min-width:0; overflow:hidden; box-shadow:0 2px 4px #18231e06; transition:filter .15s,box-shadow .15s; }
+.school-timetable-scroll { max-width:100%; overflow:auto; border:1px solid var(--border); background:var(--ivory-50); border-radius:18px; padding:10px 12px 12px; }
+/* ---------- 课表（2026-09-19 用户要求「大小布局参考 phl lite」）----------
+   和 Pinghe Launcher Lite 一样：**行 = 节次，列 = 星期**，格子之间留 4px 缝，
+   一节课是一张小卡片（标题一行 + 教室·老师一行），整周一屏基本看得下。
+   行高由 `fitTimetableRows()` 统一成正课行里最高的那一行。 */
+.school-timetable { display:grid; grid-template-columns:62px repeat(5,minmax(0,1fr)); gap:4px; position:relative; }
+.school-timetable.school-days-5 { min-width:640px; grid-template-columns:62px repeat(5,minmax(0,1fr)); }
+.school-timetable.school-days-7 { min-width:880px; grid-template-columns:62px repeat(7,minmax(0,1fr)); }
+.school-tt-head { display:flex; align-items:center; justify-content:center; gap:6px; padding:2px 0; color:var(--ink-2); font-size:.78rem; font-weight:650; }
+.school-tt-head.is-today { color:var(--gold-600); }
+.school-tt-head span { color:var(--ink-3); font-weight:400; font-variant-numeric:tabular-nums; font-size:.72rem; }
+.school-tt-corner { justify-content:flex-start; background:var(--ivory-100); border-radius:8px; padding-left:6px; color:var(--ink-3); font-weight:400; font-size:.68rem; }
+.school-tt-time { display:flex; flex-direction:column; justify-content:center; align-items:flex-end; gap:1px; padding-right:6px; text-align:right; color:var(--ink-3); font-size:.68rem; font-variant-numeric:tabular-nums; }
+.school-tt-time b { color:var(--ink-2); font-size:.75rem; font-weight:650; }
+.school-tt-time.is-rest b { color:var(--gold-600); }
+.school-tt-cell { display:flex; flex-direction:column; gap:2px; min-height:30px; padding:2px; border:1px solid var(--border); border-radius:8px; background:var(--white); }
+.school-tt-cell.is-rest { background:var(--ivory-100); }
+.school-tt-rest { display:flex; align-items:center; gap:8px; padding:4px 10px; border:1px dashed var(--border); border-radius:8px; background:var(--ivory-100); color:var(--ink-3); font-size:.72rem; }
+.school-day-empty { margin:2px; color:var(--ink-3); text-align:center; font-size:.68rem; line-height:1.4; }
+.school-now-line { position:absolute; left:0; right:0; height:2px; z-index:6; pointer-events:none; background:var(--gold-500); border-radius:1px; box-shadow:0 0 4px rgba(138,109,0,.55); }
+.school-now-line::before { content:''; position:absolute; left:-2px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--gold-500); box-shadow:0 0 0 2px var(--gold-100); }
+.school-lesson { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; flex:1; min-height:0; gap:1px; padding:2px 6px; border:0; border-left:3px solid var(--school-color); border-radius:6px; background:var(--school-tint); color:var(--school-color); text-align:left; min-width:0; overflow:hidden; cursor:pointer; transition:filter .15s,box-shadow .15s; }
 .school-lesson:hover { filter:brightness(.98); box-shadow:0 3px 9px #18231e17; z-index:2; }
-.school-lesson strong { font-size:clamp(14px,1rem,17px); line-height:1.35; overflow-wrap:anywhere; }
-.school-lesson>span { display:block; width:100%; font-size:clamp(12px,.875rem,15px); line-height:1.25; opacity:.83; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.school-lesson .school-lesson-time { font-size:clamp(11px,.8125rem,14px); letter-spacing:-.2px; white-space:nowrap; }
-.school-lesson.is-highlighted { outline:2px solid var(--gold-600); outline-offset:-2px; box-shadow:inset 0 0 0 1px var(--gold-600); }
-.school-lesson.is-highlighted strong::before { content:'★ '; color:var(--gold-600); }
-.school-lesson.is-cancelled { opacity:.58; background:var(--ivory-200); color:var(--ink-2); border-color:var(--ink-3); }
-.school-lesson.is-cancelled strong { text-decoration:line-through; }
+.school-lesson b { display:block; font-size:.72rem; line-height:1.25; overflow-wrap:anywhere; }
+.school-lesson>span { display:block; width:100%; font-size:.66rem; line-height:1.25; opacity:.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.school-lesson .school-lesson-time { font-variant-numeric:tabular-nums; }
+/* 教室 · 老师挤在同一行（Lite 也是 `room · teacher`） */
+.school-lesson .school-lesson-meta { display:flex; align-items:baseline; gap:5px; width:100%; font-size:.66rem; line-height:1.25; opacity:.8; white-space:nowrap; overflow:hidden; }
+.school-lesson .school-lesson-meta .school-lesson-teacher::before { content:'·'; margin-right:5px; opacity:.7; }
+.school-lesson.is-highlighted { outline:2px solid var(--gold-600); outline-offset:-2px; font-weight:650; }
+.school-lesson.is-highlighted b::before { content:'★ '; color:var(--gold-600); }
+.school-lesson.is-cancelled { opacity:.55; background:var(--ivory-200); color:var(--ink-2); border-color:var(--ink-3); }
+.school-lesson.is-cancelled b { text-decoration:line-through; }
 .school-lesson-cluster { --school-color:var(--green-800); --school-tint:var(--ivory-100); border-left-color:var(--wine-700); color:var(--ink-1); }
 .school-cancel-label { font-size: 0.875rem; }
+/* 「⬇ 导出课表」：站内小下拉（和网页端一样，不用系统菜单） */
+.school-export { position:relative; display:inline-flex; }
+.school-export-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:20; min-width:168px; padding:5px; border:1px solid var(--border); border-radius:11px; background:var(--white); box-shadow:var(--shadow-md); display:flex; flex-direction:column; gap:2px; }
+.school-export-menu[hidden] { display:none; }
+.school-export-menu button { width:100%; padding:7px 10px; border:0; border-radius:8px; background:transparent; color:var(--ink-1); font-size:.8125rem; text-align:left; white-space:nowrap; }
+.school-export-menu button:hover { background:var(--green-50); color:var(--green-800); }
 .school-color-0 { --school-color:#2d6652; --school-tint:#e7f0e8; }
 .school-color-1 { --school-color:#68548b; --school-tint:#eee8f3; }
 .school-color-2 { --school-color:#8a6b24; --school-tint:#f7efd7; }
@@ -84,15 +84,18 @@
 .school-warnings ul { margin-bottom:0; padding-left:20px; line-height:1.8; }
 .school-inline-label { display:flex; align-items:center; gap:9px; color:var(--ink-3); font-size: 1rem; }
 .school-inline-label select,.school-task-filters select,.school-task-filters input { background:var(--ivory-50); border:1px solid var(--border); border-radius:10px; padding:9px 12px; min-height:40px; }
-.school-course-grid { display:flex; flex-direction:column; gap:8px; }
-.school-course-card { display:flex; align-items:center; gap:16px; background:var(--ivory-50); border:1px solid var(--border); border-left:4px solid var(--school-color); border-radius:10px; padding:14px 18px; text-align:left; transition:transform .18s cubic-bezier(.22,.61,.36,1),box-shadow .18s,border-color .18s,opacity .18s; cursor:pointer; }
+/* 2026-09-19 用户要求「课程列表每一个课程的高度也减少」：
+   卡片内边距 14/18 → 7/14，头像 37 → 28，「总评」那块原来带着 14px 上下内边距
+   （旧版是竖排布局留下的），去掉后一行就放得下 —— 一行从 ~62px 收到 ~40px。 */
+.school-course-grid { display:flex; flex-direction:column; gap:6px; }
+.school-course-card { display:flex; align-items:center; gap:12px; background:var(--ivory-50); border:1px solid var(--border); border-left:4px solid var(--school-color); border-radius:9px; padding:7px 14px; text-align:left; transition:transform .18s cubic-bezier(.22,.61,.36,1),box-shadow .18s,border-color .18s,opacity .18s; cursor:pointer; }
 .school-course-card:hover { transform:translateX(2px); box-shadow:var(--shadow-sm); }
 .school-course-card>div:first-child { flex:1; min-width:0; }
-.school-course-card h3 { font-size: .9375rem; margin:0; overflow-wrap:anywhere; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.school-course-mark { width:37px; height:37px; display:grid; place-items:center; border-radius:11px; color:var(--school-color); background:var(--school-tint); font-size: 1.125rem; font-weight:700; }
-.school-course-card>div { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 0; border-top:1px solid var(--border); }
-.school-course-card>div>span,.school-course-card small { font-size: 0.9375rem; color:var(--ink-3); }
-.school-course-card>div>strong { color:var(--school-color); font-size: 1rem; }
+.school-course-card h3 { font-size: .875rem; margin:0; overflow-wrap:anywhere; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.school-course-mark { width:28px; height:28px; display:grid; place-items:center; border-radius:9px; color:var(--school-color); background:var(--school-tint); font-size: .9375rem; font-weight:700; }
+.school-course-card>div { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0; border-top:0; }
+.school-course-card>div>span,.school-course-card small { font-size: .8125rem; color:var(--ink-3); }
+.school-course-card>div>strong { color:var(--school-color); font-size: .875rem; }
 .school-course-grip { color:var(--ink-3); font-size:1rem; cursor:grab; letter-spacing:-1px; user-select:none; transition:color .15s; }
 .school-course-card:hover .school-course-grip { color:var(--green-800); }
 .school-course-card.is-dragging { opacity:.45; transform:scale(.98); box-shadow:var(--shadow-md); cursor:grabbing; }
@@ -105,15 +108,39 @@
 .school-task-filters { display:flex; gap:10px; margin-bottom:18px; }
 .school-task-filters input { flex:1; min-width:100px; }
 .school-task-list { border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--ivory-50); }
-.school-task-row { display:flex; align-items:center; gap:14px; padding:16px 20px; border-bottom:1px solid var(--border); }
+/* 2026-09-19 用户要求：「ddl 那一页每一项都太大了，改的小一点」。
+   行内边距 16/20px → 7/12px，正文与时间字号 .9375rem → .8125rem —— 一屏多看三四条。 */
+.school-task-row { display:flex; align-items:center; gap:10px; padding:5px 12px; border-bottom:1px solid var(--border); }
 .school-task-row:last-child { border-bottom:0; }
-.school-task-main { display:flex; flex-direction:column; align-items:flex-start; gap:5px; background:transparent; flex:1; text-align:left; min-width:0; }
-.school-task-main strong { font-size: 0.9375rem; overflow-wrap:anywhere; }
-.school-task-course { color:var(--green-700); font-size: 0.875rem; letter-spacing:.01em; }
-.school-task-due { color:var(--ink-3); font-size: 0.9375rem; }
+.school-task-main { display:flex; flex-direction:row; align-items:baseline; gap:8px; background:transparent; flex:1; text-align:left; min-width:0; }
+.school-task-main strong { font-size: 0.8125rem; line-height:1.3; overflow-wrap:anywhere; }
+.school-task-course { color:var(--green-700); font-size: 0.72rem; letter-spacing:.01em; flex:0 0 auto; }
+.school-task-due { color:var(--ink-3); font-size: 0.72rem; flex:0 0 auto; margin-left:auto; }
 .school-task-due.is-overdue { color:var(--wine-700); }
 .school-task-row.is-hidden-task { opacity:.7; }
-.school-score { padding:5px 8px; background:var(--green-50); border-radius:7px; color:var(--green-800); font-size: 1rem; white-space:nowrap; }
+.school-score { padding:2px 7px; background:var(--green-50); border-radius:7px; color:var(--green-800); font-size: 0.75rem; white-space:nowrap; }
+/* 「隐藏 / 恢复」按钮原来 7px 内边距 + 1rem 字号 = 38px 高，是整行里最高的一块，
+   把行高撑到 49px。这里单独收小：行高回到 ~34px，按钮本身也点得到。 */
+.school-task-row .school-text-button { padding:1px 8px; font-size:0.75rem; line-height:1.4; border-radius:6px; }
+
+/* 「已提交」那一段：一条分割线 + 整体灰显（和网页端 / Lite 一样） */
+.school-list-sep { display:flex; align-items:center; gap:10px; margin:14px 0 6px; color:var(--ink-3);
+  font-size:.75rem; font-weight:650; letter-spacing:.4px; }
+.school-list-sep::after { content:""; flex:1; height:1px; background:var(--border); }
+.school-task-list.is-done .school-task-row { opacity:.6; }
+.school-task-list.is-done .school-task-row:hover { opacity:.85; }
+
+/* 通知与待办：一行一条，紧凑；页脚如实说明未读数与去向 */
+.school-notif-list { border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--ivory-50); }
+.school-notif-item { display:flex; align-items:center; gap:12px; padding:9px 12px; border-bottom:1px solid var(--border); }
+.school-notif-item:last-child { border-bottom:0; }
+.school-notif-item__main { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.school-notif-item__main strong { font-size:.8125rem; overflow-wrap:anywhere; }
+.school-notif-item__main small { color:var(--ink-3); font-size:.75rem; overflow-wrap:anywhere; }
+.school-notif-foot { display:flex; align-items:center; gap:8px; margin-top:10px; color:var(--ink-3); font-size:.75rem; flex-wrap:wrap; }
+.school-notif-overdue { flex:0 0 auto; padding:1px 7px; border-radius:999px; background:var(--wine-100); color:var(--wine-700); font-size:.7rem; }
+.school-empty--tight { padding:10px 2px; }
+.school-empty--tight p { margin:0; font-size:.8125rem; }
 .school-core-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin:18px 0; }
 .school-core-grid article { border:1px solid var(--border); border-radius:20px; background:var(--ivory-50); padding:30px; }
 .school-core-grid h3 { font-size: 2.5rem; color:var(--green-800); margin:15px 0 5px; letter-spacing:-1px; }
@@ -168,16 +195,25 @@
 .school-conflict-row span,.school-conflict-row small { font-size: 0.9375rem; overflow-wrap:anywhere; }
 .school-conflict-row.is-highlighted { outline:2px solid var(--gold-600); outline-offset:-2px; }
 .school-conflict-row.is-cancelled { opacity:.58; }
-.school-discussion-row { display:flex; flex-direction:column; align-items:flex-start; gap:5px; }
+.school-discussion-row { display:flex; flex-direction:column; align-items:flex-start; gap:3px; }
 .school-discussion-row:hover,.school-conflict-row:hover { box-shadow:var(--shadow-sm); }
 .school-discussion-row strong,.school-discussion-row p { overflow-wrap:anywhere; }
 .school-discussion-row span,.school-discussion-row small { color:var(--ink-3); font-size: 0.9375rem; }
 .school-discussion-row p { margin:2px 0 0; color:var(--ink-2); line-height:1.6; text-align:left; }
+/* 课程讨论那一栏：一门课一行，紧凑一点（和「作业与截止」一个口径）。 */
+.school-discussion-list { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:14px; overflow:hidden; background:var(--ivory-50); gap:0; }
+.school-discussion-list .school-discussion-row { border:0; border-bottom:1px solid var(--border); border-radius:0; padding:7px 12px; gap:1px; background:transparent; }
+.school-discussion-list .school-discussion-row:last-child { border-bottom:0; }
+.school-discussion-list .school-discussion-row:hover { background:var(--green-50); box-shadow:none; }
+.school-discussion-list .school-discussion-row strong { font-size:.8125rem; line-height:1.35; }
+.school-discussion-list .school-discussion-row small { font-size:.72rem; }
+.school-discussion-list .school-discussion-row p { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin:1px 0 0; font-size:.75rem; line-height:1.45; }
+.school-discussion-course { color:var(--green-700); font-size:.72rem; }
 .school-discussion-entry { display:flex; align-items:center; justify-content:space-between; gap:15px; margin:18px 0; padding:15px; border:1px solid var(--border); border-radius:12px; background:var(--ivory-50); }
 .school-discussion-entry>div { display:flex; flex-direction:column; gap:3px; }
 .school-discussion-entry span { color:var(--ink-3); font-size: 0.9375rem; }
 .school-discussion-post { margin:12px 0; padding:15px; border:1px solid var(--border); border-radius:12px; background:var(--ivory-50); }
 .school-dialog-actions { display:flex; justify-content:flex-end; margin-top:12px; }
 #schoolPage button:disabled,.school-dialog button:disabled { opacity:.5; cursor:default; }
-@media(max-width:1050px) { .school-top,.school-section-head,.school-weekbar,.school-refresh-preference { align-items:flex-start; flex-direction:column; gap:12px; } .school-course-tabs button { padding:9px 14px; } .school-core-grid { grid-template-columns:1fr; } .school-group-filters { grid-template-columns:1fr; } }
+@media(max-width:1050px) { .school-top,.school-section-head,.school-weekbar { align-items:flex-start; flex-direction:column; gap:12px; } .school-course-tabs button { padding:9px 14px; } .school-core-grid { grid-template-columns:1fr; } .school-group-filters { grid-template-columns:1fr; } }
 @media(prefers-reduced-motion:reduce) { .school-loading>span { animation:none; } .school-course-card { transition:none; } }

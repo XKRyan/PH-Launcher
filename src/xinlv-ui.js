@@ -5,6 +5,11 @@
   // through the main-process bridge (window.ph.xinlv) and renders everything
   // itself in PH Launcher's own style — no embedded webpage, no remote UI.
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  /** 角落那行小字用的时间戳：`9/19 13:20`。 */
+  const stampTime = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  };
   const safeError = (error, fallback) => String(error?.message || error || fallback)
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')
     .replace(/^(?:Error|XinlvServiceError|XinlvError):\s*/i, '')
@@ -59,6 +64,7 @@
     error: '',
     notice: '',
     lastSyncAt: 0,
+    autoTimer: 0,
     form: { date: dateKey(), mood: '', intensityLevel: 2, note: '' },
     editingUuid: '',
     recommend: { mood: '', loading: false, data: null, error: '', local: false },
@@ -288,7 +294,6 @@
       <section class="xinlv-card">
         <header class="xinlv-card-head"><div><span class="section-kicker">PROFILE</span><h3>我的心履</h3></div>
           <div class="xinlv-profile-actions">
-            <button type="button" class="secondary-button" data-xinlv-sync${state.syncing ? ' disabled' : ''}>${state.syncing ? '同步中…' : '立即同步'}</button>
             <button type="button" class="secondary-button danger" data-xinlv-logout>退出登录</button>
           </div>
         </header>
@@ -339,15 +344,14 @@
         <h2>心履</h2>
         <p>${status.username ? `已登录 ${esc(status.username)} · ` : ''}${state.entries.length} 条记录${status.pendingSync ? ` · ${status.pendingSync} 条待同步` : ' · 已同步'}</p>
       </div>
-      <div class="xinlv-hero-side">
-        <button type="button" class="secondary-button" data-xinlv-sync${state.syncing ? ' disabled' : ''}>${state.syncing ? '同步中…' : '同步'}</button>
-      </div>
+      <div class="xinlv-hero-side"></div>
     </header>
     <nav class="xinlv-tabs" aria-label="心履模块">
       ${TABS.map((tab) => `<button type="button" class="xinlv-tab${state.tab === tab.key ? ' active' : ''}" data-xinlv-tab="${tab.key}" aria-current="${state.tab === tab.key}"><strong>${esc(tab.label)}</strong><small>${esc(tab.hint)}</small></button>`).join('')}
     </nav>
     ${statusLine()}
-    ${state.tab === 'record' ? renderRecord() : state.tab === 'recommend' ? renderRecommend() : state.tab === 'chat' ? renderChat() : renderProfile()}`;
+    ${state.tab === 'record' ? renderRecord() : state.tab === 'recommend' ? renderRecommend() : state.tab === 'chat' ? renderChat() : renderProfile()}
+    <span class="xinlv-data-stamp" role="status">当前数据：${esc(state.lastSyncAt ? stampTime(state.lastSyncAt) : '读取中…')}</span>`;
     const log = root.querySelector('#xinlvChatLog');
     if (log) log.scrollTop = log.scrollHeight;
   }
@@ -765,7 +769,7 @@
     if (deleteButton) { await removeEntry(deleteButton.dataset.xinlvDelete); return; }
     const recommendButton = event.target.closest('[data-xinlv-recommend]');
     if (recommendButton) { await loadRecommend(recommendButton.dataset.xinlvRecommend); return; }
-    if (event.target.closest('[data-xinlv-sync]')) { await sync({ silent: false }); return; }
+    // 同步按钮已去掉（2026-09-19：同步全部自动）；记完一笔后顺手推一次。
     if (event.target.closest('[data-xinlv-logout]')) { await logout(); return; }
     if (event.target.closest('[data-xinlv-clear-chat]')) { await clearChat(); return; }
     if (event.target.closest('[data-xinlv-dismiss-crisis]')) { state.chat.crisis = null; render(); return; }
@@ -792,7 +796,46 @@
     root.addEventListener('submit', onSubmit);
     root.addEventListener('input', onInput);
     root.addEventListener('change', onChange);
+    bindBackgroundSync();
     render();
+  }
+
+  /**
+   * 同步一律自动（用户 2026-09-19）。
+   *
+   * 真正的一秒一轮在**主进程**里跑（`XinlvService.startAutoSync`）：本地改一笔就推上去，
+   * 平时一秒 pull 一次探测云端。这里只做两件界面侧的事：
+   *   1. 进页面时先同步一次（打开就是最新的）；
+   *   2. 主进程拉到别的设备写的记录时（`xinlv:changed`）静默刷新列表。
+   */
+  function startAutoSync() {
+    if (state.autoTimer) return;
+    // 兜底：万一主进程那轮没跑到（比如刚登录完），界面侧 30 秒也自己对一次。
+    state.autoTimer = setInterval(() => {
+      if (!configured() || document.visibilityState === 'hidden') return;
+      if (!state.root || !state.root.classList.contains('active')) return;
+      if (Date.now() - (state.lastSyncAt || 0) < 30000) return;
+      void sync({ silent: true });
+    }, 30000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' || !configured()) return;
+      if (Date.now() - (state.lastSyncAt || 0) < 5000) return;
+      void sync({ silent: true });
+    });
+  }
+
+  /** 主进程那一秒一轮的同步拉到新东西 → 静默刷新（不弹提示、不动用户的输入）。 */
+  function bindBackgroundSync() {
+    try {
+      window.ph?.xinlv?.onChanged?.(() => {
+        if (!state.root || !configured()) return;
+        if (state.syncing) return;
+        state.lastSyncAt = Date.now();
+        void loadEntries().catch(() => {});
+        void loadStatus().catch(() => {});
+        render();
+      });
+    } catch { /* 桥没准备好就算了 */ }
   }
 
   async function open() {
@@ -800,6 +843,7 @@
     if (!state.root) return false;
     if (!state.status) await loadStatus();
     if (configured()) {
+      startAutoSync();
       render();
       await loadEntries();
       await loadCatalog();
@@ -808,6 +852,11 @@
       else render();
     } else {
       stopProactivePolling();
+      // 心履账号就是 phix 账号（用户 2026-09-19）：还没自动登上时，至少把登录框里的
+      // 账号预填成 phix 那个，用户只需要补一句密码。
+      if (!state.login.username) {
+        try { state.login.username = String((await window.ph?.phix?.status?.())?.data?.username || ''); } catch { /* 没登录 phix 就留空 */ }
+      }
       render();
     }
     return true;
