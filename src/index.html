@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="./calendar.css" />
     <link rel="stylesheet" href="./mail.css" />
     <link rel="stylesheet" href="./xinlv.css" />
+    <link rel="stylesheet" href="./phix.css" />
     <link rel="stylesheet" href="./refinements.css" />
     <link rel="stylesheet" href="./focus.css" />
     <link rel="stylesheet" href="./dialogs.css" />
@@ -22,21 +23,14 @@
   <body class="is-splash">
     <script>window.__phSplashStartedAt = Date.now();</script>
     <div id="splashScreen" class="splash-screen">
-      <div class="splash-logo">
-        <svg width="100" height="100" viewBox="0 0 200 200" aria-hidden="true">
-          <rect x="10" y="10" width="180" height="180" rx="24" fill="#1f5a46"/>
-          <rect x="40" y="65" width="100" height="18" rx="3" fill="#fff"/>
-          <rect x="40" y="95" width="60" height="12" rx="3" fill="#fff" opacity=".6"/>
-          <rect x="40" y="140" width="120" height="10" rx="3" fill="#fff" opacity=".2"/>
-        </svg>
+      <!-- 2026-09-20 用户要求：三端统一成一个"开机画面"——墨绿底、中间 logo、
+           下面一根细进度条，**一个字都没有**（像 Mac 开机）。进度仍由
+           splash-ui.js 按三件真实工作（学校数据 / 邮件 / 界面预载）合成一根条。 -->
+      <div class="splash-logo" aria-hidden="true">
+        <!-- 软件自己的图标（assets/icon.png，构建时一并打进包里），不再自绘。 -->
+        <img src="./logo.png" alt="" width="96" height="96"/>
       </div>
-      <div class="splash-bars">
-        <div class="splash-bar-row" data-bar="school"><span class="splash-bar-label">连接学校数据</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="school"></div></div></div>
-        <div class="splash-bar-row" data-bar="mail"><span class="splash-bar-label">加载邮件服务</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="mail"></div></div></div>
-        <div class="splash-bar-row" data-bar="preload"><span class="splash-bar-label">预载学习界面</span><div class="splash-bar"><div class="splash-bar-fill" data-bar="preload"></div></div></div>
-      </div>
-      <p class="splash-hint" id="splashHint">正在启动 PH Launcher…</p>
-      <button class="splash-skip" id="splashSkip" type="button">跳过</button>
+      <div class="splash-bar" role="progressbar" aria-label="启动进度"><div class="splash-bar-fill" id="splashProgress"></div></div>
     </div>
     <svg class="svg-sprite" aria-hidden="true">
       <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H4.5A1.5 1.5 0 0 1 3 19.5v-8.7Z"/></symbol>
@@ -68,8 +62,10 @@
 
     <div class="app-shell" id="appShell">
       <aside class="sidebar">
-        <div class="brand" data-route="today" tabindex="0" role="button" aria-label="返回今天">
-          <div class="brand-mark" aria-hidden="true"><span>PH</span><i></i></div>
+        <!-- 左上角品牌：logo 用软件自己的图标，整块可点，点了回「今天」（首页）。
+             用户 2026-09-20 要求。 -->
+        <div class="brand" data-route="today" tabindex="0" role="button" aria-label="返回首页">
+          <img class="brand-mark" src="./logo.png" alt="" aria-hidden="true"/>
           <div class="brand-copy"><strong>PH Launcher</strong><span>IB Student Desk</span></div>
         </div>
 
@@ -124,6 +120,7 @@
         <div class="topbar-actions" id="internalTopActions">
           <button class="command-button" id="commandButton"><svg><use href="#i-search"/></svg><span>搜索与快捷操作</span><kbd>Ctrl K</kbd></button>
           <div class="today-chip"><span id="headerWeekday">周一</span><b id="headerDate">08.31</b></div>
+          <button class="topbar-avatar" id="phixAvatar" title="phix 头像" hidden></button>
         </div>
       </header>
 
@@ -260,9 +257,10 @@
         <section class="page" data-page="settings">
           <div class="page-intro"><div><span class="section-kicker">PREFERENCES</span><h2>设置</h2><p>调整提醒、网页显示、快捷键与本机数据。</p></div><span class="save-state" id="saveState"><i></i>已保存</span></div>
           <div class="settings-layout">
-            <aside class="settings-sections-nav"><button class="active" data-settings-section="general">通用</button><button data-settings-section="websites">网站</button><button data-settings-section="shortcuts">快捷键</button><button data-settings-section="privacy">数据与隐私</button><button data-settings-section="about">关于</button></aside>
+            <aside class="settings-sections-nav"><button class="active" data-settings-section="general">通用</button><button data-settings-section="cloud">云同步</button><button data-settings-section="websites">网站</button><button data-settings-section="shortcuts">快捷键</button><button data-settings-section="privacy">数据与隐私</button><button data-settings-section="about">关于</button></aside>
             <div class="settings-content">
               <section class="settings-section active" data-settings-panel="general"><h3>通用</h3><div class="setting-row"><div><strong>你的称呼</strong><small>用于首页问候，可留空</small></div><input id="studentNameSetting" class="text-input" maxlength="24" placeholder="例如：Alex"/></div><div class="setting-row"><div><strong>开机启动</strong><small>需要稳定接收课程提醒时开启</small></div><label class="switch"><input id="openAtLoginSetting" type="checkbox"/><span></span></label></div><div class="setting-row"><div><strong>关闭窗口时留在托盘</strong><small>课程提醒与计时器可继续工作</small></div><label class="switch"><input id="minimizeTraySetting" type="checkbox"/><span></span></label></div><div class="setting-row"><div><strong>默认课前提醒</strong><small>每门课程还可单独调整</small></div><select id="reminderSetting"><option value="5">提前 5 分钟</option><option value="10">提前 10 分钟</option><option value="15">提前 15 分钟</option><option value="0">不提醒</option></select></div></section>
+              <section class="settings-section" data-settings-panel="cloud"><h3>phix 统一账号 · 云同步</h3><p class="setting-intro">一套账号打通心履与 PH Launcher，数据端到端加密后上传，服务器只存密文。与 Pinghe Launcher Lite 共用同一份账号与数据文件（settings.yaml / Schedule / agent / .sync）。</p><div id="phixSettings"></div></section>
               <section class="settings-section" data-settings-panel="websites"><h3>网站</h3><p class="setting-intro">学校账号保存在本机的共享数据目录（当前版本未加密）；自选网站有独立的登录空间。</p><div class="setting-subheading"><div><strong>学校网站</strong><small>可单独清除登录数据</small></div></div><div class="setting-row"><div><strong>启动时同步学校信息</strong><small>读取已登录账号的课表、课程和邮箱；同步本身不发送邮件或提交作业，发送邮件与提交作业只会在你确认 AI 清单后发生。登录过期后的自动登录仍需单独开启。</small></div><label class="switch"><input id="startupSyncSetting" type="checkbox"/><span></span></label></div><details class="account-storage-options"><summary>登录数据管理</summary><div id="websiteSettings"></div></details><div class="setting-subheading credential-setting-head"><div><strong>账号记忆</strong><small>可选 · 仅限三个已验证的学校网站</small></div></div><div id="credentialSettings"></div><div class="setting-subheading custom-site-setting-head"><div><strong>我的网页</strong><small>仅支持 HTTPS，最多添加 12 个</small></div><button class="secondary-button" type="button" data-action="add-custom-site"><svg><use href="#i-plus"/></svg>添加网页</button></div><div id="customWebsiteSettings"></div></section>
               <section class="settings-section" data-settings-panel="shortcuts"><h3>全局快捷键</h3><p class="setting-intro">默认只启用显示／隐藏。其余组合键需要你主动开启，避免与输入法或学习软件冲突。</p><div id="shortcutSettings"></div></section>
               <section class="settings-section" data-settings-panel="privacy"><h3>数据与隐私</h3><div class="privacy-card"><div class="privacy-lock"><svg><use href="#i-check"/></svg></div><div><strong id="encryptionStatus">本地数据以明文保存</strong><p>笔记、任务、课程表与设置以明文保存在共享数据目录（当前版本未启用加密）。若你主动启用账号记忆，密码也保存在这个目录里，只会填入对应的学校登录页，不会提供给 AI 或写入备份。</p></div></div><div class="data-actions"><button class="secondary-button" id="exportData"><svg><use href="#i-download"/></svg>导出备份</button><button class="secondary-button" id="importData"><svg><use href="#i-upload"/></svg>恢复备份</button><button class="text-button" id="showData">查看数据位置 <svg><use href="#i-arrow"/></svg></button></div><p class="path-label">导出的 JSON 备份不含 API Key 或保存的网页密码，且不会额外加密；请像保管个人笔记一样妥善保存。</p><p class="path-label" id="dataPathLabel"></p><div class="data-share-row"><div><strong>与 Pinghe Launcher Lite 共用数据</strong><p id="dataShareHint">两个程序使用同一个数据目录时，会共用账号、日程和 AI 会话记录；本应用自己的任务、笔记与词汇仍单独保存。</p></div><div class="data-share-actions"><button class="secondary-button" type="button" id="shareDataLite" hidden>改用 Lite 的数据目录</button><button class="text-button" type="button" id="useOwnData" hidden>恢复本应用自己的目录</button></div></div></section>
@@ -302,6 +300,7 @@
     <script src="./calendar-ui.js"></script>
     <script src="./mail-ui.js"></script>
     <script src="./xinlv-ui.js"></script>
+    <script src="./phix-ui.js"></script>
     <script src="./dashboard-data.js"></script>
     <script src="./course-order.js"></script>
     <script src="./splash-ui.js"></script>
@@ -310,5 +309,6 @@
     <script src="./api-confirm.js"></script>
     <script src="./app.js"></script>
     <dialog class="modal onboarding-dialog" id="onboardingDialog"><form id="onboardingForm"><div class="modal-head"><div><span class="section-kicker">WELCOME</span><h3>欢迎使用 PH Launcher</h3></div><button type="button" id="onboardingClose" aria-label="关闭引导">×</button></div><div id="onboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="onboardingSkip">跳过引导</button><div><button class="secondary-button" type="button" id="onboardingBack">上一步</button><button class="primary-button" type="button" id="onboardingNext">下一步</button></div></div></form></dialog>
+    <dialog class="modal onboarding-dialog" id="phixOnboardingDialog"><form id="phixOnboardingForm"><div class="modal-head"><div><span class="section-kicker">PHIX</span><h3>phix 云同步账号</h3></div><button type="button" id="phixOnboardingClose" aria-label="关闭">×</button></div><div id="phixOnboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="phixOnboardingSkip">跳过</button><div id="phixOnboardingActions"></div></div></form></dialog>
   </body>
 </html>

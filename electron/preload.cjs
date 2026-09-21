@@ -141,7 +141,11 @@ contextBridge.exposeInMainWorld('ph', {
     discussion: (courseId, id) => ipcRenderer.invoke('school:discussion', courseId, id),
     task: (courseId, id) => ipcRenderer.invoke('school:task', courseId, id),
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
+    // 通知 / 待办（ManageBac）：未读数 + 待办条目（与网页端同一口径）
+    notifications: () => ipcRenderer.invoke('school:notifications'),
     openUrl: (url) => ipcRenderer.invoke('school:open-url', url),
+    // 导出课表（CSV 文本 / PNG dataURL）：主进程弹保存对话框再落盘。
+    exportTimetable: (input) => ipcRenderer.invoke('school:export-timetable', input),
     onPlanImported: (callback) => on('school:plan-imported', callback),
     onSynced: (callback) => on('school:synced', callback),
   },
@@ -152,6 +156,10 @@ contextBridge.exposeInMainWorld('ph', {
     contacts: () => ipcRenderer.invoke('mail:contacts'),
     harvestContacts: (options) => ipcRenderer.invoke('mail:harvestContacts', options),
     download: (input) => ipcRenderer.invoke('mail:download', input),
+    // 内嵌图片 / 转发带原附件用：只回字节，不弹保存对话框。
+    downloadBytes: (input) => ipcRenderer.invoke('mail:downloadBytes', input),
+    // 正文里的外部图片：由主进程取字节（沙箱 iframe 里直接 <img src="https://…"> 加载不出来）
+    fetchImage: (input) => ipcRenderer.invoke('mail:fetchImage', input),
     openLink: (input) => ipcRenderer.invoke('mail:openLink', input),
     send: (draft) => ipcRenderer.invoke('mail:send', draft),
     onCleared: (callback) => on('mail:cleared', callback),
@@ -190,5 +198,7 @@ contextBridge.exposeInMainWorld('ph', {
     close: () => ipcRenderer.send('window:close'),
   },
   onReady: (callback) => on('app:ready', callback),
+  //: 命令行 `--ph-force-onboarding`：让首启引导再出现一次（只影响这一次运行）。
+  onForceOnboarding: (callback) => on('app:force-onboarding', callback),
   onTrayNavigate: (callback) => on('tray:navigate', callback),
 });

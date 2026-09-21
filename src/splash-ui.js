@@ -1,41 +1,32 @@
 (() => {
   'use strict';
-  // Owns the startup overlay: the three bars reflect real work reported by the
-  // main process (school data, mail service, page preloading). The app is only
-  // revealed once they finish, so users never watch spinners inside the UI.
+  // Owns the startup overlay（2026-09-20 用户要求：三端统一成"开机画面"——
+  // 墨绿底、中间 logo、下面**一根**细进度条，没有任何文字）。
+  // 那一根条 = 主进程报的三件真实工作（学校数据 / 邮件服务 / 界面预载）的平均值，
+  // 三件都到 100% 才让界面露出来，所以用户不会在界面里看见转圈。
   const MIN_VISIBLE_MS = 900;
   const MAX_WAIT_MS = 25000;
+  // 用户 2026-09-21：「进度条走完以后等个半秒，然后再渐渐消失，不要一下子没掉，
+  // 让用户能看到进度条走完」。进度条自己也有 .35s 的宽度过渡，所以这半秒是
+  // 从"进度数字到 100%"开始算的 —— 半秒后开始淡出（淡出本身见 styles.css 的 .45s）。
+  const HOLD_AFTER_DONE_MS = 500;
+  const BARS = ['school', 'mail', 'preload'];
   const startedAt = Number(window.__phSplashStartedAt) || Date.now();
-  const state = { bars: {}, finished: false, revealed: false, timer: 0 };
+  const state = { bars: {}, finished: false, revealed: false, timer: 0, doneAt: 0 };
   let onReveal = null;
 
-  const fill = (bar) => document.querySelector(`.splash-bar-fill[data-bar="${bar}"]`);
-  const label = (bar) => document.querySelector(`.splash-bar-row[data-bar="${bar}"] .splash-bar-label`);
-  const hint = () => document.getElementById('splashHint');
+  const fill = () => document.getElementById('splashProgress');
 
-  function paint(bar, percent, text) {
-    const node = fill(bar);
-    if (node) {
-      node.style.width = `${Math.max(0, Math.min(100, percent))}%`;
-      node.classList.toggle('is-done', percent >= 100);
-    }
-    if (text) {
-      const nodeLabel = label(bar);
-      if (nodeLabel) nodeLabel.textContent = text;
-    }
-  }
-
+  /** 三件事的平均进度 → 那一根条。 */
   function paintAll(bars) {
-    for (const [bar, value] of Object.entries(bars || {})) {
-      state.bars[bar] = value;
-      paint(bar, value.percent, value.label);
-    }
+    for (const [bar, value] of Object.entries(bars || {})) state.bars[bar] = value;
+    const total = BARS.reduce((sum, bar) => sum + Math.max(0, Math.min(100, state.bars[bar]?.percent ?? 0)), 0) / BARS.length;
+    const node = fill();
+    if (node) node.style.width = `${total}%`;
+    return total;
   }
 
-  function allDone() {
-    const bars = ['school', 'mail', 'preload'];
-    return bars.every((bar) => (state.bars[bar]?.percent ?? 0) >= 100);
-  }
+  const allDone = () => BARS.every((bar) => (state.bars[bar]?.percent ?? 0) >= 100);
 
   function reveal() {
     if (state.revealed) return;
@@ -48,18 +39,14 @@
 
   function scheduleReveal() {
     if (state.revealed) return;
+    if (!state.doneAt) state.doneAt = Date.now();
     const elapsed = Date.now() - startedAt;
-    const wait = Math.max(0, MIN_VISIBLE_MS - elapsed);
+    const wait = Math.max(
+      0,
+      MIN_VISIBLE_MS - elapsed,             // 画面别一闪而过
+      state.doneAt + HOLD_AFTER_DONE_MS - Date.now()); // 走完了也要停半秒再淡出
     clearTimeout(state.timer);
     state.timer = setTimeout(reveal, wait);
-  }
-
-  function noteHint() {
-    const node = hint();
-    if (!node) return;
-    const pending = ['school', 'mail', 'preload'].filter((bar) => (state.bars[bar]?.percent ?? 0) < 100);
-    const labels = { school: '学校数据', mail: '邮件服务', preload: '界面预载' };
-    node.textContent = pending.length ? `正在${pending.map((bar) => labels[bar]).join('、')}…` : '准备就绪';
   }
 
   // The main process may have finished before this script ran, so ask once.
@@ -69,7 +56,6 @@
       if (!current) return;
       paintAll(current.bars);
       state.finished = Boolean(current.finished);
-      noteHint();
       if (state.finished) scheduleReveal();
     } catch { /* a missing bridge must not block the splash */ }
   }
@@ -79,17 +65,15 @@
     state.mounted = true;
     window.ph?.system?.onSplashProgress?.((payload) => {
       if (!payload?.bar) return;
-      state.bars[payload.bar] = { percent: payload.percent, label: payload.label };
-      paint(payload.bar, payload.percent, payload.label);
-      noteHint();
+      paintAll({ [payload.bar]: { percent: payload.percent } });
     });
     window.ph?.system?.onSplashDone?.((payload) => {
       paintAll(payload?.bars);
       state.finished = true;
-      noteHint();
       scheduleReveal();
     });
-    document.getElementById('splashSkip')?.addEventListener('click', reveal);
+    // 点一下画面就进去（原来那个「跳过」按钮上的文字被去掉了，点击区域留着）。
+    document.getElementById('splashScreen')?.addEventListener('click', reveal);
     // Never trap the user on the splash: reveal after a hard cap regardless.
     state.capTimer = setTimeout(reveal, MAX_WAIT_MS);
     void syncInitialState();
@@ -101,8 +85,7 @@
     onReveal = typeof callback === 'function' ? callback : null;
     mount();
     if (state.finished || allDone()) scheduleReveal();
-    else noteHint();
   }
 
-  window.splashUI = { mount, ready, reveal, paint, state };
+  window.splashUI = { mount, ready, reveal, paint: (bar, percent) => paintAll({ [bar]: { percent } }), state };
 })();

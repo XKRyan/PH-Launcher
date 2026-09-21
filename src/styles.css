@@ -136,6 +136,12 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 }
 .brand-mark span { font-size: 1rem; font-weight: 800; letter-spacing: -0.04em; }
 .brand-mark i { position: absolute; width: 8px; height: 8px; border-radius: 50%; right: -2px; bottom: -2px; background: var(--gold-500); border: 2px solid var(--green-900); }
+/* 侧栏左上角那颗换成软件自己的图标（图片），点整块回首页 —— 用户 2026-09-20 要求。 */
+img.brand-mark { display: block; flex: 0 0 39px; width: 39px; height: 39px; border-radius: 12px;
+  object-fit: contain; background: transparent; box-shadow: none;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .3)); transition: transform .16s ease; }
+.brand:hover img.brand-mark { transform: scale(1.05); }
+.brand:focus-visible { outline: 3px solid rgba(197, 160, 90, .48); outline-offset: 3px; border-radius: 12px; }
 .brand-mark.large { width: 60px; height: 60px; flex-basis: 60px; border-radius: 18px; background: var(--green-800); color: #fff; }
 .brand-mark.large span { font-size: 1.25rem; }
 .brand-mark.large i { width: 12px; height: 12px; border-color: #fff; }
@@ -251,21 +257,18 @@ kbd { padding: 2px 6px; margin-left: auto; border: 1px solid rgba(24,35,30,.12);
   .page { contain: layout style; backface-visibility: hidden; }
 }
 
-/* Startup splash: logo + per-platform progress bars */
-.splash-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: var(--ivory-100); z-index: 9999; }
-.splash-logo { opacity: 0; transform: scale(.92); animation: splashIn .5s ease-out .15s both; }
-.splash-bars { display: flex; flex-direction: column; gap: 12px; width: 280px; }
-.splash-bar-row { display: flex; align-items: center; gap: 12px; }
-.splash-bar-label { width: 110px; text-align: right; color: var(--ink-3); font-size: .8125rem; }
-.splash-bar { flex: 1; height: 5px; background: rgba(0,0,0,.08); border-radius: 999px; overflow: hidden; position: relative; }
-/* Real progress from the main process, not a decorative animation. */
-.splash-bar-fill { width: 0%; height: 100%; background: var(--green-800); border-radius: 999px; transition: width .35s cubic-bezier(.22,.61,.36,1), background .3s ease; }
-.splash-bar-fill.is-done { background: var(--green-700); }
-.splash-bar-row.is-active .splash-bar-label { color: var(--green-800); font-weight: 600; }
-.splash-hint { color: var(--ink-3); font-size: .875rem; }
-.splash-skip { position: absolute; bottom: 36px; color: var(--ink-3); font-size: .8125rem; background: none; border: none; cursor: pointer; opacity: .7; }
-.splash-skip:hover { opacity: 1; text-decoration: underline; }
-body.loaded .splash-screen { opacity: 0; transition: opacity .3s ease-out; pointer-events: none; }
+/* 启动画面（2026-09-20 用户要求，三端统一）：墨绿底 + 中间 logo + 一根细进度条，
+   **一个字都没有**，像 Mac 开机；右上角只有系统画的窗口控件。 */
+/* 淡出用 .45s：进度条走完还会先停 500ms（见 splash-ui.js 的 HOLD_AFTER_DONE_MS），
+   然后才渐渐消失 —— 用户 2026-09-21 要求"不要一下子没掉"。 */
+.splash-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; background: #102d25; z-index: 9999; transition: opacity .45s ease-out; }
+.splash-logo { opacity: 0; transform: scale(.94); animation: splashIn .5s ease-out .1s both; line-height: 0; }
+.splash-logo svg,.splash-logo img { width: 96px; height: 96px; display: block; }
+/* 真实进度（主进程报的三件事合成一根），不是装饰动画。 */
+.splash-bar { width: 220px; height: 4px; background: rgba(251,250,246,.16); border-radius: 999px; overflow: hidden; }
+.splash-bar-fill { width: 0%; height: 100%; background: var(--ivory-50); border-radius: 999px; transition: width .35s cubic-bezier(.22,.61,.36,1); }
+@keyframes splashIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+body.loaded .splash-screen { opacity: 0; pointer-events: none; }
 body.loaded .app-shell { opacity: 1; }
 .app-shell { opacity: 0; transition: opacity .25s ease-in; }
 
@@ -721,6 +724,17 @@ body.loaded .app-shell { opacity: 1; }
 .config-fields input:focus, .settings-section input:focus, .settings-section select:focus { border-color: rgba(31,90,70,.35); box-shadow: 0 0 0 3px rgba(31,90,70,.06); }
 .config-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 18px; }
 .config-actions .text-button { margin-left: auto; }
+/* 多服务商列表（AI 服务商随账号同步；字段名与网页端一致） */
+.ai-provider-card { margin-bottom: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--ivory-50); }
+.ai-provider-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ai-provider-default { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.8125rem; font-weight: 700; }
+.ai-provider-default input { width: 15px; height: 15px; accent-color: var(--green-800); }
+.ai-provider-name { overflow: hidden; color: var(--ink-3); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+.ai-provider-head .text-button { margin-left: auto; }
+.ai-provider-clear { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--ink-3); font-size: 0.8125rem; }
+.ai-provider-clear input { width: 14px; height: 14px; accent-color: var(--green-800); }
+.ai-provider-empty { padding: 18px; border: 1px dashed var(--border); border-radius: 14px; color: var(--ink-3); font-size: 0.875rem; text-align: center; }
+.ai-provider-meta { display: block; margin-top: 4px; color: var(--ink-3); font-size: 0.75rem; }
 .ai-off-illustration { display: grid; place-items: center; align-content: center; flex: 1; text-align: center; }
 .ai-off-illustration .empty-icon { width: 70px; height: 70px; border-radius: 22px; }
 .ai-off-illustration h3 { margin: 16px 0 4px; }
