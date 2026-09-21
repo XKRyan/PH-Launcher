@@ -166,4 +166,74 @@ async function streamOpenAiChat({ fetchImpl = fetch, url, headers, payload, sign
   return parser.finish();
 }
 
-module.exports = { streamOllamaChat, streamOpenAiChat, ndjsonStream, sseStream, collectToolCalls, mergeToolCall };
+// Anthropic Messages API 的 SSE：每个事件是 "event: X" + "data: {...}"。
+// 文本在 content_block_delta(delta.type='text_delta').delta.text；
+// 工具调用是 content_block_start(type='tool_use') 给出 id/name，
+// 随后 input_json_delta.partial_json 分片拼出参数 JSON。
+function anthropicSseStream(onDelta) {
+  let pending = '';
+  let content = '';
+  const blocks = new Map();
+  const consumeData = (payload) => {
+    const trimmed = payload.trim();
+    if (!trimmed) return;
+    let item;
+    try { item = JSON.parse(trimmed); } catch { return; }
+    if (item.type === 'error') throw new Error(String(item.error?.message || item.error || 'API 返回错误').slice(0, 240));
+    if (item.type === 'content_block_start' && item.content_block?.type === 'tool_use') {
+      blocks.set(Number(item.index) || 0, {
+        id: String(item.content_block.id || ''), name: String(item.content_block.name || ''), json: '',
+      });
+      return;
+    }
+    if (item.type === 'content_block_delta') {
+      const delta = item.delta || {};
+      if (delta.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
+        content += delta.text;
+        onDelta(delta.text);
+      }
+      if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+        const slot = blocks.get(Number(item.index) || 0) || { id: '', name: '', json: '' };
+        slot.json = String(slot.json || '') + delta.partial_json;
+        blocks.set(Number(item.index) || 0, slot);
+      }
+    }
+  };
+  return {
+    push(text) {
+      pending += text;
+      if (pending.length > MAX_STREAM_BYTES) throw new Error('AI 返回的数据块过长');
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        consumeData(line.slice(5));
+      }
+    },
+    finish() {
+      if (pending.trim().startsWith('data:')) consumeData(pending.trim().slice(5));
+      const toolCalls = [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, slot]) => ({
+        id: slot.id, type: 'function', function: { name: slot.name, arguments: slot.json || '{}' },
+      })).filter((call) => call.function.name);
+      return { content, toolCalls };
+    },
+  };
+}
+
+async function streamAnthropicChat({ fetchImpl = fetch, url, headers, payload, signal, onDelta }) {
+  const response = await fetchImpl(url, {
+    method: 'POST', headers, body: JSON.stringify({ ...payload, stream: true }), signal, redirect: 'error',
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 240);
+    throw new Error(`API 返回 ${response.status}${detail ? `：${detail}` : ''}`);
+  }
+  const parser = anthropicSseStream(onDelta);
+  await readResponseText(response, (text) => parser.push(text), signal);
+  return parser.finish();
+}
+
+module.exports = {
+  streamOllamaChat, streamOpenAiChat, streamAnthropicChat,
+  ndjsonStream, sseStream, anthropicSseStream, collectToolCalls, mergeToolCall,
+};
