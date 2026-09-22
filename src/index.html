@@ -307,6 +307,12 @@
     <script src="./appearance-ui.js"></script>
     <script src="./agent-ui.js"></script>
     <script src="./api-confirm.js"></script>
+    <!-- 第三方库（随程序分发，离线可用；来源/版本/许可见 src/vendor/README.md 与 THIRD_PARTY_NOTICES.md）
+         marked: 把 AI 回复的 Markdown 渲染成 HTML
+         DOMPurify: innerHTML 之前净化 —— AI 回复是外部输入，而 ph.ai 能读写文件、
+                    发邮件、提交作业，不能直接把它给的 HTML 塞进页面 -->
+    <script src="./vendor/marked.min.js"></script>
+    <script src="./vendor/purify.min.js"></script>
     <script src="./app.js"></script>
     <dialog class="modal onboarding-dialog" id="onboardingDialog"><form id="onboardingForm"><div class="modal-head"><div><span class="section-kicker">WELCOME</span><h3>欢迎使用 PH Launcher</h3></div><button type="button" id="onboardingClose" aria-label="关闭引导">×</button></div><div id="onboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="onboardingSkip">跳过引导</button><div><button class="secondary-button" type="button" id="onboardingBack">上一步</button><button class="primary-button" type="button" id="onboardingNext">下一步</button></div></div></form></dialog>
     <dialog class="modal onboarding-dialog" id="phixOnboardingDialog"><form id="phixOnboardingForm"><div class="modal-head"><div><span class="section-kicker">PHIX</span><h3>phix 云同步账号</h3></div><button type="button" id="phixOnboardingClose" aria-label="关闭">×</button></div><div id="phixOnboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="phixOnboardingSkip">跳过</button><div id="phixOnboardingActions"></div></div></form></dialog>

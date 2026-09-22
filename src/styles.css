@@ -753,6 +753,50 @@ body.loaded .app-shell { opacity: 1; }
 .chat-bubble { max-width: 72%; padding: 11px 13px; border-radius: 14px; color: var(--ink-2); background: var(--ivory-100); font-size: 0.9375rem; line-height: 1.65; white-space: pre-wrap; }
 .chat-message.user .chat-bubble { color: #fff; background: var(--green-800); border-bottom-right-radius: 4px; }
 .chat-message.assistant .chat-bubble { border-bottom-left-radius: 4px; }
+
+/* ---------- AI 回复里的 Markdown（渲染见 app.js 的 markdownToHtml）----------
+   AI 报课表/DDL/成绩时基本都用表格，讲代码时用围栏代码块；在此之前一律按纯文本显示。
+   气泡本身的 pre-wrap 只对用户手打的文字有意义，Markdown 渲染出来的块级元素要关掉它，
+   否则每个块之间都会多出空行。 */
+.chat-message.assistant .chat-bubble { white-space: normal; }
+.chat-bubble > :first-child { margin-top: 0; }
+.chat-bubble > :last-child { margin-bottom: 0; }
+.chat-bubble p { margin: 6px 0; }
+.chat-bubble h1, .chat-bubble h2, .chat-bubble h3, .chat-bubble h4, .chat-bubble h5, .chat-bubble h6 { margin: 12px 0 6px; line-height: 1.35; font-weight: 700; color: var(--ink); }
+.chat-bubble h1 { font-size: 1.15rem; }
+.chat-bubble h2 { font-size: 1.06rem; }
+.chat-bubble h3 { font-size: 1rem; }
+.chat-bubble h4, .chat-bubble h5, .chat-bubble h6 { font-size: 0.95rem; }
+.chat-bubble ul, .chat-bubble ol { margin: 6px 0; padding-left: 22px; }
+.chat-bubble ul { list-style: disc; }
+.chat-bubble ol { list-style: decimal; }
+.chat-bubble li { margin: 2px 0; }
+.chat-bubble li::marker { color: var(--ink-2); }
+/* 围栏代码块：深底浅字、可横向滚动、限高，长代码不至于撑破气泡 */
+.chat-bubble pre { margin: 8px 0; padding: 10px 12px; overflow: auto; max-height: 420px; border-radius: 10px; background: #14322a; color: #f4f1e8; }
+.chat-bubble pre code { padding: 0; background: none; color: inherit; font-size: 0.8125rem; line-height: 1.55; white-space: pre; font-family: Consolas, "Cascadia Mono", monospace; }
+.chat-bubble :not(pre) > code { padding: 1px 5px; border-radius: 4px; background: rgba(31,90,70,.1); color: var(--green-900); font-size: 0.8125rem; font-family: Consolas, "Cascadia Mono", monospace; word-break: break-word; }
+/* 表格：AI 报课表/成绩基本都用它。外层可横滚，避免撑破气泡宽度 */
+.chat-bubble table { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; border-collapse: collapse; font-size: 0.8125rem; white-space: nowrap; }
+.chat-bubble th, .chat-bubble td { padding: 5px 10px; border: 1px solid rgba(31,90,70,.16); text-align: left; }
+.chat-bubble th { background: rgba(31,90,70,.07); font-weight: 700; color: var(--ink); }
+.chat-bubble tr:nth-child(even) td { background: rgba(0,0,0,.015); }
+.chat-bubble blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 3px solid rgba(31,90,70,.28); color: var(--ink-2); }
+.chat-bubble hr { margin: 10px 0; border: none; border-top: 1px solid rgba(31,90,70,.16); }
+.chat-bubble a { color: var(--green-800); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.chat-bubble img { max-width: 100%; margin: 6px 0; border-radius: 10px; }
+.chat-bubble del { color: var(--ink-2); }
+
+/* ---------- 「思考过程」折叠块 ----------
+   思考模式的模型（DeepSeek 等）会把思考单独流出来；默认在正文到达前展开
+   （否则用户只看到长时间没动静，以为卡死），正文一到就收起。 */
+.chat-thinking { width: min(680px, 88%); margin-bottom: 7px; border: 1px dashed rgba(31,90,70,.24); border-radius: 12px; background: rgba(31,90,70,.035); font-size: 0.8125rem; }
+.chat-message.assistant > .chat-thinking { width: auto; max-width: 72%; }
+.chat-thinking > summary { display: flex; align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer; color: var(--ink-2); font-weight: 600; user-select: none; list-style: none; }
+.chat-thinking > summary::-webkit-details-marker { display: none; }
+.chat-thinking > summary::after { content: "▾"; margin-left: auto; opacity: .6; transition: transform .15s ease; }
+.chat-thinking[open] > summary::after { transform: rotate(180deg); }
+.chat-thinking-body { max-height: 260px; overflow: auto; padding: 2px 12px 10px; border-top: 1px dashed rgba(31,90,70,.18); color: var(--ink-2); line-height: 1.6; white-space: pre-wrap; }
 .ai-proposal-card { width: 100%; overflow: hidden; border: 1px solid rgba(31,90,70,.17); border-radius: 15px; background: rgba(255,255,255,.92); box-shadow: 0 9px 26px rgba(31,90,70,.08); }
 .proposal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 13px 14px 11px; background: linear-gradient(110deg, var(--green-50), rgba(247,240,221,.72)); }
 .proposal-head div { display: flex; flex-direction: column; }

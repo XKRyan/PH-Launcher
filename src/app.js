@@ -79,6 +79,9 @@ const state = {
   aiBusy: false,
   aiRequestId: '',
   aiStreamStatus: '',
+  // 「思考过程」是否被用户手动展开过。undefined = 跟着流式自动（正文没开始时展开）；
+  // true/false = 用户点过，之后重渲染都听他的。
+  aiThinkingOpen: undefined,
   aiLocalWarmup: { localWarmup: 'idle', detail: '' },
   aiUseMemories: undefined,
   aiMemoryProvider: '',
@@ -111,6 +114,49 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+/* ---------------- AI 回复的 Markdown 渲染 ----------------
+   消息本来就是 Markdown（标题/表格/围栏代码块/有序列表/引用/链接），
+   在此之前一律走 escapeHtml 按纯文本显示，于是课表、DDL、代码全成了糊在一起的原文。
+   渲染交给 src/vendor/marked（MIT），再过一遍 src/vendor/DOMPurify 净化。
+
+   **净化不能省**：AI 回复是外部输入，而 window.ph.ai 能读写工作区文件、发邮件、
+   提交作业；回复里被塞一段 <img onerror=...> 就等于把这些能力交出去。 */
+function markdownToHtml(value) {
+  const text = String(value ?? '');
+  if (!text.trim()) return '';
+  const plain = () => escapeHtml(text).replaceAll('\n', '<br>');
+  const marked = window.marked;
+  const purify = window.DOMPurify;
+  if (!marked || typeof marked.parse !== 'function' || !purify || typeof purify.sanitize !== 'function') {
+    return plain();   // 兜底：库没加载时至少别白屏
+  }
+  try {
+    const html = marked.parse(text, { gfm: true, breaks: true, async: false });
+    const clean = purify.sanitize(html, {
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['style', 'srcset'],
+      ALLOW_DATA_ATTR: false,
+    });
+    // marked 的块级输出会以换行收尾（`<p>…</p>\n`），那会让 DOM 的 textContent
+    // 多出一个末尾换行 —— 显示上无所谓，但任何 textContent 比较都会被它绊倒。
+    return clean.trim();
+  } catch {
+    return plain();
+  }
+}
+
+/* 思考模式的模型（DeepSeek 等）会单独流出一段"思考过程"。
+   正文还没开始时默认展开 —— 否则用户只看到长时间没动静，以为卡死了；
+   正文一到就收起，之后由用户自己决定看不看。 */
+function thinkingMarkup(reasoning, hasContent, forceOpen) {
+  const text = String(reasoning || '');
+  if (!text.trim()) return '';
+  const open = forceOpen === undefined ? !hasContent : forceOpen;
+  return `<details class="chat-thinking"${open ? ' open' : ''}>`
+    + `<summary><span class="chat-thinking-dot" aria-hidden="true">🧠</span>思考过程</summary>`
+    + `<div class="chat-thinking-body">${escapeHtml(text)}</div></details>`;
 }
 
 function uid() {
@@ -1809,11 +1855,17 @@ function renderChat() {
   const messages = state.aiMessages.filter((message) => message.role !== 'system');
   $('#chatMessages').innerHTML = messages.map((message) => {
     const visibleContent = message.streaming && !message.content ? (window.i18n?.t(state.aiStreamStatus || '正在连接 AI…') || state.aiStreamStatus || '正在连接 AI…') : message.content;
-    const content = `<div class="chat-bubble">${escapeHtml(visibleContent)}</div>`;
+    // AI 的回复按 Markdown 渲染；用户自己打的字按纯文本原样显示
+    // （他写什么就看到什么，不替他解释星号和井号）。
+    const body = message.role === 'assistant' ? markdownToHtml(visibleContent) : escapeHtml(visibleContent);
+    const content = `<div class="chat-bubble">${body}</div>`;
+    const thinking = message.role === 'assistant'
+      ? thinkingMarkup(message.reasoning, Boolean(String(message.content || '').trim()), state.aiThinkingOpen)
+      : '';
     if (message.role === 'assistant' && message.proposal) {
-      return `<div class="chat-message assistant"><div class="chat-response">${content}${proposalMarkup(message.proposal)}</div></div>`;
+      return `<div class="chat-message assistant"><div class="chat-response">${thinking}${content}${proposalMarkup(message.proposal)}</div></div>`;
     }
-    return `<div class="chat-message ${escapeHtml(message.role)}">${content}</div>`;
+    return `<div class="chat-message ${escapeHtml(message.role)}">${thinking}${content}</div>`;
   }).join('') + (state.aiBusy && !messages.some((message) => message.streaming) ? `<div class="chat-message assistant"><div class="chat-bubble">${escapeHtml(state.aiStreamStatus || '正在处理…')}</div></div>` : '');
   $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
   const send = $('#aiSend');
@@ -1952,6 +2004,7 @@ async function sendAiMessage() {
   state.aiBusy = true;
   state.aiRequestId = requestId;
   state.aiStreamStatus = state.aiLocalWarmup.localWarmup === 'warming' ? '正在准备本机模型…' : '正在连接 AI…';
+  state.aiThinkingOpen = undefined;   // 新一轮重新按"自动展开"来
   window.agentUI?.scheduleSave();
   renderChat();
   const system = {
@@ -3318,6 +3371,13 @@ function bindEvents() {
     if (confirmId) confirmAiProposal(confirmId);
     if (cancelId) cancelAiProposal(cancelId);
   });
+  // renderChat 每次都会重建整段 innerHTML，<details> 的展开状态会被重置。
+  // 记住用户点过的状态，重渲染时沿用 —— 否则流式期间刚展开又被收回去。
+  $('#chatMessages').addEventListener('toggle', (event) => {
+    if (event.target instanceof HTMLDetailsElement && event.target.classList.contains('chat-thinking')) {
+      state.aiThinkingOpen = event.target.open;
+    }
+  }, true);
   $('#aiEditConfig').addEventListener('click', beginAiEditing);
   $('#aiConfigPanel').addEventListener('click', handleAiConfigPanelClick);
 
@@ -3589,6 +3649,8 @@ async function init() {
     if (!message) return;
     if (event.type === 'status') state.aiStreamStatus = String(event.status || '正在生成…');
     if (event.type === 'delta') message.content += String(event.delta || '');
+    // 思考内容单独攒：它要折进「思考过程」块里，不跟正文混在一起
+    if (event.type === 'reasoning') message.reasoning = (message.reasoning || '') + String(event.delta || '');
     renderChat();
   });
   window.ph.ai.onCommand((command) => {

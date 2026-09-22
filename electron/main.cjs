@@ -37,6 +37,8 @@ const { canStartConfiguredLocalRuntime, ensureDefaultInstalledOllamaService } = 
 const { streamOllamaChat, streamOpenAiChat, streamAnthropicChat } = require('./ai-stream.cjs');
 // AI 服务商配置的规范形态（与网页端/PLL 共用的同步对象 settings.ai）
 const aiConfig = require('./ai-config.cjs');
+// 线格式转换与空回复提示：单独成模块才测得到（main.cjs 一 require 就建窗口）
+const { openAiMessages, needsReasoningPassthrough, emptyReplyMessage } = require('./ai-messages.cjs');
 // 名字直说：这是与 PLL / 网页端共用的那份同步对象所在的模块（同一套 `settings.yaml`）。
 const syncCloudsync = require('./cloudsync.cjs');
 const {
@@ -2817,6 +2819,18 @@ function anthropicMessages(messages) {
   return { system, messages: cleaned.length ? cleaned : [{ role: 'user', content: [{ type: 'text', text: '…' }] }] };
 }
 
+/**
+ * 思考模式的 provider（DeepSeek 等）要求把思考内容原样回传给 API，否则
+ * **工具轮的第二轮**会被 400 拒：
+ *   The `reasoning_content` in the thinking mode must be passed back to the API.
+ * 实测（2026-09-22）：只有「带工具调用的 assistant 轮」强制要求；该字段必须是
+ * **字符串**——`""` 可以，`null` 与「字段缺失」都会被拒。
+ * 做法：第一次照常发，撞到该报错再补上重发一次，并把结论记进下面这个集合
+ * （按 服务地址+模型 区分）。之后不再多花请求，对不需要该字段的 provider 零影响。
+ * 线格式转换本身在 ai-messages.cjs 里。
+ */
+const reasoningPassthroughKeys = new Set();
+
 function anthropicTools(tools) {
   return (Array.isArray(tools) ? tools : [])
     .filter((tool) => tool?.function?.name)
@@ -2828,7 +2842,7 @@ function anthropicTools(tools) {
 }
 
 /** Anthropic 协议的一轮请求（服务商配置里 protocol: 'anthropic'）。 */
-async function requestAnthropicTurn(config, messages, tools, endpoint, { signal, onDelta } = {}) {
+async function requestAnthropicTurn(config, messages, tools, endpoint, { signal, onDelta, onReasoning } = {}) {
   const url = new URL(endpoint.toString());
   if (!/\/v1\/messages\/?$/.test(url.pathname)) {
     url.pathname = `${url.pathname.replace(/\/$/, '')}/v1/messages`.replace(/\/+/g, '/');
@@ -2847,12 +2861,14 @@ async function requestAnthropicTurn(config, messages, tools, endpoint, { signal,
     'x-api-key': config.apiKey,
     'anthropic-version': ANTHROPIC_VERSION,
   };
-  if (onDelta) {
-    const body = await streamAnthropicChat({ url, headers, payload, signal, onDelta });
+  if (onDelta || onReasoning) {
+    const body = await streamAnthropicChat({ url, headers, payload, signal, onDelta, onReasoning });
     return {
       role: 'assistant',
       content: String(body.content || '').slice(0, 32_000),
+      ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
       ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+      ...(body.finishReason ? { finishReason: String(body.finishReason) } : {}),
     };
   }
   const response = await fetch(url, {
@@ -2876,7 +2892,7 @@ async function requestAnthropicTurn(config, messages, tools, endpoint, { signal,
   };
 }
 
-async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) {
+async function requestAiTurn(config, messages, tools, { signal, onDelta, onReasoning } = {}) {
   const deadline = AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   if (config.provider === 'local') {
@@ -2898,10 +2914,11 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     if (payload.stream) {
       // Streaming is enabled even when tools are offered: content deltas are
       // shown as they arrive and tool calls are merged from the same stream.
-      const body = await streamOllamaChat({ url, payload, signal: requestSignal, onDelta });
+      const body = await streamOllamaChat({ url, payload, signal: requestSignal, onDelta, onReasoning });
       return {
         role: 'assistant',
         content: String(body.content || '').slice(0, 32_000),
+        ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
         ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
       };
     }
@@ -2929,28 +2946,49 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     // 协议由服务商配置决定（网页端/PLL/PHL 共用的规范形态里就有 protocol 字段）
     const protocol = ['openai', 'anthropic'].includes(String(config.apiProtocol || '').trim())
       ? String(config.apiProtocol).trim() : 'openai';
-    if (protocol === 'anthropic') return requestAnthropicTurn(config, messages, tools, endpoint, { signal: requestSignal, onDelta });
+    if (protocol === 'anthropic') return requestAnthropicTurn(config, messages, tools, endpoint, { signal: requestSignal, onDelta, onReasoning });
     if (!/\/chat\/completions\/?$/.test(endpoint.pathname)) {
       const base = endpoint.pathname.replace(/\/$/, '');
       endpoint.pathname = `${base}/chat/completions`.replace(/\/+/g, '/');
     }
-    const payload = { model: config.apiModel, messages };
+    const payload = { model: config.apiModel };
     if (tools.length) payload.tools = tools;
-    if (onDelta) {
+    if (onDelta || onReasoning) {
       // Providers stream content deltas and any tool calls over SSE; both are
       // merged so the user sees text as it is generated.
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` };
-      const body = await streamOpenAiChat({ url: endpoint, headers, payload, signal: requestSignal, onDelta });
+      const reasoningKey = `${endpoint.origin}${endpoint.pathname}|${String(config.apiModel || '')}`;
+      const send = (passReasoning) => streamOpenAiChat({
+        url: endpoint, headers: { ...headers },
+        payload: { ...payload, messages: openAiMessages(messages, passReasoning) },
+        signal: requestSignal, onDelta, onReasoning,
+      });
+      let body;
+      try {
+        body = await send(reasoningPassthroughKeys.has(reasoningKey));
+      } catch (error) {
+        // 思考模式的 provider（DeepSeek 等）在**工具轮**强制要求把 reasoning_content
+        // 原样回传，否则第二轮直接被 400 拒。撞到就补上重发一次，并记下来。
+        if (!reasoningPassthroughKeys.has(reasoningKey) && needsReasoningPassthrough(error)) {
+          reasoningPassthroughKeys.add(reasoningKey);
+          onStatus?.('该模型要求回传思考内容，已自动适配并重试。');
+          body = await send(true);
+        } else {
+          throw error;
+        }
+      }
       return {
         role: 'assistant',
         content: String(body.content || '').slice(0, 32_000),
+        ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
         ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+        ...(body.finishReason ? { finishReason: String(body.finishReason) } : {}),
       };
     }
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, messages: openAiMessages(messages, false) }),
       signal: requestSignal,
     });
     if (!response.ok) {
@@ -2959,10 +2997,14 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     }
     const body = await response.json();
     const message = body.choices?.[0]?.message || {};
+    const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content
+      : (typeof message.reasoning === 'string' ? message.reasoning : '');
     return {
       role: 'assistant',
       content: String(message.content || '').slice(0, 32_000),
+      ...(reasoning ? { reasoning: reasoning.slice(0, 32_000) } : {}),
       ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls.slice(0, 16) } : {}),
+      ...(body.choices?.[0]?.finish_reason ? { finishReason: String(body.choices[0].finish_reason) } : {}),
     };
   }
   throw new Error('未知 AI 类型');
@@ -2993,7 +3035,7 @@ function shouldOfferMailTools(messages) {
   return followUpAction.test(current) && userMessages.slice(-4, -1).some((message) => mailSubject.test(message));
 }
 
-async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connectionKey, attachmentIds = [], attachmentApiConsent = false } = {}) {
+async function aiChat(messages, { signal, onDelta, onReasoning, onStatus, useMemories, connectionKey, attachmentIds = [], attachmentApiConsent = false } = {}) {
   assertHistoryConnection(connectionKey);
   const config = secureStore.data.settings.ai;
   if (!config.enabled || config.provider === 'off') throw new Error('AI 尚未启用');
@@ -3049,6 +3091,8 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
   const writeKeys = new Set();
   let toolCount = 0;
   let finalContent = '';
+  // 最后一轮的 finish_reason：回复为空时用它给出一句能照着修的提示
+  let lastAssistantFinishReason = '';
   let mailRevision = null;
   let launcherRevision = null;
   const assertLauncherReadCurrent = () => {
@@ -3070,7 +3114,11 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
     onStatus?.('正在生成…');
     let assistant;
     try {
-      assistant = await requestAiTurn(config, working, tools, { signal, onDelta: tools.length ? null : onDelta });
+      // 流式**不再**因"提供了工具"而关闭：正文增量与工具调用本来就走在同一条
+      // SSE 里，前端会把增量显示出来、把工具调用合并起来。
+      // （旧代码在这里把 onDelta 置成 null —— 结果是只要开了 AI 控制权
+      //  （也就是提供了工具）就永远看不到流式输出。）
+      assistant = await requestAiTurn(config, working, tools, { signal, onDelta, onReasoning, onStatus });
     } catch (error) {
       if (error?.name === 'TimeoutError') {
         throw new Error(config.provider === 'api'
@@ -3081,6 +3129,7 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
     }
     const calls = normalizedToolCalls(assistant);
     finalContent = String(assistant.content || '').trim();
+    lastAssistantFinishReason = String(assistant.finishReason || '');
     if (!calls.length || !controlEnabled || !tools.length) break;
     working.push(assistant);
     for (let index = 0; index < calls.length; index += 1) {
@@ -3136,7 +3185,12 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
       })
     : null;
   if (!finalContent) {
-    finalContent = proposal ? '我已整理出一份更改清单。它还没有写入，请先核对下面每一项。' : '没有收到有效回复。';
+    // 空回复要给一句**能照着修**的话。思考模式的模型会把输出预算先用在思考上，
+    // 用光时 API 会返回 HTTP 200 + 空 content + finish_reason=length（不抛异常），
+    // 以前只会显示"没有收到有效回复"，用户完全不知道该改什么。
+    finalContent = proposal
+      ? '我已整理出一份更改清单。它还没有写入，请先核对下面每一项。'
+      : emptyReplyMessage(lastAssistantFinishReason, config);
   }
   return { content: finalContent, proposal, controlUsed: controlEnabled && toolCount > 0 };
 }
@@ -3261,6 +3315,7 @@ async function streamAiChat(event, requestId, messages, options = {}) {
     emit({ type: 'status', status: config.provider === 'local' ? '正在连接本机模型…' : '正在连接 AI…' });
     await avoidWarmupRace(config);
     let receivedToken = false;
+    let receivedThinking = false;
     const result = await aiChat(messages, {
       useMemories: options?.useMemories === true,
       connectionKey: options?.connectionKey,
@@ -3270,6 +3325,12 @@ async function streamAiChat(event, requestId, messages, options = {}) {
       onDelta: (delta) => {
         if (!receivedToken) { receivedToken = true; emit({ type: 'status', status: '正在生成…' }); }
         emit({ type: 'delta', delta: String(delta || '') });
+      },
+      // 思考模式的模型会把思考内容单独流出来。单独发一种事件，
+      // 前端折进「思考过程」块里，不跟正文混在一起。
+      onReasoning: (text) => {
+        if (!receivedThinking) { receivedThinking = true; emit({ type: 'status', status: '正在思考…' }); }
+        emit({ type: 'reasoning', delta: String(text || '') });
       },
       onStatus: (status) => emit({ type: 'status', status }),
     });
@@ -5026,7 +5087,31 @@ async function runSelfTest() {
   sendToRenderer('ai:stream', { requestId: 'old-other-session', type: 'delta', delta: 'SHOULD_NOT_APPEAR' });
   sendToRenderer('ai:stream', { requestId: 'ui-stream-test', type: 'delta', delta: 'student' });
   checks.streamedTextVisible = await mainWindow.webContents.executeJavaScript("document.querySelector('#chatMessages .chat-bubble').textContent === 'Hello student' && document.querySelector('#aiSend').title === '停止生成'");
-  await mainWindow.webContents.executeJavaScript("state.aiRequestId=''; state.aiBusy=false; state.aiMessages=[]; window.i18n.apply('en');");
+
+  // 思考内容：走单独的流事件，折进「思考过程」块；正文到达后不该和正文混在一起。
+  sendToRenderer('ai:stream', { requestId: 'ui-stream-test', type: 'reasoning', delta: '先看课表。' });
+  checks.reasoningStreamed = await mainWindow.webContents.executeJavaScript(
+    "(() => { const el = document.querySelector('#chatMessages .chat-thinking');"
+    + " return Boolean(el) && el.querySelector('.chat-thinking-body').textContent === '先看课表。'; })()");
+  checks.reasoningCollapsedOnceAnswerArrives = await mainWindow.webContents.executeJavaScript(
+    "document.querySelector('#chatMessages .chat-thinking').open === false");
+  checks.reasoningSeparateFromAnswer = await mainWindow.webContents.executeJavaScript(
+    "document.querySelector('#chatMessages .chat-bubble').textContent === 'Hello student'");
+
+  // Markdown：AI 回复按 Markdown 渲染（表格/代码块/标题），并且危险标签被清掉。
+  checks.markdownRendered = await mainWindow.webContents.executeJavaScript(
+    "(() => { const host = document.createElement('div');"
+    + " host.innerHTML = markdownToHtml('# 标题\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n\\n```python\\nprint(1)\\n```\\n\\n**粗**');"
+    + " return Boolean(host.querySelector('h1')) && Boolean(host.querySelector('table th'))"
+    + " && Boolean(host.querySelector('pre code')) && Boolean(host.querySelector('strong')); })()");
+  checks.markdownSanitized = await mainWindow.webContents.executeJavaScript(
+    "(() => { const host = document.createElement('div');"
+    + " host.innerHTML = markdownToHtml('<img src=x onerror=alert(1)>\\n\\n<iframe src=//x></iframe>');"
+    + " return !host.querySelector('iframe') && !host.innerHTML.includes('onerror'); })()");
+  checks.markdownVendorsLoaded = await mainWindow.webContents.executeJavaScript(
+    "typeof window.marked?.parse === 'function' && typeof window.DOMPurify?.sanitize === 'function'");
+
+  await mainWindow.webContents.executeJavaScript("state.aiRequestId=''; state.aiBusy=false; state.aiMessages=[]; state.aiThinkingOpen=undefined; window.i18n.apply('en');");
   checks.languageSwitchWorks = await mainWindow.webContents.executeJavaScript("document.documentElement.lang === 'en' && document.querySelector('[data-route=settings] span').textContent==='Settings'");
   checks.success = Object.values(checks).every(Boolean);
   console.log(`SELF_TEST_RESULT ${JSON.stringify(checks)}`);
