@@ -942,7 +942,9 @@ test('main process keeps school views isolated and web security enabled', () => 
 
 test('package config includes hardened Universal macOS DMG, ZIP and PKG targets', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(packageJson.version, '1.0.7');
+  // 版本号每次发版都会动，这里只钉住"是个 semver 三段式"，不再钉具体数字 ——
+  // 原来写死 '1.0.7'，一发版就红（2026-09-22 bump 到 1.0.8 时撞上）。
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+$/);
   assert.equal(packageJson.devDependencies.electron, '44.2.0');
   assert.equal(packageJson.build.mac.minimumSystemVersion, '13.0');
   assert.equal(packageJson.build.mac.hardenedRuntime, true);

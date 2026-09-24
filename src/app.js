@@ -79,6 +79,13 @@ const state = {
   aiBusy: false,
   aiRequestId: '',
   aiStreamStatus: '',
+  // 用户在 AI 页点了「本地 / API」但还没保存的那个选择。
+  // 主进程每推一次数据快照，state.data 就会被整体替换，而快照里的 provider 还是旧值
+  // ——不兜住它，选择会在半秒内被抹回去（用户实测："点啥都跳回不使用 AI"）。
+  aiPendingProvider: '',
+  //: #aiConfigPanel 当前渲染的是哪个 provider。数据刷新时据此跳过重建，
+  //: 免得把用户正在填的表单一起清掉。
+  aiPanelProvider: '',
   // 「思考过程」是否被用户手动展开过。undefined = 跟着流式自动（正文没开始时展开）；
   // true/false = 用户点过，之后重渲染都听他的。
   aiThinkingOpen: undefined,
@@ -1370,13 +1377,13 @@ async function loadHardwareProfile() {
     state.hardware = { error: error.message };
   } finally {
     state.hardwareLoading = false;
-    if (state.route === 'ai') renderAiConfig();
+    if (state.route === 'ai') renderAiConfig(true);
   }
 }
 
 function renderAi() {
   if (!state.data) return;
-  const ai = state.data.settings.ai;
+  const ai = effectiveAi();
   const enabled = isAiConfigured(ai);
   const showSetup = !enabled || state.aiEditing;
   if (showSetup && !state.aiEditConfig) state.aiEditConfig = { ...ai };
@@ -1401,7 +1408,7 @@ function renderAi() {
   $('#aiEditConfig').classList.toggle('hidden', !enabled || showSetup);
   $$('.ai-choice-list > button').forEach((button) => button.classList.toggle('active', button.dataset.aiProvider === ai.provider));
   if (showSetup) {
-    renderAiConfig();
+    renderAiConfig(/* data refresh: don't rebuild the form */);
     if (state.route === 'ai') loadHardwareProfile();
   } else {
     if (!state.aiMessages.length) {
@@ -1411,6 +1418,22 @@ function renderAi() {
     renderChat();
   }
   $('#aiNavBadge').textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
+}
+
+/**
+ * 当前"界面上看到的" AI 配置。
+ *
+ * 用户在 AI 页点了「本地 / API」之后，这个选择**只存在内存里**（等他填完表单再保存）。
+ * 但主进程每推一次数据快照（学校同步、邮箱、phix 同步…），`state.data` 就会被整体替换，
+ * 那份快照里的 provider 还是旧值 —— 于是不到一秒选择就被抹回「不使用 AI」，
+ * 连带正在填的表单也被重建。用户看到的就是"点啥东西都跳回不使用 AI"（2026-09-24 报）。
+ *
+ * 这里把未保存的选择叠加在快照之上；真正保存（configureAi 成功）或离开这一页时清除。
+ */
+function effectiveAi() {
+  const ai = state.data.settings.ai;
+  if (!state.aiPendingProvider || state.aiPendingProvider === ai.provider) return ai;
+  return { ...ai, provider: state.aiPendingProvider };
 }
 
 function isAiConfigured(ai) {
@@ -1437,6 +1460,9 @@ function leaveAiSetup() {
   if (previousConfig) state.data.settings.ai = { ...previousConfig };
   state.aiEditConfig = null;
   state.aiEditing = false;
+  // 离开这一页就把"还没保存的选择"丢掉，别让它影响下次进来时的显示
+  state.aiPendingProvider = '';
+  state.aiPanelProvider = '';
   if (returnToChat) {
     renderAi();
     setTimeout(() => $('#aiInput')?.focus(), 30);
@@ -1516,10 +1542,15 @@ function localDeploymentMarkup(recommendation) {
     </section>`;
 }
 
-function renderAiConfig() {
+function renderAiConfig(force = false) {
   if (!state.data) return;
-  const ai = state.data.settings.ai;
+  const ai = effectiveAi();
   const panel = $('#aiConfigPanel');
+  // 数据刷新会走到这里。若面板已经在显示同一个 provider，就**不要重建** ——
+  // 重建会把用户正在填的服务商行、Base URL、Key 全部清掉。
+  // 需要强制刷新（例如硬件检测回来、保存后重画）时传 force。
+  if (!force && state.aiPanelProvider === ai.provider && panel.childElementCount) return;
+  state.aiPanelProvider = ai.provider;
   if (ai.provider === 'off') {
     panel.innerHTML = `<div class="ai-off-illustration"><div class="empty-icon">${icon('i-spark')}</div><h3>AI 保持关闭</h3><p>三所学校入口、笔记、任务、课程提醒、计时器和 IB 工具仍可完整使用。不会下载模型，也不会连接任何 AI 服务。</p></div><div class="config-actions"><button class="primary-button" id="saveAiOff">保持关闭</button></div>`;
     return;
@@ -1641,7 +1672,7 @@ async function handleAiConfigPanelClick(event) {
     // 先把界面上已有的编辑读回来，再加一条空行 —— 否则"添加服务商"会把刚填的内容清掉。
     const current = readAiProvidersFromPanel();
     state.data.settings.ai.providers = [...current.providers, blankAiProvider()];
-    renderAiConfig();
+    renderAiConfig(true);
   }
   const removeProvider = event.target.closest('[data-remove-provider]');
   if (removeProvider) {
@@ -1652,7 +1683,7 @@ async function handleAiConfigPanelClick(event) {
       : current.default_index > index ? current.default_index - 1 : current.default_index;
     state.data.settings.ai.providers = providers;
     state.data.settings.ai.default_index = Math.min(Math.max(defaultIndex, 0), Math.max(providers.length - 1, 0));
-    renderAiConfig();
+    renderAiConfig(true);
   }
   if (event.target.closest('#deployLocalAi')) startLocalAiDeployment();
   if (event.target.closest('#cancelLocalDeployment')) cancelLocalAiDeployment();
@@ -1663,7 +1694,7 @@ async function handleAiConfigPanelClick(event) {
   if (event.target.closest('#refreshHardware')) {
     state.hardware = null;
     state.hardwareLoading = false;
-    renderAiConfig();
+    renderAiConfig(true);
     loadHardwareProfile();
   }
   if (event.target.closest('#copyModelCommand')) {
@@ -1677,7 +1708,7 @@ async function handleAiConfigPanelClick(event) {
     const saved = await window.ph.ai.configure({ clearApiKey: true, enabled: false });
     state.data.settings.ai = saved;
     await window.agentUI?.loadHistory?.();
-    renderAiConfig();
+    renderAiConfig(true);
     toast('API Key 已删除');
   }
 }
@@ -1686,7 +1717,7 @@ async function startLocalAiDeployment() {
   if (state.aiDeployment?.running) return;
   try {
     state.aiDeployment = await window.ph.ai.deployLocal();
-    renderAiConfig();
+    renderAiConfig(true);
     toast('本地 AI 一键部署已开始');
   } catch (error) {
     toast(`无法开始部署：${error.message}`, 'error');
@@ -1697,7 +1728,7 @@ async function cancelLocalAiDeployment() {
   if (!state.aiDeployment?.running) return;
   try {
     state.aiDeployment = await window.ph.ai.cancelDeployment();
-    renderAiConfig();
+    renderAiConfig(true);
   } catch (error) {
     toast(`无法取消部署：${error.message}`, 'error');
   }
@@ -1750,6 +1781,9 @@ async function configureAi(provider) {
     state.data.settings.ai = saved;
     state.aiEditing = false;
     state.aiEditConfig = null;
+    // 已经落到主进程了，pending 的使命结束 —— 不清的话下次点开还会拿它覆盖真值
+    state.aiPendingProvider = '';
+    state.aiPanelProvider = '';
     await window.agentUI?.loadHistory?.();
     renderAi();
     toast(provider === 'off' ? 'AI 已保持关闭' : 'AI 连接设置已保存');
@@ -3169,10 +3203,15 @@ function handleBodyClick(event) {
       toast('请先取消正在进行的本地 AI 部署', 'error');
       return;
     }
-    state.data.settings.ai.provider = aiProvider.dataset.aiProvider;
+    const picked = aiProvider.dataset.aiProvider;
+    state.data.settings.ai.provider = picked;
     state.data.settings.ai.enabled = false;
+    // 这个选择还没保存（用户要先填表单）。记进 pending，好让它在数据刷新
+    // 替换掉 state.data 之后仍然留在界面上 —— 否则不到一秒就跳回「不使用 AI」。
+    state.aiPendingProvider = picked;
+    state.aiPanelProvider = '';   // 换了 provider，面板必须重画
     $$('.ai-choice-list > button').forEach((button) => button.classList.toggle('active', button === aiProvider));
-    renderAiConfig();
+    renderAiConfig(true);
   }
 
   const template = event.target.closest('[data-template]');
@@ -3628,7 +3667,7 @@ async function init() {
         state.aiEditing = false;
         renderAi();
       } else if (!$('#aiSetup').classList.contains('hidden')) {
-        renderAiConfig();
+        renderAiConfig(true);
       }
     }
     if (deployment.stage !== previousStage) {
