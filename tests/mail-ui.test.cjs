@@ -22,7 +22,7 @@ function harness({ saved = true, sendResult = { ok: true } } = {}) {
     status: async () => { calls.status += 1; return { saved }; },
     list: async (options) => { calls.list.push(options); return { items: [{ uid: 'one', subject: '<img src=x>', from: { name: '学校通知', address: 'notice@example.test' }, date: '2026-09-06T08:00:00Z', unread: true }, { uid: 'two', subject: '普通邮件', from: { address: 'teacher@example.test' }, date: '2026-09-05T08:00:00Z', unread: false }] }; },
     contacts: async () => { calls.contacts += 1; return [{ name: '李老师', address: 'teacher@example.test' }]; },
-    read: async (uid) => { calls.read.push(uid); return { uid, subject: '<b>纯文本</b>', from: { name: '学校通知', address: 'notice@example.test' }, to: [{ name: 'Student', address: 'student@example.test' }], date: '2026-09-06T08:00:00Z', text: '正文 <img src=x>', attachments: [{ id: 'a1', name: '安排.pdf', size: 2048 }] }; },
+    read: async (uid) => { calls.read.push(uid); return { uid, markedSeen: true, subject: '<b>纯文本</b>', from: { name: '学校通知', address: 'notice@example.test' }, to: [{ name: 'Student', address: 'student@example.test' }], date: '2026-09-06T08:00:00Z', text: '正文 <img src=x>', attachments: [{ id: 'a1', name: '安排.pdf', size: 2048 }] }; },
     download: async (input) => { calls.download.push(input); return { ok: true, canceled: false }; },
     harvestContacts: async () => { calls.harvest += 1; return { folders: 2 }; },
     send: async (input) => { calls.send.push(input); return sendResult; },
@@ -38,6 +38,61 @@ function harness({ saved = true, sendResult = { ok: true } } = {}) {
 }
 
 function click(window, node) { node.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true })); }
+
+test('confirmed reads update unread rows and counts even after switching to another message', async () => {
+  const ui = harness();
+  const first = deferred();
+  ui.window.ph.mail.read = (uid) => uid === 'one' ? first.promise : Promise.resolve({ uid, markedSeen: true, text: 'second body' });
+  const counts = [];
+  ui.window.mailUI.onUnreadChange((count) => counts.push(count));
+  await ui.window.mailUI.open();
+  click(ui.window, ui.document.querySelector('[data-mail-open="one"]'));
+  click(ui.window, ui.document.querySelector('[data-mail-open="two"]'));
+  await settle();
+  first.resolve({ uid: 'one', markedSeen: true, text: 'first body' });
+  await settle();
+  assert.equal(ui.document.querySelector('[data-mail-open="one"]').classList.contains('unread'), false);
+  assert.equal(ui.window.mailUI.unreadCount(), 0);
+  assert.equal(counts.at(-1), 0);
+  assert.match(ui.document.querySelector('.mail-text').textContent, /second body/);
+  click(ui.window, ui.document.querySelector('[data-mail-filter="unread"]'));
+  assert.equal(ui.document.querySelectorAll('[data-mail-open]').length, 0);
+});
+
+test('an older inbox refresh cannot restore the unread flag after a confirmed read', async () => {
+  const ui = harness();
+  await ui.window.mailUI.open();
+  const listing = deferred();
+  ui.window.ph.mail.list = () => listing.promise;
+  ui.advance(3 * 60 * 1000);
+  const refreshing = ui.window.mailUI.open();
+  await settle();
+  click(ui.window, ui.document.querySelector('[data-mail-open="one"]'));
+  await settle();
+  listing.resolve({ items: [{ uid: 'one', unread: true }] });
+  await refreshing;
+  assert.equal(ui.document.querySelector('[data-mail-open="one"]').classList.contains('unread'), false);
+  assert.equal(ui.window.mailUI.unreadCount(), 0);
+  // Only overlapping snapshots are reconciled: a later external mark-unread wins.
+  ui.advance(3 * 60 * 1000);
+  ui.window.ph.mail.list = async () => ({ items: [{ uid: 'one', unread: true }] });
+  await ui.window.mailUI.open();
+  assert.equal(ui.window.mailUI.unreadCount(), 1);
+});
+
+test('unconfirmed server writes preserve unread status and display a retry notice with the body', async () => {
+  for (const detail of [{ markedSeen: false, markSeenError: 'STORE rejected' }, { markedSeen: false }, {}]) {
+    const ui = harness();
+    ui.window.ph.mail.read = async (uid) => ({ uid, text: 'available body', ...detail });
+    await ui.window.mailUI.open();
+    click(ui.window, ui.document.querySelector('[data-mail-open="one"]'));
+    await settle();
+    assert.equal(ui.document.querySelector('[data-mail-open="one"]').classList.contains('unread'), true);
+    assert.equal(ui.window.mailUI.unreadCount(), 1);
+    assert.match(ui.document.querySelector('.mail-status').textContent, /未能在服务器标记为已读/);
+    assert.match(ui.document.querySelector('.mail-text').textContent, /available body/);
+  }
+});
 
 test('mail UI lists a bounded inbox, safely renders plain text, and saves attachments', async () => {
   const ui = harness();

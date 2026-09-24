@@ -219,6 +219,7 @@
   async function refresh() {
     if (mail.pending?.epoch === mail.epoch) return mail.pending.promise;
     const epoch = mail.epoch;
+    const readDuringRefresh = new Set();
     const task = (async () => {
       mail.busy = true; mail.error = ''; mail.notice = ''; render();
       try {
@@ -237,6 +238,10 @@
         const contacts = api().contacts ? await api().contacts() : [];
         if (epoch !== mail.epoch) return false;
         mail.items = Array.isArray(listing?.items) ? listing.items.slice(0, 100) : [];
+        // A list fetched before a concurrent read must not undo that confirmed read.
+        for (const item of mail.items) {
+          if (readDuringRefresh.has(String(item.uid))) item.unread = false;
+        }
         mail.contacts = Array.isArray(contacts) ? contacts : [];
         mail.fetchedAt = Date.now();
         mail.notice = ''; // 自动同步不打扰用户：数据时间在角落那行小字里
@@ -253,7 +258,7 @@
         }
       }
     })();
-    mail.pending = { epoch, promise: task };
+    mail.pending = { epoch, promise: task, readDuringRefresh };
     return task;
   }
 
@@ -294,22 +299,23 @@
     mail.selected = uid; mail.detail = null; mail.detailError = ''; mail.readBusy = true; render();
     try {
       const detail = await api().read(uid);
-      if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;
+      if (epoch !== mail.epoch) return;
       if (!detail || detail.uid !== uid) throw new Error('邮件内容不可用');
+      // Server state belongs to the message, even if another message is selected now.
+      if (detail.markedSeen === true && !detail.markSeenError) {
+        const listItem = mail.items.find((entry) => String(entry.uid) === String(uid));
+        if (listItem) listItem.unread = false;
+        if (mail.pending?.epoch === epoch) mail.pending.readDuringRefresh.add(String(uid));
+        render();
+      }
+      if (request !== mail.readRequest || mail.selected !== uid) return;
       mail.detail = detail;
       mail.recipientsExpanded = false;
       mail.metaExpanded = false; // 每封邮件默认只显示一行抬头（附件也是收起的）
       mail.attachExpanded = false;
-      const listItem = mail.items.find((entry) => String(entry.uid) === String(uid));
-      if (detail.markSeenError) {
-        // The server refused the \Seen write: keep the mail visibly unread so
-        // the list never disagrees with the web client.
-        mail.notice = `这封邮件未能在服务器标记为已读：${detail.markSeenError}`;
-        if (listItem && !listItem.unread) listItem.unread = true;
-      } else if (listItem && listItem.unread) {
-        // Marked read server-side; flip the local entry immediately.
-        listItem.unread = false;
-      }
+      mail.notice = detail.markSeenError || detail.markedSeen !== true
+        ? `这封邮件未能在服务器标记为已读：${detail.markSeenError || '服务器未确认已读状态，请重新打开这封邮件重试'}`
+        : '';
       render();
     } catch (error) {
       if (epoch !== mail.epoch || request !== mail.readRequest || mail.selected !== uid) return;

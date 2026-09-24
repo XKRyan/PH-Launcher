@@ -10,7 +10,8 @@ const LESSON_ITEM = /^\s*-\s*(.*)$/;
 const LESSON_SUBJECT = /^subject:\s*(.+)$/;
 
 const text = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
-const unquote = (value) => String(value || '').trim().replace(/^'|'$/g, '');
+const { parseYamlScalar } = require('./settings-yaml.cjs');
+const unquote = (value) => String(parseYamlScalar(String(value || '')) ?? '').trim();
 
 /**
  * 解析 settings.yaml 里的 lessons 段（容错读取，坏行直接跳过）。
@@ -35,6 +36,7 @@ function parseEntries(source) {
   // 于是 `- group:` 的正则匹配不上、整段读成空的（真机上就是这么踩到的）。
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.replace(/\r$/, '');
+    if (!line.trim() || /^\s*#/.test(line)) continue;
     if (!inside) {
       // 只认顶层 lessons: 段，避免读到别的段落里的同名键。
       if (/^lessons:\s*$/.test(line.trimEnd())) inside = true;
@@ -108,4 +110,31 @@ function mandatoryKeys(options) {
   return keys;
 }
 
-module.exports = { mandatoryKeys, parseEntries, resolveGroupKeys };
+/** Missing/broken input is not a deletion; an explicit empty list is. */
+function readSelection(source) {
+  if (typeof source !== 'string') return null;
+  const header = /^lessons:[ \t]*([^\r\n]*)/m.exec(source);
+  if (!header) return null;
+  const inline = header[1].trim();
+  if (/^\[\s*\](?:\s*#.*)?$/.test(inline)) return [];
+  if (inline && !inline.startsWith('#')) return null;
+  const tail = source.slice(header.index + header[0].length);
+  const section = tail.split(/\r?\n/);
+  const body = [];
+  for (const line of section) {
+    if (line.trim() && !/^\s|^-|^#/.test(line)) break;
+    if (line.trim() && !/^\s*#/.test(line)) body.push(line);
+  }
+  // A bare lessons: is YAML null, not an intentional deletion.
+  if (!body.length) return null;
+  const entries = parseEntries(`lessons:\n${body.join('\n')}`);
+  const items = body.filter((line) => /^\s*-\s/.test(line)).length;
+  return entries.length && entries.length === items ? entries : null;
+}
+
+function selectionKeys(source, options) {
+  const entries = readSelection(source);
+  return entries === null ? null : resolveGroupKeys(entries, options);
+}
+
+module.exports = { mandatoryKeys, parseEntries, resolveGroupKeys, readSelection, selectionKeys };

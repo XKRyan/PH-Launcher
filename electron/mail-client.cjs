@@ -554,7 +554,9 @@ class SchoolMailClient {
           // being swallowed: a silent miss is exactly why mail stayed unread on
           // the server and in the web client.
           try {
-            await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true });
+            const stored = await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true });
+            // ImapFlow also returns false on STORE rejection; it need not throw.
+            if (stored !== true) throw new Error('服务器未确认已读状态，请重新打开这封邮件重试');
             markedSeen = true;
           } catch (error) {
             markSeenError = String(error?.message || '无法在服务器标记为已读');

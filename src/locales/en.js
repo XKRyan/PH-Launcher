@@ -5,6 +5,8 @@
   // content is intentionally absent from this catalog.
   root.PH_EN = {
     exact: {
+      '选课保存失败，请检查数据目录是否可写后重试': 'Could not save course selections. Check that your data folder is writable and try again.',
+      '服务器未确认已读状态，请重新打开这封邮件重试': 'The server did not confirm the read status. Reopen this message to try again.',
       '导入词书': 'Import word list',
       '获取推荐词书': 'Browse wordbooks',
       '获取托福 / 雅思等推荐词书': 'Browse TOEFL / IELTS wordbooks',

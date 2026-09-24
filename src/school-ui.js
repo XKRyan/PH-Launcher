@@ -49,6 +49,7 @@
   const state = { snapshot: { edupage: null, managebac: null, preferences: {}, status: {} }, notifications: null, notificationsBusy: false, discussions: null, discussionsBusy: false, exportMenu: false, exportBusy: false, weeks: new Map(), epochs: {}, route: 'timetable', courseTab: 'courses', week: monday(), showWeekend: false, busy: new Set(), error: '', notice: '', query: '', courseSort: 'manual', taskSort: 'due', showHidden: false, consent: new Set(), refreshId: 0, syncIds: { edupage: 0, managebac: 0 }, autoTimer: null };
   let root;
   let modal;
+  let timeLineObserver;
   const authBlocked = new Set();
   const api = () => window.ph.school;
   const prefs = () => state.snapshot.preferences || {};
@@ -668,6 +669,7 @@
   }
   function render() {
     if (!root) return;
+    timeLineObserver?.disconnect();
     const source = activeSource();
     const data = state.snapshot[source];
     const page = isClassTimetable() ? { title: '班级课表', description: '查看当前账号所属班级的课程与教室安排。' } : state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
@@ -680,6 +682,14 @@
     }
     fitTimetableRows();
     updateTimeLine();
+    const grid = root.querySelector('#schoolTimetableGrid');
+    if (grid && window.ResizeObserver) {
+      timeLineObserver ||= new window.ResizeObserver(updateTimeLine);
+      timeLineObserver.observe(grid);
+      // Rest rows and lesson rows can change independently, even when the
+      // total grid height stays the same (fonts, wrapping, hidden pages).
+      grid.querySelectorAll('.school-tt-time').forEach((cell) => timeLineObserver.observe(cell));
+    }
   }
   /**
    * 当前时间指示线（照 Lite 的 `updateNowLine`）：一根横线贯穿整张课表，落在「现在」
@@ -693,20 +703,35 @@
     if (!grid) return;
     if (state.week !== monday()) return; // 只看本周时才画
     const now = new Date();
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).map((part) => [part.type, part.value]));
-    const time = Number(parts.hour) * 60 + Number(parts.minute);
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(now).map((part) => [part.type, part.value]));
+    const time = Number(parts.hour) * 60 + Number(parts.minute) + Number(parts.second) / 60;
     if (time < PHL_FLOOR || time > PHL_CEILING) return;
-    const index = PHL_PERIODS.findIndex((period) => time < period.end);
+    const index = PHL_PERIODS.findIndex((period) => time <= period.end);
     if (index < 0) return;
     const period = PHL_PERIODS[index];
-    const ratio = Math.min(1, Math.max(0, (time - period.start) / (period.end - period.start)));
-    const cell = [...grid.querySelectorAll('.school-tt-time')].find((node) => node.style.gridRow === String(index + 2));
-    if (!cell) return;
-    // offsetTop 是布局坐标，不受缩放影响（和 Lite 一样）。
+    const rows = [...grid.querySelectorAll('.school-tt-time')];
+    const cell = rows.find((node) => parseInt(node.style.gridRow, 10) === index + 2);
+    const firstDay = grid.querySelector('.school-tt-head:not(.school-tt-corner)');
+    if (!cell?.offsetHeight || !firstDay) return;
+    let top;
+    if (time < period.start) {
+      // A break belongs in the actual gap between rows, not in the next
+      // lesson. Long afternoon breaks use the same compressed grid gap.
+      const previous = rows.find((node) => parseInt(node.style.gridRow, 10) === index + 1);
+      if (!previous?.offsetHeight) return;
+      const bottom = previous.offsetTop + previous.offsetHeight;
+      const ratio = (time - PHL_PERIODS[index - 1].end) / (period.start - PHL_PERIODS[index - 1].end);
+      top = bottom + (cell.offsetTop - bottom) * ratio;
+    } else {
+      top = cell.offsetTop + cell.offsetHeight * (time - period.start) / (period.end - period.start);
+    }
+    // Both anchors share the positioned grid's layout coordinates. Keeping
+    // the overlay inside that grid makes scrolling and page zoom automatic.
     const line = document.createElement('div');
     line.className = 'school-now-line';
     line.setAttribute('aria-label', `当前时间 ${parts.hour}:${parts.minute}`);
-    line.style.top = `${cell.offsetTop + cell.offsetHeight * ratio}px`;
+    line.style.top = `${top}px`;
+    line.style.left = `${firstDay.offsetLeft}px`;
     grid.append(line);
   }
   function showDialog(title, body, footer = '') {
@@ -782,9 +807,10 @@
       showDialog('自动识别选课', '<p>请先同步 ManageBac 的已选课程，再识别对应的教学组。</p>', `${btn('取消', 'close')}${btn('同步我的课程', 'auto-sync-courses', '', true)}`);
       return;
     }
-    const selected = selections() || [];
+    const savedSelection = selections();
+    const selected = savedSelection || [];
     const inference = teachingGroupInference(data);
-    const automatic = inference.status === 'automatic';
+    const automatic = inference.status === 'automatic' && (autoRecognize || savedSelection === null);
     const family = window.schoolSelectionInference?.subjectKey || (value => value);
     const chosenSubjects = new Set(data.options.filter(option => selected.includes(option.key)).map(option => family(option.course || option.label.split(' · ')[0])));
     const inferred = automatic ? inference.keys : autoRecognize ? inference.keys.filter(key => {
@@ -808,7 +834,7 @@
     }
     const subjectEntries = [...bySubject.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'));
     const isDefaultOn = (option) => /(?:^|[^a-z])native|班会|homeroom|class\s*meeting/i.test(`${option.course || ''} ${(option.groups || []).join(' ')} ${option.label || ''}`);
-    const hasSavedSelection = selected.length > 0 || inferred.length > 0;
+    const hasSavedSelection = savedSelection !== null || inferred.length > 0;
     const checkedFor = (option) => selected.includes(option.key) || inferred.includes(option.key) || (!hasSavedSelection && isDefaultOn(option));
     const groupBody = subjectEntries.map(([subject, options]) => `<details class="school-subject-group" data-school-subject-group data-subject="${esc(subject)}"><summary><strong>${esc(subject)}</strong><span class="school-subject-count" data-school-subject-count="${esc(subject)}"></span></summary><div class="school-subject-options">${options.map((option) => {
       const roomLine = (option.rooms || []).filter(Boolean).join('、');

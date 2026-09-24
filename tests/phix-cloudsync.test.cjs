@@ -54,6 +54,53 @@ function makeRoot(settings = '', extra = {}) {
 
 const engineFor = (server, root, tag = '设备A') => new cs.SyncEngine(server, DEK, 7, 'tester', { dataDir: root, device: tag });
 
+test('course deletion propagates both directions and remains deleted after further syncs', async (t) => {
+  const server = new FakeServer();
+  const roots = [makeRoot(), makeRoot()];
+  t.after(() => roots.forEach(root => fs.rmSync(root, { recursive: true, force: true })));
+  const [a, b] = roots.map(root => engineFor(server, root));
+  const first = { subject: 'Physics', group: 'A', teacher: 'Tutor' };
+  const second = { subject: 'History', group: 'B', teacher: 'Tutor' };
+  a.apply('settings.lessons', { lessons: [first, second] });
+  await a.sync({ names: ['settings.lessons'] });
+  await b.sync({ names: ['settings.lessons'] });
+  a.apply('settings.lessons', { lessons: [second] });
+  await a.sync({ names: ['settings.lessons'] });
+  await b.sync({ names: ['settings.lessons'] });
+  assert.deepEqual(b.collect('settings.lessons'), { lessons: [second] });
+  b.apply('settings.lessons', { lessons: [] });
+  for (let i = 0; i < 3; i++) {
+    assert.equal((await b.sync({ names: ['settings.lessons'] })).ok, true);
+    assert.equal((await a.sync({ names: ['settings.lessons'] })).ok, true);
+    assert.deepEqual(a.collect('settings.lessons'), { lessons: [] });
+    assert.deepEqual(b.collect('settings.lessons'), { lessons: [] });
+  }
+});
+
+test('deletion versus remote edit preserves the edit and reports a conflict', (t) => {
+  const root = makeRoot(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const engine = engineFor(new FakeServer(), root);
+  const row = { subject: 'Physics', group: 'A', teacher: 'Tutor', note: 'old' };
+  const remote = { ...row, note: 'edited' };
+  const [merged, conflicts] = engine.merge('settings.lessons', { lessons: [row] }, { lessons: [] }, { lessons: [remote] });
+  assert.deepEqual(merged.lessons, [remote]);
+  assert.equal(conflicts.length, 1);
+});
+
+test('missing or damaged settings is not mistaken for deleting all courses', async (t) => {
+  const root = makeRoot(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const engine = engineFor(new FakeServer(), root);
+  const rows = [{ subject: 'Physics', group: 'A', teacher: 'Tutor' }];
+  engine.apply('settings.lessons', { lessons: rows });
+  await engine.sync({ names: ['settings.lessons'] });
+  for (const text of ['', 'lessons: broken\n', 'lessons:\n- teacher: bad\n']) {
+    fs.writeFileSync(engine.settingsPath, text);
+    assert.equal(engine.collect('settings.lessons'), null);
+    await engine.sync({ names: ['settings.lessons'] });
+    assert.deepEqual(engine.collect('settings.lessons'), { lessons: rows });
+  }
+});
+
 // ---------------------------------------------------------------- 原语
 test('文档哈希与 Python 侧一致：排序键 + 无空格 + 中文不转义', () => {
   assert.equal(cs.documentBytes({ b: 1, a: '中文' }).toString('utf8'), '{"a":"中文","b":1}');

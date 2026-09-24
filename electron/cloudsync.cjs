@@ -1122,7 +1122,16 @@ function mergeListOfDicts(base, local, remote, keyOf, at, conflicts, unionOnly =
       out.push(isMissing(l) ? r : l);        // 远端有、本地没有 → 收下;两边都有 → 留本地
       continue;
     }
-    if (isMissing(l)) { out.push(r); continue; }          // 远端新增（且本地没有）
+    if (isMissing(l)) {
+      // A missing local row is an intentional deletion only with a trusted
+      // baseline. Otherwise this is a first pull and remote rows must survive.
+      if (isMissing(b)) out.push(r);
+      else if (!sameValue(r, b)) {
+        out.push(r);
+        conflicts.push({ path: `${at}[${key}]`, local: null, remote: plain(r), base: plain(b), note: '本地删除、远端又改过 → 保留远端并报告冲突' });
+      }
+      continue;
+    }
     if (isMissing(r)) {
       if (isMissing(b)) {
         out.push(l);                                      // 本地新增
@@ -1730,7 +1739,8 @@ class SyncEngine {
     const section = SETTINGS_SECTIONS[name];
     if (section) {
       const parsed = readSettingsSection(this.settingsPath, section);
-      if (section === 'lessons') return { lessons: asList(parsed) };
+      if (section === 'lessons') return Array.isArray(parsed)
+        && parsed.every((row) => isObject(row) && String(row.subject || '').trim()) ? { lessons: parsed } : null;
       // settings.ai 上云一律是**规范形态**（与网页端/PLL 同一个对象）
       if (section === 'ai') return { ai: aiSyncPayload(parsed) };
       return { [section]: asMap(parsed) };
@@ -1841,8 +1851,11 @@ class SyncEngine {
       const key = (row) => [
         String(row.subject || '').trim(), String(row.group || '').trim(), String(row.teacher || '').trim(),
       ].join('|');
-      const merged = mergeListOfDicts(
-        asMap(base).lessons, asMap(local).lessons, asMap(remote).lessons, key, 'lessons', conflicts);
+      const localRows = asMap(local).lessons;
+      const remoteRows = asMap(remote).lessons;
+      // A missing/unreadable document is not an explicit empty selection.
+      const baseline = Array.isArray(localRows) && Array.isArray(remoteRows) ? asMap(base).lessons : null;
+      const merged = mergeListOfDicts(baseline, localRows, remoteRows, key, 'lessons', conflicts);
       return [{ lessons: merged }, conflicts];
     }
 

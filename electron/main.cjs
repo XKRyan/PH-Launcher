@@ -1,3 +1,6 @@
+// Install before Electron or any application module can log to a detached pipe.
+require('./stdio-guard.cjs').guardStdio();
+
 const {
   app,
   BrowserWindow,
@@ -1317,11 +1320,11 @@ function schoolSnapshot(options = {}) {
     // 本机实时快照用自己算的）。直接把本机的 `groups` 交给界面会「一个都对不上」，
     // 于是又变成"先选择你的教学组"。这里按共用快照重新解析一遍 —— **只改界面读到的这份**，
     // 不写盘（写盘会污染本机实时快照的选择）。
-    const resolved = sharedLessons.resolveGroupKeys(sharedLessonEntries(), snapshot.edupage?.options || []);
-    if (resolved.length) {
+    const resolved = sharedLessons.selectionKeys(sharedSettings.readTextFile(sharedSettingsFile()), snapshot.edupage?.options || []);
+    if (resolved !== null) {
       preferences = {
         ...preferences,
-        groups: [...new Set([...resolved, ...sharedLessons.mandatoryKeys(snapshot.edupage?.options || [])])],
+        groups: resolved,
         accountKey: snapshot.edupage?.accountKey || preferences.accountKey,
       };
     }
@@ -1615,11 +1618,10 @@ function publishSelectedLessons(groupKeys) {
   const lessons = (current.options || [])
     .filter((option) => selected.has(option.key))
     .map((option) => ({ subject: String(option.course || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), teacher: String(option.teacher || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), group: String((option.groups || []).join('/')).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 40) }));
-  if (!lessons.length) return false;
   const file = sharedSettingsFile();
   const text = sharedSettings.readTextFile(file);
-  const body = lessons.map((lesson) => ['- subject: ' + lesson.subject, '  teacher: ' + lesson.teacher, "  group: '" + lesson.group + "'"].join('\n')).join('\n');
-  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'lessons', 'lessons:\n' + body + '\n'));
+  const body = lessons.map((lesson) => ['- subject: ' + sharedSettings.quoteScalar(lesson.subject), '  teacher: ' + sharedSettings.quoteScalar(lesson.teacher), '  group: ' + sharedSettings.quoteScalar(lesson.group)].join('\n')).join('\n');
+  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'lessons', lessons.length ? 'lessons:\n' + body + '\n' : 'lessons: []\n'));
   return true;
 }
 
@@ -1632,7 +1634,7 @@ function sharedLessonEntries() {
  * 把共用 settings.yaml 的选课落到本机偏好，让"个人课表"只显示自己选的组。
  * 每次都按当前这份课表重新解析：共用快照与本机登录快照的组标识不同，
  * 存下来的旧标识换一份课表就对不上了（个人课表会变空）。
- * 解析不到任何组时不写入，免得用空选择覆盖用户手动勾的教学组。
+ * 缺失或损坏的选课不覆盖偏好；明确的空列表表示用户已取消全部选课。
  *
  * @param {{options?: unknown[], accountKey?: string}|null} target 指定用哪份课表解析；
  *   不传就用当前缓存（同步操作内部还没换成新快照，所以同步时要显式传 result）。
@@ -1640,11 +1642,9 @@ function sharedLessonEntries() {
 function applySharedLessonSelection(target = null) {
   const current = target && Array.isArray(target.options) ? target : schoolCache.edupage;
   if (!current) return 0;
-  const selected = sharedLessons.resolveGroupKeys(sharedLessonEntries(), current.options);
-  if (!selected.length) return 0;
-  // 没有教学组的课（班会/国家课程/体育）两边都按"全班必修"显示，
-  // 否则 PH Launcher 的个人课表会比 Lite 少一截。
-  const keys = [...new Set([...selected, ...sharedLessons.mandatoryKeys(current.options)])];
+  const keys = sharedLessons.selectionKeys(sharedSettings.readTextFile(sharedSettingsFile()), current.options);
+  if (keys === null) return 0;
+  // Defaults belong to first-time selection, never to re-importing saved choices.
   const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
   const unchanged = preferences.accountKey === current.accountKey
     && Array.isArray(preferences.groups) && preferences.groups.length === keys.length
@@ -1682,7 +1682,13 @@ function updateSchoolPreferences(input) {
   try { secureStore.save(); } catch (error) { secureStore.data.settings.schoolPreferences = old; throw error; }
   // 选课也写进共用 settings.yaml 的 lessons 段（Lite 的原生字段，两边同一份）。
   if (Array.isArray(input.groups)) {
-    try { publishSelectedLessons(next.groups || []); } catch (error) { console.warn('Shared lessons write skipped:', error.message); }
+    try {
+      if (!publishSelectedLessons(next.groups || [])) throw new Error('课表尚未准备好，选课未保存');
+    } catch (error) {
+      secureStore.data.settings.schoolPreferences = old;
+      secureStore.save();
+      throw new Error('选课保存失败，请检查数据目录是否可写后重试');
+    }
   }
   scheduleReminderTick();
   return schoolSnapshot();
@@ -2892,7 +2898,7 @@ async function requestAnthropicTurn(config, messages, tools, endpoint, { signal,
   };
 }
 
-async function requestAiTurn(config, messages, tools, { signal, onDelta, onReasoning } = {}) {
+async function requestAiTurn(config, messages, tools, { signal, onDelta, onReasoning, onStatus } = {}) {
   const deadline = AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   if (config.provider === 'local') {
@@ -3858,7 +3864,7 @@ function registerIpc() {
       return new Response('not found', { status: 404 });
     }
   });
-  for (const name of ['status', 'list', 'read', 'contacts', 'download', 'downloadBytes', 'fetchImage', 'send', 'openLink']) {
+  for (const name of ['status', 'list', 'read', 'contacts', 'harvestContacts', 'download', 'downloadBytes', 'fetchImage', 'send', 'openLink']) {
     ipcMain.handle(`mail:${name}`, async (event, input) => {
       assertMainRenderer(event);
       const result = await mailbox[name](input);
@@ -4924,7 +4930,7 @@ async function runSelfTest() {
     navigate('courses');
     await window.schoolUI.refresh();
     const coursesRendered = document.querySelector('#schoolPage h1')?.textContent === '我的课程'
-      && document.querySelectorAll('#schoolPage [data-course-tab]').length === 3
+      && ['courses', 'notifications', 'tasks', 'discussions', 'core'].every(tab => document.querySelector('#schoolPage [data-course-tab="' + tab + '"]'))
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'courses';
     navigate('mail');
     await window.mailUI.open();

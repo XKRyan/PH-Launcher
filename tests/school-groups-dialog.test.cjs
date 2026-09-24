@@ -27,7 +27,7 @@ function lesson(date, start, course, groupKey, groups, teacher, room) {
 }
 
 // Two subjects: 数学 has two groups (one teacher each), 班会 has one.
-function snapshot(selectedGroups = []) {
+function snapshot(selectedGroups = null) {
   const options = [
     { key: "g-math-a", course: "Mathematics", teacher: "Ms A", groups: ["A"], label: "Mathematics · A · Ms A", rooms: ["A301"], times: [`${weekStart} 08:00–08:45`] },
     { key: "g-math-b", course: "Mathematics", teacher: "Mr B", groups: ["B"], label: "Mathematics · B · Mr B", rooms: ["B202"], times: [`${weekStart} 09:00–09:45`] },
@@ -105,7 +105,7 @@ test("expanding a subject shows its teaching groups with teacher, room and time"
 });
 
 test("native courses and homeroom are checked by default on a fresh profile", async () => {
-  const ui = harness(snapshot([]));
+  const ui = harness(snapshot());
   const dialog = await openGroups(ui);
   const checked = [...dialog.querySelectorAll('[name="school-group"]:checked')].map((input) => input.value);
   assert.deepEqual(checked.sort(), ["g-eng-native", "g-homeroom"], "only native + homeroom start checked");
@@ -116,6 +116,24 @@ test("an existing selection wins over the defaults", async () => {
   const dialog = await openGroups(ui);
   const checked = [...dialog.querySelectorAll('[name="school-group"]:checked')].map((input) => input.value);
   assert.deepEqual(checked, ["g-math-b"]);
+});
+
+test("an explicit empty selection stays empty when reopening the dialog", async () => {
+  const ui = harness(snapshot([]));
+  const dialog = await openGroups(ui);
+  assert.equal(dialog.querySelectorAll('[name="school-group"]:checked').length, 0);
+});
+
+test("automatic inference does not recheck a course explicitly removed by the user", async () => {
+  const fixture = snapshot(["g-math-b"]);
+  fixture.edupage.personalGroupKeys = ["g-math-a", "g-homeroom"];
+  fixture.edupage.personalGroupSource = 'authenticated-personal-groups';
+  const ui = harness(fixture);
+  // Isolate the UI decision from the inference algorithm's source whitelist.
+  ui.context.window.schoolSelectionInference = { ...ui.context.window.schoolSelectionInference, inferTeachingGroups: () => ({ status: 'automatic', keys: ['g-math-a', 'g-homeroom'], ambiguous: [], unmatched: [] }) };
+  const dialog = await openGroups(ui);
+  const checked = [...dialog.querySelectorAll('[name="school-group"]:checked')].map(input => input.value);
+  assert.deepEqual(checked, ['g-math-b']);
 });
 
 test("search filters rows, opens matching subjects and hides empty ones", async () => {

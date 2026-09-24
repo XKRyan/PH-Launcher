@@ -127,6 +127,9 @@ class FakeImap {
   async messageFlagsAdd(range, flags, options) {
     this.state.messageFlagsAddCalls.push({ range, flags, options });
     if (this.state.flagError) throw new Error(this.state.flagError);
+    if (this.state.flagResult === false) return false;
+    const message = this.state.messages.find((entry) => String(entry.uid) === String(range));
+    if (message) for (const flag of flags) message.flags.add(flag);
     return true;
   }
 }
@@ -261,7 +264,7 @@ test('list is bounded, sanitized, newest-first, and uses TLS/read-only IMAP', as
   await assert.rejects(() => client.list({ limit: 101 }), (error) => error.code === 'INVALID_ARGUMENT');
 });
 
-test('read parses local MIME, does not mark seen, and returns bounded Buffer attachment', async () => {
+test('read parses local MIME, marks seen, and returns bounded Buffer attachment', async () => {
   const { client, state } = createHarness();
   const mail = await client.read('101');
 
@@ -300,6 +303,20 @@ test('a rejected \\Seen store is reported instead of silently ignored', async ()
   assert.equal(mail.markedSeen, false);
   assert.match(mail.markSeenError, /STORE rejected/);
   assert.ok(mail.text.length > 0, 'the mail body is still delivered');
+});
+
+test('a false STORE result keeps the message unread and a deliberate reopen can mark it read', async () => {
+  const { client, state } = createHarness();
+  state.flagResult = false;
+  const first = await client.read('101');
+  assert.equal(first.markedSeen, false);
+  assert.match(first.markSeenError, /未确认已读状态/);
+  assert.ok(first.text.length > 0);
+  assert.equal((await client.list()).items.find((item) => item.uid === '101').unread, true);
+  assert.equal(state.messageFlagsAddCalls.length, 1, 'failed STORE is not automatically retried');
+  state.flagResult = true;
+  assert.equal((await client.read('101')).markedSeen, true);
+  assert.equal((await client.list()).items.find((item) => item.uid === '101').unread, false);
 });
 
 test('HTML-only messages become inert text without remote resources or scripts', async () => {
