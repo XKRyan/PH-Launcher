@@ -41,7 +41,9 @@ test("missing paths, files and empty values are refused", () => {
 });
 
 test("the updateAi whitelist keeps the workspace in sync with the recent list", () => {
-  const updateStart = mainSource.indexOf("  updateAi(config) {");
+  // 签名 2026-09-13 起多了 `options`（silent：把云同步下来的配置收下来时不算"改了连接"）。
+  const updateStart = mainSource.indexOf("  updateAi(config, options = {}) {");
+  assert.ok(updateStart > 0, "SecureStore.updateAi(config, options) 还在");
   const updateEnd = mainSource.indexOf("\n  }\n", updateStart);
   const body = mainSource.slice(updateStart, updateEnd);
   assert.match(body, /'workspace',/, "workspace is an allowed AI setting");

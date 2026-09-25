@@ -45,7 +45,8 @@ function click(window, selector) {
 }
 
 test('configured AI gets one return-to-chat button that only restores the chat view', () => {
-  const originalAi = { enabled: true, provider: 'local', localModel: 'qwen-test', apiModel: '' };
+  // providers 是 2026-09-13 起的多服务商列表（规范形态）；取消编辑必须把它一起还原。
+  const originalAi = { enabled: true, provider: 'local', localModel: 'qwen-test', apiModel: '', providers: [] };
   const messages = [{ role: 'user', content: '保留这段对话' }];
   const ui = harness(originalAi, messages);
 

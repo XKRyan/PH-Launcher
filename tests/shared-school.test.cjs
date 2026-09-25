@@ -40,6 +40,10 @@ test('段级合并：只改传入的段，别的段与其他字段原样保留�
 });
 
 test('PHL 快照 → 共享段 → PHL 快照 往返不丢关键信息', () => {
+  // 作业的截止时间要写成**将来**：pastDue 是按"现在"算的，
+  // 写死 2026-09-20 这种字面日期的话，日子一过这条断言就自己变成红（2026-09-21 实测）。
+  const futureDue = new Date(Date.now() + 3 * 86400000);
+  const futureDueAt = `${futureDue.getFullYear()}-${String(futureDue.getMonth() + 1).padStart(2, '0')}-${String(futureDue.getDate()).padStart(2, '0')}T23:59:00`;
   const edupage = shared.edupageSection({
     source: 'edupage',
     weekStart: '2026-09-07',
@@ -62,13 +66,13 @@ test('PHL 快照 → 共享段 → PHL 快照 往返不丢关键信息', () => {
     source: 'managebac',
     fetchedAt: '2026-09-11T11:09:00+08:00',
     courses: [{ id: '11', name: 'Biology', grade: '6' }],
-    tasks: [{ id: 'managebac:11:22', courseId: '11', course: 'Biology', title: 'Lab', dueAt: '2026-09-20T23:59:00', dueText: 'Sep 20', status: 'Pending', score: '' }],
+    tasks: [{ id: 'managebac:11:22', courseId: '11', course: 'Biology', title: 'Lab', dueAt: futureDueAt, dueText: 'Sep 20', status: 'Pending', score: '' }],
   });
   const seen = shared.managebacToSnapshot(managebac);
   assert.equal(seen.courses[0].name, 'Biology');
   assert.equal(seen.tasks[0].courseId, '11');
   assert.equal(seen.tasks[0].dueText, 'Sep 20');
-  assert.equal(seen.tasks[0].pastDue, false);
+  assert.equal(seen.tasks[0].pastDue, false, '截止时间在未来 → 不是过期');
 });
 
 test('作业 id 统一成 ManageBac 作业号：两个程序写的同一条作业在并集里不会变成两条', () => {

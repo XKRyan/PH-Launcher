@@ -115,10 +115,15 @@ test('心履通过原生页面打开，不再进入内置网页', () => {
   assert.equal(document.querySelector('.primary-nav [data-site="psychology"]'), null);
 });
 
-test('首次使用引导覆盖学校账号、可选 AI 与心理模块', () => {
+test('首次使用引导按需显示：账号步骤只在缺账号时出现，心履那一步已去掉', () => {
   assert.ok(pageSource.includes('id="onboardingDialog"'));
   assert.match(appSource, /onboardingCompleted/);
+  // 账号补全按钮（只在缺平台账号时渲染）
   assert.match(appSource, /data-onboarding-account/);
+  assert.match(appSource, /onboardingNeeds/);
   assert.match(appSource, /onboardingAiSettings/);
-  assert.match(appSource, /onboardingPsychology/);
+  // 心履账号就是 phix 账号：引导里不再单独教用户登录心履，
+  // 设置 → 网站里也不再有那张卡（见 xinlvCredentialCard）。
+  assert.doesNotMatch(appSource, /onboardingPsychology/);
+  assert.doesNotMatch(appSource, /data-edit-xinlv/);
 });

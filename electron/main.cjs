@@ -1,3 +1,6 @@
+// Install before Electron or any application module can log to a detached pipe.
+require('./stdio-guard.cjs').guardStdio();
+
 const {
   app,
   BrowserWindow,
@@ -11,6 +14,7 @@ const {
   safeStorage,
   session,
   net,
+  protocol,
   shell,
   dialog,
 } = require('electron');
@@ -33,7 +37,15 @@ const { recommendLocalModel } = require('./hardware.cjs');
 const { OfflineDictionary } = require('./dictionary.cjs');
 const { LocalAiDeploymentManager } = require('./ai-deployment.cjs');
 const { canStartConfiguredLocalRuntime, ensureDefaultInstalledOllamaService } = require('./local-ai-runtime.cjs');
-const { streamOllamaChat, streamOpenAiChat } = require('./ai-stream.cjs');
+const { streamOllamaChat, streamOpenAiChat, streamAnthropicChat } = require('./ai-stream.cjs');
+// AI 服务商配置的规范形态（与网页端/PLL 共用的同步对象 settings.ai）
+const aiConfig = require('./ai-config.cjs');
+// 应用内自动更新（Windows 全自动 / macOS 半自动提示）
+const autoUpdater = require('./auto-updater.cjs');
+// 线格式转换与空回复提示：单独成模块才测得到（main.cjs 一 require 就建窗口）
+const { openAiMessages, needsReasoningPassthrough, emptyReplyMessage } = require('./ai-messages.cjs');
+// 名字直说：这是与 PLL / 网页端共用的那份同步对象所在的模块（同一套 `settings.yaml`）。
+const syncCloudsync = require('./cloudsync.cjs');
 const {
   AI_TOOLS,
   AI_MAIL_TOOLS,
@@ -149,8 +161,23 @@ let reminderScheduler = null;
 let reminderWindows = null;
 const { createMailController } = require('./mail-controller.cjs');
 const { XinlvService, XinlvServiceError } = require('./xinlv-service.cjs');
+// phix 统一账号 + 端到端加密云同步：与 Pinghe Launcher Lite 共用同一套账号、
+// 同一份 `settings.yaml` 配置与 `data/.sync/` 同步状态（协议见 D:\phix\phix-协议规范.md）。
+const phixSessionModule = require('./phix-session.cjs');
+const phixCloud = require('./cloudsync.cjs');
 
 const APP_ID = 'cn.phlauncher.desktop';
+//: 邮件里内嵌图片（`<img src="cid:…">`）用的自定义协议。
+//: 邮件正文渲染在 `sandbox="allow-same-origin"`（**不带 allow-scripts**）的 iframe 里，
+//: `cid:` 这种 URL 浏览器不认识、以前就显示成一张破图。这里把它换成本协议，
+//: 由主进程按"邮件 uid + 附件 id"取字节回给渲染进程 —— 图片就出来了，
+//: 而且只回邮件自己的内嵌资源，不放行任何外部地址。
+const MAIL_ASSET_SCHEME = 'phl-mail';
+//: 必须在 app ready **之前**声明（privileged scheme 只能在启动时注册一次）。
+protocol.registerSchemesAsPrivileged([{
+  scheme: MAIL_ASSET_SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false },
+}]);
 const SIDEBAR_WIDTH = 248;
 const TOPBAR_HEIGHT = 72;
 const AI_CONTROL_CONSENT_VERSION = 1;
@@ -163,10 +190,34 @@ const SITE_RECOVERY_DELAY_MS = 350;
 const SELF_TEST_TIMEOUT_MS = 90_000;
 const AI_REQUEST_TIMEOUT_MS = 120_000;
 const AI_WARMUP_TIMEOUT_MS = 25_000;
+// Anthropic Messages API 需要显式给出 max_tokens 与版本头（协议固定值，不是用户配置）。
+const ANTHROPIC_VERSION = '2023-06-01';
+const ANTHROPIC_MAX_TOKENS = 4096;
 const IS_SMOKE_TEST = process.argv.includes('--smoke-test');
 const IS_CAPTURE = process.argv.includes('--capture-ui');
 const IS_SELF_TEST = process.argv.includes('--self-test');
+//: 让首启引导**再出现一次**（不删任何数据，只影响这一次运行）。
+//: 用途：验收引导界面 / 重新走一遍账号设置。用户的
+//: `settings.onboardingCompleted` 是记在数据文件里的，改它要动用户数据，所以走命令行。
+const IS_FORCE_ONBOARDING = process.argv.includes('--ph-force-onboarding');
+//: 只做诊断：跑一次学校自动登录并把每一步结果打到 stdout，然后退出。
+//: 用法： "PH Launcher.exe" --ph-school-probe
+//: 为什么放在主进程里：自动登录用的 `createSchoolFetch`（Electron net + 学校分区会话）
+//: 只有在真 Electron 里才存在；单独 require 那两个模块拿不到同样的会话。
+const IS_SCHOOL_PROBE = process.argv.includes('--ph-school-probe');
 const CAPTURE_SITE = process.argv.find((arg) => arg.startsWith('--capture-site='))?.split('=')[1] || '';
+//: 自动化专用：启动 N 秒后**自己优雅退出**。
+//:
+//: 为什么要这个开关：脚本用 `taskkill /F` 杀进程时，程序来不及走 `will-quit`，
+//: 托盘图标不会被注销，Windows 会把它当成"幽灵图标"留在通知区域 —— 用户看到的
+//: 就是"一大堆同一个软件的图标，点开之后一个个消失"（2026-09-20 实测：
+//: `PastIconsStream` 被撑到 630 KB）。让程序自己退出，托盘才干净。
+//: 用法： "PH Launcher.exe" --ph-quit-after=90   （秒）
+const QUIT_AFTER_MS = (() => {
+  const raw = process.argv.find((arg) => arg.startsWith('--ph-quit-after='))?.split('=')[1] || '';
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0;
+})();
 const IS_HEADLESS = IS_SMOKE_TEST || IS_CAPTURE || IS_SELF_TEST || Boolean(CAPTURE_SITE);
 const CAPTURE_ROUTE = process.argv.find((arg) => arg.startsWith('--capture-route='))?.split('=')[1] || 'today';
 const CAPTURE_VARIANT = process.argv.find((arg) => arg.startsWith('--capture-variant='))?.split('=')[1] || '';
@@ -305,10 +356,20 @@ function createDefaultData() {
       ai: {
         enabled: false,
         provider: 'off',
+        // 多服务商列表（规范形态，与网页端/PLL 同一个同步对象 settings.ai）：
+        //   providers:[{name,protocol,base_url,model,api_key}] + default_index
+        // 下面 apiEndpoint/apiModel/apiKey/localEndpoint/localModel 是**运行路径用的
+        // 投影字段**，由 electron/ai-config.cjs 从"默认服务商"同步过来；老配置第一次
+        // 读取时会自动迁移成一条 providers，不会丢字段也不会让 AI 失效。
+        providers: [],
+        default_index: 0,
+        updated_at: '',
+        updated_by: '',
         localEndpoint: 'http://127.0.0.1:11434',
         localModel: '',
         apiEndpoint: 'https://api.openai.com/v1',
         apiModel: '',
+        apiProtocol: 'openai',
         apiKey: '',
         saveHistory: false,
         launcherControlEnabled: false,
@@ -337,6 +398,17 @@ function mergeDefaults(source) {
     permissionMode: ['chat', 'confirm', 'full'].includes(ai.permissionMode)
       ? ai.permissionMode : ai.launcherControlEnabled ? 'confirm' : 'chat',
   };
+  // 旧扁平配置（provider/apiEndpoint/apiModel/apiKey）第一次读取时自动迁移成一条
+  // providers，并保留 workspace/workspaces/localModel 等本地专有字段；
+  // 已经是规范形态（有 providers 数组）就原样留着。
+  const normalizedProviders = aiConfig.migrateFlatConfig(normalizedAi);
+  // 有服务商却没有时间戳时**在这里补一次**（只在读取/保存时补一次，值就固定下来了）：
+  // 同步引擎那边 `collect()` 是纯读、绝不自己盖时间戳 —— 每读一次盖一个"现在"会让
+  // 文档哈希每轮都变，等于每轮都空推一份配置（PLL 侧踩过这个坑）。
+  if (aiConfig.providersOf(normalizedProviders).length && !String(normalizedProviders.updated_at || '').trim()) {
+    normalizedProviders.updated_at = aiConfig.nowIso();
+    normalizedProviders.updated_by = String(normalizedProviders.updated_by || '').trim() || 'phl';
+  }
   const controlValid = normalizedAi.enabled && normalizedAi.provider !== 'off' && normalizedAi.launcherControlEnabled &&
     Number(normalizedAi.controlConsentVersion) === AI_CONTROL_CONSENT_VERSION &&
     !Number.isNaN(new Date(normalizedAi.controlConsentAcceptedAt || '').getTime());
@@ -366,7 +438,7 @@ function mergeDefaults(source) {
       schoolStartupSync: settings.schoolStartupSync !== false,
       customSites: normalizeCustomSites(settings.customSites),
       shortcuts: { ...defaults.settings.shortcuts, ...(settings.shortcuts || {}) },
-      ai: normalizedAi,
+      ai: normalizedProviders,
     },
   };
 }
@@ -487,6 +559,33 @@ class SecureStore {
     return current && typeof current === 'object' ? current : createDefaultData().xinlv;
   }
 
+  /**
+   * 记住 phix 账号密码（用户 2026-09-19：「心履的账号自动用 phix 账号登录」
+   * 「每次产生更改都和服务器同步」——重启之后也要能自己接上）。
+   *
+   * 为什么必须记住：DEK（解开云端数据的那把钥匙）**只在内存里**，重启就没了；
+   * 心履又是**另一个服务**，只能拿 phix 的账号密码去换它的令牌。所以没有这一步，
+   * 重启之后既解不开云端数据（同步不动），也没法把心履自动登上。
+   * 存放位置与学校/邮箱密码一样（`data/phl/launcher.json`，本机文件）。
+   */
+  phixLoginCredentials() {
+    const saved = this.data.phixLogin;
+    return { username: String(saved?.username || ''), password: String(saved?.password || '') };
+  }
+
+  rememberPhixLogin(username, password) {
+    const account = String(username || '').trim();
+    if (!account || !password) return;
+    this.data.phixLogin = { username: account, password: String(password) };
+    this.save();
+  }
+
+  forgetPhixLogin() {
+    if (!this.data.phixLogin) return;
+    delete this.data.phixLogin;
+    this.save();
+  }
+
   updateXinlvData(patch) {
     const input = patch && typeof patch === 'object' ? patch : {};
     const current = this.xinlvData();
@@ -504,18 +603,39 @@ class SecureStore {
     return this.forRenderer().xinlv;
   }
 
-  updateAi(config) {
+  /**
+   * 保存 AI 配置。
+   *
+   * `options.silent === true` 表示"这不是用户在改连接，而是把云端那份收下来"
+   * （见 `adoptAiProvidersFromSharedSettings`）：内容照样合并、照样落盘，但**不**把
+   * 它当成一次连接变更去撤销用户已经确认过的启动器授权。用户自己点保存时永远不带它。
+   */
+  updateAi(config, options = {}) {
+    const silent = options.silent === true;
+    // **先收下云端那份，再合并用户这次提交的**。
+    // 不先收的话，用户"在网页端加了一个服务商、还没同步回本机"时，只要本机点了保存，
+    // 写回共享文件的就是本机这份旧列表 —— 网页端刚加的会被覆盖掉。
+    if (!silent) {
+      try { adoptAiProvidersFromSharedSettings(); } catch { /* 读不到就按本机这份走 */ }
+    }
     const current = this.data.settings.ai;
     const next = { ...current };
+    // 服务商列表投影出来的 Key：它只在内存里流转，随后由这里决定要不要落到 next。
+    let projectedApiKey = null;
     const requestedProvider = Object.hasOwn(config, 'provider') ? config.provider : current.provider;
     const providerChanged = requestedProvider !== current.provider;
     const allowed = [
       'enabled',
       'provider',
+      // 多服务商列表（规范形态）：只要 providers / default_index 变了，就算"连接变了"，
+      // 于是和改 apiEndpoint/apiModel 一样会撤销启动器授权（安全上必须一致）。
+      'providers',
+      'default_index',
       'localEndpoint',
       'localModel',
       'apiEndpoint',
       'apiModel',
+      'apiProtocol',
       'saveHistory',
       'launcherControlEnabled',
       'controlConsentVersion',
@@ -538,9 +658,66 @@ class SecureStore {
     }
     if (!['off', 'local', 'api'].includes(next.provider)) throw new Error('未知 AI 类型');
     if (!['chat', 'confirm', 'full'].includes(next.permissionMode)) throw new Error('未知 AI 权限模式');
-    const connectionChanged = providerChanged || ['localEndpoint', 'localModel', 'apiEndpoint', 'apiModel']
-      .some((key) => next[key] !== current[key]) ||
-      Boolean(typeof config.apiKey === 'string' && config.apiKey.trim() && config.apiKey.trim() !== current.apiKey) || config.clearApiKey === true;
+    // 服务商列表的三条来源（界面整份提交 / 只切默认项 / 把云端那份收下来）走同一段
+    // 合并 + 投影：默认服务商 → apiEndpoint/apiModel/apiKey/apiProtocol，既有运行
+    // 路径（词卡、教练、聊天）完全不用改。
+    // 注意 **别把 provider 的 Key 写进返回给渲染进程的 next**：`forRenderer` 本来就会
+    // 抹掉它，渲染进程要换 Key 只能在 providers 里带上（留空 = 保留旧值）。
+    const applyProviderList = (payload, writer) => {
+      const merged = aiConfig.mergeAiProviders(
+        { ...current, providers: Array.isArray(next.providers) ? next.providers : [] },
+        payload,
+        writer ? { writer } : {},
+      );
+      next.providers = merged.providers;
+      next.default_index = merged.default_index;
+      if (merged.updated_at) next.updated_at = merged.updated_at;
+      if (merged.updated_by) next.updated_by = merged.updated_by;
+      if (merged.apiEndpoint) next.apiEndpoint = merged.apiEndpoint;
+      if (merged.apiModel) next.apiModel = merged.apiModel;
+      if (merged.apiProtocol) next.apiProtocol = merged.apiProtocol;
+      // Key 只在内存里流转：下面单独落进 next.apiKey（渲染进程拿不到）
+      projectedApiKey = merged.apiKey || null;
+    };
+    if (Array.isArray(config.providers)) {
+      // 界面提交的一份：api_key 留空 = 保留旧值，clear_api_key 才是真删
+      const submitted = aiConfig.applySubmittedProviders(current, config.providers, {
+        writer: 'phl',
+        defaultIndex: Object.hasOwn(config, 'default_index') ? config.default_index : current.default_index,
+      });
+      applyProviderList({
+        providers: submitted.providers,
+        default_index: submitted.default_index,
+        updated_at: submitted.updated_at,
+        updated_by: submitted.updated_by,
+      }, '');
+    } else if (silent || Object.hasOwn(config, 'default_index')) {
+      // silent：上层刚从共用的 settings.yaml 里读到了服务商列表（含网页端填的 Key）。
+      // 这时**沿用云端那份的 default_index**（那是用户在网页端选的默认项），
+      // 只有调用方明确给了才用它。
+      applyProviderList({
+        providers: Array.isArray(next.providers) ? next.providers : [],
+        default_index: Object.hasOwn(config, 'default_index') ? config.default_index
+          : (silent ? next.default_index : current.default_index),
+      }, silent ? '' : 'phl');
+    }
+    if (next.provider === 'api' && !silent) {
+      // 用户在界面上保存 → 必须是一份能用的配置，缺字段就当场报错。
+      // silent（把云端那份收下来）**不校验**：那是别的端已经存好的配置，
+      // 本机不该因为"它少了模型名"就整轮同步失败 —— 真缺了，运行时会照常报错。
+      const providers = Array.isArray(next.providers) ? next.providers : [];
+      if (!providers.length) throw new Error('请先添加至少一个服务商');
+      const chosen = providers[Number(next.default_index) >= 0 && Number(next.default_index) < providers.length
+        ? Number(next.default_index) : 0];
+      if (!String(chosen.base_url || '').trim()) throw new Error('请填写服务商的 Base URL');
+      if (!String(chosen.model || '').trim()) throw new Error('请填写模型名称');
+    }
+    const providersChanged = Array.isArray(config.providers) || Object.hasOwn(config, 'default_index');
+    const connectionChanged = !silent && (providerChanged || providersChanged
+      || ['localEndpoint', 'localModel', 'apiEndpoint', 'apiModel', 'apiProtocol']
+        .some((key) => next[key] !== current[key])
+      || Boolean(typeof config.apiKey === 'string' && config.apiKey.trim() && config.apiKey.trim() !== current.apiKey)
+      || config.clearApiKey === true);
     if ((providerChanged || connectionChanged) && !Object.hasOwn(config, 'launcherControlEnabled')) {
       next.launcherControlEnabled = false;
       next.controlConsentVersion = 0;
@@ -581,10 +758,14 @@ class SecureStore {
       next.mailConsentVersion = 0;
       next.mailConsentAcceptedAt = '';
     }
+    if (projectedApiKey !== null) next.apiKey = projectedApiKey;
     if (typeof config.apiKey === 'string' && config.apiKey.trim()) next.apiKey = config.apiKey.trim();
     if (config.clearApiKey === true) next.apiKey = '';
     this.data.settings.ai = next;
     this.save();
+    // 把服务商（含 Key）同步进共用的一份，好让云同步推给账号、网页端也能用。
+    // silent 那条路径是"刚从那一份读回来"，不必再写回去。
+    if (!silent) writeAiProvidersToSharedSettings();
     return this.forRenderer().settings.ai;
   }
 
@@ -597,6 +778,14 @@ class SecureStore {
     const hasApiKey = Boolean(copy.settings.ai.apiKey);
     copy.settings.ai.apiKey = '';
     copy.settings.ai.apiKeySaved = hasApiKey;
+    // 多服务商列表以**脱敏形态**交给渲染进程：只报"这个服务商的 Key 有没有保存"，
+    // 明文 Key 永远不出主进程（与上面 apiKey 的处理同一个理由）。
+    const publicAi = aiConfig.publicAiConfig(copy.settings.ai);
+    copy.settings.ai.providers = publicAi.providers;
+    copy.settings.ai.default_index = publicAi.default_index;
+    copy.settings.ai.updated_at = publicAi.updated_at;
+    copy.settings.ai.updated_by = publicAi.updated_by;
+    copy.settings.ai.providers_saved = publicAi.providers.length;
     // The renderer never receives the Xinlv password, token, or raw sync
     // payload: the mood UI reads them through the xinlv:* bridge instead.
     const xinlvState = this.xinlvData();
@@ -896,6 +1085,9 @@ function publishDataChange() {
 }
 
 // ---------------------------------------------------------------- splash boot
+// 开机画面（2026-09-20 用户要求，三端统一）：墨绿底 + 中间 logo + 一根细进度条，
+// 没有任何文字。窗口控件那块底色也用它，免得开机画面上出现一条色差。
+const SPLASH_INK = '#102d25';
 // The three splash bars report real work: school data, mail service and the
 // preloading of local interfaces/pages. The renderer reads the latest state on
 // mount, so progress emitted before it subscribes is never lost.
@@ -917,6 +1109,14 @@ function finishSplash() {
   if (splashFinished) return;
   splashFinished = true;
   sendToRenderer('splash:done', splashState());
+  // 开机画面是墨绿的，右上角那块系统窗口控件底色也跟着墨绿（不然会有一条色差），
+  // 开机画面淡出之后再换回顶栏的颜色。
+  try {
+    const theme = require('./window-theme.cjs').windowTheme(secureStore.data.settings.appearance);
+    if (process.platform !== 'darwin' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitleBarOverlay({ color: theme.primary, symbolColor: theme.symbol, height: TOPBAR_HEIGHT });
+    }
+  } catch { /* 换不了就保持开机画面的底色，不影响使用 */ }
 }
 
 // Everything the user used to watch spinning inside the app is fetched here,
@@ -1084,10 +1284,54 @@ function changeVocabulary(change) {
   return { result, snapshot };
 }
 
+/**
+ * 内存里没有某个平台的快照时，退回**共用 `data/School`** 里那份。
+ *
+ * 为什么必须有这一步（用户 2026-09-19 报的 bug）：共用文件里明明有 17 门课程，
+ * 但课程页还是显示「登录并同步」。原因是内存缓存与磁盘那份会脱节：
+ * `SchoolCache.invalidate()`（换账号、登录状态变化、不可恢复的同步失败都会调它）
+ * 会把 `current[source]` 清成 null，而**磁盘上的 School 文件还留着上一份好数据** ——
+ * 于是页面拿到的 managebac 是 null，就画成"没登录"。
+ * 既然启动时本来就会用共用快照兜底（`hydrate`），这里保持一致、随时都能读。
+ */
+function schoolSectionFromShared(source) {
+  try {
+    const doc = sharedSchool.readSchool(dataRoot().school)?.doc;
+    if (!doc) return null;
+    const section = doc[source];
+    if (!section) return null;
+    return source === 'edupage'
+      ? sharedSchool.edupageToSnapshot(section)
+      : sharedSchool.managebacToSnapshot(section);
+  } catch { return null; }
+}
+
 function schoolSnapshot(options = {}) {
   const saved = credentialStatus().sites;
   const accounts = Object.fromEntries(['edupage', 'managebac'].map((site) => [site, { saved: Boolean(saved[site]?.saved) }]));
-  return { ...schoolState.snapshot(options), accounts, preferences: secureStore.data.settings.schoolPreferences || {} };
+  const snapshot = schoolState.snapshot(options);
+  let usedSharedEdupage = false;
+  for (const source of ['edupage', 'managebac']) {
+    if (snapshot[source]) continue;
+    const fromShared = schoolSectionFromShared(source);
+    if (fromShared) { snapshot[source] = fromShared; usedSharedEdupage = usedSharedEdupage || source === 'edupage'; }
+  }
+  let preferences = secureStore.data.settings.schoolPreferences || {};
+  if (usedSharedEdupage) {
+    // 退回共用快照时，教学组标识是**另一套**（共用文件用 `shared:科目|组|老师` 的 digest，
+    // 本机实时快照用自己算的）。直接把本机的 `groups` 交给界面会「一个都对不上」，
+    // 于是又变成"先选择你的教学组"。这里按共用快照重新解析一遍 —— **只改界面读到的这份**，
+    // 不写盘（写盘会污染本机实时快照的选择）。
+    const resolved = sharedLessons.selectionKeys(sharedSettings.readTextFile(sharedSettingsFile()), snapshot.edupage?.options || []);
+    if (resolved !== null) {
+      preferences = {
+        ...preferences,
+        groups: resolved,
+        accountKey: snapshot.edupage?.accountKey || preferences.accountKey,
+      };
+    }
+  }
+  return { ...snapshot, accounts, preferences };
 }
 
 function invalidateSchoolSnapshots(source) {
@@ -1167,20 +1411,25 @@ function readSchoolDetail(action) {
  * 检测到共用账号就自动同步：启动后（或首次打开学校页面时）只要有保存的账号，
  * 就自动登录并同步一次，不需要再点"登录并同步"。失败保持静默，页面自己会提示。
  * 受"设置 → 网站 → 启动时同步学校信息"开关控制。
+ *
+ * `onlySources`：只同步指定的平台（给"账号刚同步下来"那条路用，见
+ * `syncSchoolAfterAccountsArrived`）。
+ * `force`：是否强制重新登录（首次拿到账号时用 true，绕过上次的冷却记录）。
  */
-async function startupSchoolSync() {
+async function startupSchoolSync({ onlySources = null, force = false } = {}) {
   if (secureStore.data.settings.schoolStartupSync === false) return { synced: [] };
   if (!credentialVault) return { synced: [] };
   const sites = credentialStatus().sites || {};
   const synced = [];
   const failed = [];
   for (const source of ['edupage', 'managebac']) {
+    if (onlySources && !onlySources.includes(source)) continue;
     if (!sites[source]?.saved) continue;
     try {
       // 全新安装时还没有任何已同步的一周，用"上海时间的本周一"兜底，
       // 否则 schoolState.key 会因为 weekStart 为空直接抛 INVALID_DATE。
-      const result = await loginSchoolAccount(source, { weekStart: schoolState.week || currentSchoolWeek() });
-      if (result?.ok) { synced.push(source); continue; }
+      const result = await loginSchoolAccount(source, { weekStart: schoolState.week || currentSchoolWeek(), force });
+      if (result?.ok) { synced.push(source); rememberSyncedSchoolAccounts([source]); continue; }
       failed.push(source);
       // loginSchoolAccount 自己吞掉异常并返回 ok:false，必须把原因记下来，
       // 否则"页面像没登录"就没有任何线索。
@@ -1197,13 +1446,154 @@ async function startupSchoolSync() {
   return { synced, failed };
 }
 
+/**
+ * 账号是**后来才到的**（phix 云同步把 `settings.accounts` 写进共用 settings.yaml，
+ * 或者用户在设置/引导里刚登录 phix）—— 这时启动时那一轮早就跑过了，
+ * 页面就会一直显示"登录并同步"，哪怕账号已经躺在文件里。
+ *
+ * 用户 2026-09-18 实测的正是这个：全新安装 → phix 引导里登录 → 账号同步下来了
+ * （settings.yaml 里 accounts 已经有三个平台），但课表页/课程页永远是空的
+ * （共用快照里 `edupage` / `managebac` 段都是 null）。
+ *
+ * 做法：按"每个平台当前保存的账号名"判断有没有新账号（换个账号名也算），
+ * 有新账号就后台补一次学校同步；同一时刻只跑一轮。
+ */
+const syncedSchoolAccounts = new Map();
+let accountsArrivalSync = null;
+
+function pendingSchoolAccounts() {
+  const sites = credentialStatus().sites || {};
+  return ['edupage', 'managebac'].filter((source) => {
+    const username = String(sites[source]?.username || '');
+    return Boolean(username) && syncedSchoolAccounts.get(source) !== username;
+  });
+}
+
+/** 学校同步成功后就地记下"这个平台的这个账号已经同步过了"。 */
+function rememberSyncedSchoolAccounts(sources) {
+  const sites = credentialStatus().sites || {};
+  for (const source of sources) {
+    const username = String(sites[source]?.username || '');
+    if (username) syncedSchoolAccounts.set(source, username);
+  }
+}
+
+function syncSchoolAfterAccountsArrived() {
+  try {
+    if (secureStore?.data?.settings?.schoolStartupSync === false) return accountsArrivalSync;
+    const arrived = pendingSchoolAccounts();
+    if (!arrived.length) return accountsArrivalSync;
+    if (accountsArrivalSync) return accountsArrivalSync;
+    console.log('School accounts need a sync:', arrived.join(', '));
+    accountsArrivalSync = new Promise((resolve) => {
+      // 让调用方（phix 同步）先把 settings.yaml 写完再动学校登录。
+      setTimeout(async () => {
+        try { resolve(await startupSchoolSync({ onlySources: arrived, force: true })); }
+        catch (error) { console.warn('Post-sync school sync failed:', String(error?.message || error).slice(0, 200)); resolve({ synced: [], failed: arrived }); }
+        finally { accountsArrivalSync = null; }
+      }, 1500);
+    });
+    return accountsArrivalSync;
+  } catch { return null; }
+}
+
+/**
+ * 诊断用：跑一次学校自动登录，把每一步的真实结果打到 stdout，然后退出。
+ *
+ * 触发：`--ph-school-probe`。只跑一轮、不重试、不写任何快照 ——
+ * 纯粹为了在**真 Electron 会话**里看清"为什么自动登录没成功"。
+ */
+async function runSchoolAuthProbe() {
+  // Windows 上 Electron 是 GUI 子系统程序，stdout 抓不到 —— 结果同时写文件。
+  const lines = [];
+  const say = (text) => {
+    lines.push(text);
+    try { console.log(text); } catch { /* GUI 子系统下没有控制台 */ }
+  };
+  const writeLog = () => {
+    try {
+      const file = path.join(dataRoot().root, 'school-probe.log');
+      fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+    } catch { /* 写不了就算了 */ }
+  };
+  try {
+    const sites = credentialStatus().sites || {};
+    say('PROBE accounts ' + JSON.stringify(Object.fromEntries(
+      Object.entries(sites).map(([id, item]) => [id, { saved: item.saved, autoLogin: item.autoLogin }]))));
+    for (const source of ['managebac', 'edupage']) {
+      const started = Date.now();
+      try {
+        const credential = credentialVault.getForLogin(source);
+        if (!credential) { say(`PROBE ${source} SKIP 没有可用于自动登录的账号`); continue; }
+        await schoolAuthenticator.authenticate(source, { manual: false });
+        say(`PROBE ${source} 自动登录 OK 用时 ${Date.now() - started}ms`);
+      } catch (error) {
+        const diag = error?.diagnostic ? ' ' + JSON.stringify(error.diagnostic) : '';
+        say(`PROBE ${source} 自动登录 FAIL code=${error?.code} msg=${String(error?.message || error).slice(0, 200)}${diag} 用时 ${Date.now() - started}ms`);
+      }
+      writeLog();
+    }
+    writeLog();
+    for (const source of ['managebac', 'edupage']) {
+      const started = Date.now();
+      try {
+        const snapshot = await syncSchool(source, { weekStart: currentSchoolWeek(), force: true });
+        const section = source === 'edupage' ? snapshot?.edupage : snapshot?.managebac;
+        const count = source === 'edupage'
+          ? (section?.lessons?.length ?? 0) : (section?.courses?.length ?? 0);
+        say(`PROBE ${source} 同步 OK 条数=${count} 用时 ${Date.now() - started}ms`);
+      } catch (error) {
+        say(`PROBE ${source} 同步 FAIL code=${error?.code || ''} msg=${String(error?.message || error).slice(0, 200)} 用时 ${Date.now() - started}ms`);
+      }
+      writeLog();
+    }
+    // 通知/截止日期单独探一遍：它们的抓取链与课程快照不同（mnn-hub + 截止日期页），
+    // 出问题时只看"同步 OK 条数"分不清是课程还是通知的问题。
+    try {
+      const started = Date.now();
+      const feed = await schoolClient.getNotifications();
+      const items = Array.isArray(feed?.items) ? feed.items : [];
+      say(`PROBE notifications OK 条数=${items.length} 未读=${feed?.unreadCount ?? 'null'} 用时 ${Date.now() - started}ms`);
+      // 顺带把两个页面的原始 HTML 落盘，好核对真实结构（排查完可删）。
+      for (const [name, p] of [['student', '/student'], ['deadlines', '/student/tasks_and_deadlines'], ['overdue', '/student/tasks_and_deadlines?view=overdue'], ['notifs', '/student/notifications']]) {
+        try {
+          const html = await schoolClient.request('managebac', p);
+          const file = path.join(dataRoot().root, `school-probe-${name}.html`);
+          fs.writeFileSync(file, String(html || ''), 'utf8');
+          const tiles = (String(html || '').match(/f-task-tile/g) || []).length;
+          const fTiles = (String(html || '').match(/f-tile\b/g) || []).length;
+          say(`PROBE html ${name} 长度=${String(html || '').length} f-task-tile=${tiles} f-tile=${fTiles} → ${file}`);
+        } catch (error) {
+          say(`PROBE html ${name} FAIL msg=${String(error?.message || error).slice(0, 200)}`);
+        }
+      }
+      if (feed?.hub) say(`PROBE notifications hub=${JSON.stringify(feed.hub).slice(0, 400)}`);
+      say(`PROBE notifications 首条=${JSON.stringify(items[0] || null).slice(0, 400)}`);
+      const warnings = Array.isArray(feed?.warnings) ? feed.warnings : [];
+      if (warnings.length) say(`PROBE notifications 警告=${JSON.stringify(warnings).slice(0, 500)}`);
+    } catch (error) {
+      say(`PROBE notifications FAIL code=${error?.code || ''} msg=${String(error?.message || error).slice(0, 300)}`);
+    }
+    writeLog();
+  } catch (error) {
+    say('PROBE 崩溃 ' + String(error?.stack || error).split('\n')[0]);
+  } finally {
+    say('PROBE_DONE');
+    writeLog();
+    setTimeout(() => app.exit(0), 300);
+  }
+}
+
 async function loginSchoolAccount(source, options = {}) {
   if (!['edupage', 'managebac'].includes(source)) throw new Error('未知学校账号');
   // Validate the week before sending credentials. This is an explicit button
   // action, separate from opt-in background restoration.
   schoolState.key(source, options.weekStart);
   try {
-    await mutateSchoolSession(source, () => schoolAuthenticator.authenticate(source, { manual: true }));
+    // `manual: true` = 允许用共用 settings.yaml 里的账号密码提交这次登录。
+    // 手动点"登录并同步"、以及"账号刚从云端同步下来"这两条路都走它；
+    // 只有后台定时刷新（force=false）才受 `autoLogin` 开关限制。
+    await mutateSchoolSession(source, () => schoolAuthenticator.authenticate(source, { manual: options.force === true || options.manual !== false }));
     assertSchoolSessionReady(source);
     await schoolState.sync(source, { weekStart: options.weekStart, force: true }, async () => {
       const result = source === 'edupage'
@@ -1230,11 +1620,10 @@ function publishSelectedLessons(groupKeys) {
   const lessons = (current.options || [])
     .filter((option) => selected.has(option.key))
     .map((option) => ({ subject: String(option.course || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), teacher: String(option.teacher || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80), group: String((option.groups || []).join('/')).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 40) }));
-  if (!lessons.length) return false;
   const file = sharedSettingsFile();
   const text = sharedSettings.readTextFile(file);
-  const body = lessons.map((lesson) => ['- subject: ' + lesson.subject, '  teacher: ' + lesson.teacher, "  group: '" + lesson.group + "'"].join('\n')).join('\n');
-  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'lessons', 'lessons:\n' + body + '\n'));
+  const body = lessons.map((lesson) => ['- subject: ' + sharedSettings.quoteScalar(lesson.subject), '  teacher: ' + sharedSettings.quoteScalar(lesson.teacher), '  group: ' + sharedSettings.quoteScalar(lesson.group)].join('\n')).join('\n');
+  sharedSettings.atomicWriteFileSync(file, sharedSettings.replaceBlock(text, 'lessons', lessons.length ? 'lessons:\n' + body + '\n' : 'lessons: []\n'));
   return true;
 }
 
@@ -1247,7 +1636,7 @@ function sharedLessonEntries() {
  * 把共用 settings.yaml 的选课落到本机偏好，让"个人课表"只显示自己选的组。
  * 每次都按当前这份课表重新解析：共用快照与本机登录快照的组标识不同，
  * 存下来的旧标识换一份课表就对不上了（个人课表会变空）。
- * 解析不到任何组时不写入，免得用空选择覆盖用户手动勾的教学组。
+ * 缺失或损坏的选课不覆盖偏好；明确的空列表表示用户已取消全部选课。
  *
  * @param {{options?: unknown[], accountKey?: string}|null} target 指定用哪份课表解析；
  *   不传就用当前缓存（同步操作内部还没换成新快照，所以同步时要显式传 result）。
@@ -1255,11 +1644,9 @@ function sharedLessonEntries() {
 function applySharedLessonSelection(target = null) {
   const current = target && Array.isArray(target.options) ? target : schoolCache.edupage;
   if (!current) return 0;
-  const selected = sharedLessons.resolveGroupKeys(sharedLessonEntries(), current.options);
-  if (!selected.length) return 0;
-  // 没有教学组的课（班会/国家课程/体育）两边都按"全班必修"显示，
-  // 否则 PH Launcher 的个人课表会比 Lite 少一截。
-  const keys = [...new Set([...selected, ...sharedLessons.mandatoryKeys(current.options)])];
+  const keys = sharedLessons.selectionKeys(sharedSettings.readTextFile(sharedSettingsFile()), current.options);
+  if (keys === null) return 0;
+  // Defaults belong to first-time selection, never to re-importing saved choices.
   const preferences = secureStore.data.settings.schoolPreferences || (secureStore.data.settings.schoolPreferences = {});
   const unchanged = preferences.accountKey === current.accountKey
     && Array.isArray(preferences.groups) && preferences.groups.length === keys.length
@@ -1297,7 +1684,13 @@ function updateSchoolPreferences(input) {
   try { secureStore.save(); } catch (error) { secureStore.data.settings.schoolPreferences = old; throw error; }
   // 选课也写进共用 settings.yaml 的 lessons 段（Lite 的原生字段，两边同一份）。
   if (Array.isArray(input.groups)) {
-    try { publishSelectedLessons(next.groups || []); } catch (error) { console.warn('Shared lessons write skipped:', error.message); }
+    try {
+      if (!publishSelectedLessons(next.groups || [])) throw new Error('课表尚未准备好，选课未保存');
+    } catch (error) {
+      secureStore.data.settings.schoolPreferences = old;
+      secureStore.save();
+      throw new Error('选课保存失败，请检查数据目录是否可写后重试');
+    }
   }
   scheduleReminderTick();
   return schoolSnapshot();
@@ -2008,11 +2401,90 @@ function validateMessages(messages) {
   });
 }
 
+/**
+ * AI 密钥的两个存放处的**桥**。
+ *
+ * 用户的要求是"在任何一个产品里填了服务商与 Key，网页端和客户端都能用"，于是：
+ *
+ * - 本机加密存储（`secureStore`，`data/phl/launcher…`）是 PHL 自己的配置源；
+ * - 同步对象 `settings.ai`（`data/settings.yaml` 的 ai 段，由 `phix-session` 的
+ *   云同步读写，服务端只存端到端密文）是**三端共用**的那一份，网页端就从这里取 Key。
+ *
+ * 两处必须双向对齐，缺一不可：
+ *   1. **推**：本机保存 AI 配置后把服务商列表（含明文 `api_key`）写进 settings.yaml，
+ *      否则云同步推上去的对象里根本没有 key，网页端只能回 409「未配置」。
+ *   2. **拉**：同步把云端（网页端/PLL 写的）配置合并回 settings.yaml 之后，
+ *      把它并回内存里的 secureStore —— 否则本机界面/运行路径看不到刚同步下来的 Key。
+ *
+ * 密钥落在 settings.yaml 是同步的必然结果（同步引擎只认这个文件；`data/` 是共享目录）。
+ * 渲染进程永远拿不到明文：`readSettingsSection` 之后由 `publicAiConfig` 脱敏。
+ */
+function aiSettingsFilePath() {
+  return dataRoot().settings;
+}
+
+/** 推：把当前服务商列表（含 Key）写进共用的 settings.yaml 的 ai 段。 */
+function writeAiProvidersToSharedSettings({ author = 'phl' } = {}) {
+  try {
+    const ai = secureStore.data.settings.ai || {};
+    const providers = aiConfig.providersOf(ai);
+    if (!providers.length) return;   // 本地没配过就别动那一份（云端可能正有配置）
+    const file = aiSettingsFilePath();
+    const current = asAiSection(syncCloudsync.readSettingsSection(file, 'ai'));
+    syncCloudsync.writeSettingsSection(file, 'ai', {
+      ...current,
+      providers,
+      default_index: Number(ai.default_index) || 0,
+      // 时间戳/署名：用户在客户端改的才盖新的；只是"把云端那份收下来"时沿用原值
+      // (盖"现在"会让别的设备以为配置又变了，每轮重拉 —— PLL 侧踩过同款坑)。
+      updated_at: author ? aiConfig.nowIso() : (current.updated_at || ''),
+      updated_by: author ? author : (current.updated_by || ''),
+    });
+  } catch (error) {
+    // 写不进去（权限/磁盘）不能让"保存 AI 设置"整体失败：本机照样能用，只是暂时同步不出去
+    console.warn(`AI 配置写入共用 settings.yaml 失败（云同步会暂时缺少这份配置）：${String(error?.message || error).slice(0, 200)}`);
+  }
+}
+
+function asAiSection(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+/** 拉：把共享 settings.yaml 里的服务商并回内存，并返回是否真的有变化。 */
+function adoptAiProvidersFromSharedSettings() {
+  let incoming = [];
+  let cloudDefaultIndex = null;
+  try {
+    const section = asAiSection(syncCloudsync.readSettingsSection(aiSettingsFilePath(), 'ai'));
+    incoming = aiConfig.providersOf(section);
+    if (Number.isInteger(Number(section.default_index))) cloudDefaultIndex = Number(section.default_index);
+  } catch { return false; }
+  if (!incoming.length) return false;
+  const current = secureStore.data.settings.ai || {};
+  const merged = syncCloudsync.overlayAiProviders(aiConfig.providersOf(current), incoming);
+  // 逐字段比对，确定真的变了才落盘（否则每轮同步都会白写一次）
+  const changed = JSON.stringify(merged) !== JSON.stringify(aiConfig.providersOf(current))
+    || (cloudDefaultIndex !== null && cloudDefaultIndex !== Number(current.default_index || 0));
+  if (!changed) return false;
+  // silent: 这是"把云端配置收下来"，不是用户改了连接 —— 不该因为一次同步就撤销
+  // 用户已经确认过的启动器授权（联网同步 ≠ 改设置）。
+  // 默认项跟云端那份走：那是用户在网页端选的"默认用这个"，本机该照办。
+  secureStore.updateAi({
+    providers: merged,
+    default_index: cloudDefaultIndex === null ? (current.default_index || 0) : cloudDefaultIndex,
+  }, { silent: true });
+  // 收下来之后把本机看到的这份（含新 Key）**写回共享文件**：silent 分支故意跳过了
+  // 写入路径里的那次写，见 updateAi 里的注释。`author: null` = 不抢署名、不盖新时间戳。
+  writeAiProvidersToSharedSettings({ author: null });
+  return true;
+}
+
 function aiConnectionKey() {
   const ai = secureStore.data.settings.ai;
   const endpoint = ai.provider === 'local' ? ai.localEndpoint : ai.apiEndpoint;
   const model = ai.provider === 'local' ? ai.localModel : ai.apiModel;
-  return createHash('sha256').update(JSON.stringify([ai.provider, endpoint || '', model || ''])).digest('hex');
+  const protocol = ai.provider === 'local' ? 'ollama' : (ai.apiProtocol || 'openai');
+  return createHash('sha256').update(JSON.stringify([ai.provider, endpoint || '', model || '', protocol])).digest('hex');
 }
 
 function aiHistorySnapshot() {
@@ -2308,7 +2780,127 @@ function normalizedToolCalls(message) {
   }));
 }
 
-async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) {
+// Anthropic Messages API 与 OpenAI 的 Chat Completions 有两处硬差别：
+//   1. system 提示是**顶层参数**，不在 messages 里；
+//   2. 工具结果不是 role:'tool'，而是 user 消息里的 tool_result 内容块。
+// 内部一律用 OpenAI 形态的会话（历史、工具执行都不动），只在发请求这一刻转换。
+function anthropicMessages(messages) {
+  const system = [];
+  const out = [];
+  const push = (role, blocks) => {
+    const existing = out.at(-1);
+    if (existing && existing.role === role) existing.content.push(...blocks);
+    else out.push({ role, content: blocks });
+  };
+  for (const message of messages) {
+    const role = String(message?.role || 'user');
+    if (role === 'system') {
+      const item = String(message.content || '').trim();
+      if (item) system.push({ type: 'text', text: item });
+      continue;
+    }
+    if (role === 'tool') {
+      push('user', [{
+        type: 'tool_result',
+        tool_use_id: String(message.tool_call_id || ''),
+        content: String(message.content || '').slice(0, 32_000),
+      }]);
+      continue;
+    }
+    if (role === 'assistant') {
+      const blocks = [];
+      const text = String(message.content || '');
+      if (text.trim()) blocks.push({ type: 'text', text });
+      for (const call of normalizedToolCalls(message)) {
+        let input = {};
+        try { input = parseToolArguments(call.arguments); } catch { input = {}; }
+        blocks.push({ type: 'tool_use', id: call.id, name: call.name, input });
+      }
+      if (blocks.length) push('assistant', blocks);
+      continue;
+    }
+    const text = String(message.content || '');
+    if (text.trim()) push('user', [{ type: 'text', text }]);
+  }
+  // Anthropic 不接受空数组，也不接受空 messages
+  const cleaned = out.filter((item) => item.content.length);
+  return { system, messages: cleaned.length ? cleaned : [{ role: 'user', content: [{ type: 'text', text: '…' }] }] };
+}
+
+/**
+ * 思考模式的 provider（DeepSeek 等）要求把思考内容原样回传给 API，否则
+ * **工具轮的第二轮**会被 400 拒：
+ *   The `reasoning_content` in the thinking mode must be passed back to the API.
+ * 实测（2026-09-22）：只有「带工具调用的 assistant 轮」强制要求；该字段必须是
+ * **字符串**——`""` 可以，`null` 与「字段缺失」都会被拒。
+ * 做法：第一次照常发，撞到该报错再补上重发一次，并把结论记进下面这个集合
+ * （按 服务地址+模型 区分）。之后不再多花请求，对不需要该字段的 provider 零影响。
+ * 线格式转换本身在 ai-messages.cjs 里。
+ */
+const reasoningPassthroughKeys = new Set();
+
+function anthropicTools(tools) {
+  return (Array.isArray(tools) ? tools : [])
+    .filter((tool) => tool?.function?.name)
+    .map((tool) => ({
+      name: tool.function.name,
+      description: String(tool.function.description || '').slice(0, 4000),
+      input_schema: tool.function.parameters || { type: 'object', properties: {} },
+    }));
+}
+
+/** Anthropic 协议的一轮请求（服务商配置里 protocol: 'anthropic'）。 */
+async function requestAnthropicTurn(config, messages, tools, endpoint, { signal, onDelta, onReasoning } = {}) {
+  const url = new URL(endpoint.toString());
+  if (!/\/v1\/messages\/?$/.test(url.pathname)) {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/v1/messages`.replace(/\/+/g, '/');
+  }
+  const converted = anthropicMessages(messages);
+  const payload = {
+    model: config.apiModel,
+    max_tokens: ANTHROPIC_MAX_TOKENS,
+    ...(converted.system.length ? { system: converted.system } : {}),
+    messages: converted.messages,
+  };
+  const offered = anthropicTools(tools);
+  if (offered.length) payload.tools = offered;
+  const headers = {
+    'content-type': 'application/json',
+    'x-api-key': config.apiKey,
+    'anthropic-version': ANTHROPIC_VERSION,
+  };
+  if (onDelta || onReasoning) {
+    const body = await streamAnthropicChat({ url, headers, payload, signal, onDelta, onReasoning });
+    return {
+      role: 'assistant',
+      content: String(body.content || '').slice(0, 32_000),
+      ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
+      ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+      ...(body.finishReason ? { finishReason: String(body.finishReason) } : {}),
+    };
+  }
+  const response = await fetch(url, {
+    method: 'POST', headers, body: JSON.stringify(payload), signal, redirect: 'error',
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 240);
+    throw new Error(`API 返回 ${response.status}${detail ? `：${detail}` : ''}`);
+  }
+  const body = await response.json();
+  const blocks = Array.isArray(body.content) ? body.content : [];
+  const content = blocks.filter((block) => block?.type === 'text').map((block) => String(block.text || '')).join('');
+  const calls = blocks.filter((block) => block?.type === 'tool_use').map((block) => ({
+    id: String(block.id || ''), type: 'function',
+    function: { name: String(block.name || ''), arguments: JSON.stringify(block.input || {}) },
+  })).filter((call) => call.function.name);
+  return {
+    role: 'assistant',
+    content: content.slice(0, 32_000),
+    ...(calls.length ? { tool_calls: calls.slice(0, 16) } : {}),
+  };
+}
+
+async function requestAiTurn(config, messages, tools, { signal, onDelta, onReasoning, onStatus } = {}) {
   const deadline = AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   if (config.provider === 'local') {
@@ -2330,10 +2922,11 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     if (payload.stream) {
       // Streaming is enabled even when tools are offered: content deltas are
       // shown as they arrive and tool calls are merged from the same stream.
-      const body = await streamOllamaChat({ url, payload, signal: requestSignal, onDelta });
+      const body = await streamOllamaChat({ url, payload, signal: requestSignal, onDelta, onReasoning });
       return {
         role: 'assistant',
         content: String(body.content || '').slice(0, 32_000),
+        ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
         ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
       };
     }
@@ -2358,27 +2951,52 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     if (!endpoint) throw new Error('API 地址必须使用 HTTPS');
     if (!config.apiModel?.trim()) throw new Error('请填写模型名称');
     if (!config.apiKey) throw new Error('请保存 API Key');
+    // 协议由服务商配置决定（网页端/PLL/PHL 共用的规范形态里就有 protocol 字段）
+    const protocol = ['openai', 'anthropic'].includes(String(config.apiProtocol || '').trim())
+      ? String(config.apiProtocol).trim() : 'openai';
+    if (protocol === 'anthropic') return requestAnthropicTurn(config, messages, tools, endpoint, { signal: requestSignal, onDelta, onReasoning });
     if (!/\/chat\/completions\/?$/.test(endpoint.pathname)) {
       const base = endpoint.pathname.replace(/\/$/, '');
       endpoint.pathname = `${base}/chat/completions`.replace(/\/+/g, '/');
     }
-    const payload = { model: config.apiModel, messages };
+    const payload = { model: config.apiModel };
     if (tools.length) payload.tools = tools;
-    if (onDelta) {
+    if (onDelta || onReasoning) {
       // Providers stream content deltas and any tool calls over SSE; both are
       // merged so the user sees text as it is generated.
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` };
-      const body = await streamOpenAiChat({ url: endpoint, headers, payload, signal: requestSignal, onDelta });
+      const reasoningKey = `${endpoint.origin}${endpoint.pathname}|${String(config.apiModel || '')}`;
+      const send = (passReasoning) => streamOpenAiChat({
+        url: endpoint, headers: { ...headers },
+        payload: { ...payload, messages: openAiMessages(messages, passReasoning) },
+        signal: requestSignal, onDelta, onReasoning,
+      });
+      let body;
+      try {
+        body = await send(reasoningPassthroughKeys.has(reasoningKey));
+      } catch (error) {
+        // 思考模式的 provider（DeepSeek 等）在**工具轮**强制要求把 reasoning_content
+        // 原样回传，否则第二轮直接被 400 拒。撞到就补上重发一次，并记下来。
+        if (!reasoningPassthroughKeys.has(reasoningKey) && needsReasoningPassthrough(error)) {
+          reasoningPassthroughKeys.add(reasoningKey);
+          onStatus?.('该模型要求回传思考内容，已自动适配并重试。');
+          body = await send(true);
+        } else {
+          throw error;
+        }
+      }
       return {
         role: 'assistant',
         content: String(body.content || '').slice(0, 32_000),
+        ...(body.reasoning ? { reasoning: String(body.reasoning).slice(0, 32_000) } : {}),
         ...(body.toolCalls?.length ? { tool_calls: body.toolCalls.slice(0, 16) } : {}),
+        ...(body.finishReason ? { finishReason: String(body.finishReason) } : {}),
       };
     }
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, messages: openAiMessages(messages, false) }),
       signal: requestSignal,
     });
     if (!response.ok) {
@@ -2387,10 +3005,14 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta } = {}) 
     }
     const body = await response.json();
     const message = body.choices?.[0]?.message || {};
+    const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content
+      : (typeof message.reasoning === 'string' ? message.reasoning : '');
     return {
       role: 'assistant',
       content: String(message.content || '').slice(0, 32_000),
+      ...(reasoning ? { reasoning: reasoning.slice(0, 32_000) } : {}),
       ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls.slice(0, 16) } : {}),
+      ...(body.choices?.[0]?.finish_reason ? { finishReason: String(body.choices[0].finish_reason) } : {}),
     };
   }
   throw new Error('未知 AI 类型');
@@ -2421,13 +3043,13 @@ function shouldOfferMailTools(messages) {
   return followUpAction.test(current) && userMessages.slice(-4, -1).some((message) => mailSubject.test(message));
 }
 
-async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connectionKey, attachmentIds = [], attachmentApiConsent = false } = {}) {
+async function aiChat(messages, { signal, onDelta, onReasoning, onStatus, useMemories, connectionKey, attachmentIds = [], attachmentApiConsent = false } = {}) {
   assertHistoryConnection(connectionKey);
   const config = secureStore.data.settings.ai;
   if (!config.enabled || config.provider === 'off') throw new Error('AI 尚未启用');
   const requestConfigFingerprint = (value) => JSON.stringify([
     value.enabled, value.provider, value.localEndpoint, value.localModel,
-    value.apiEndpoint, value.apiModel, value.apiKey, value.launcherControlEnabled,
+    value.apiEndpoint, value.apiModel, value.apiProtocol, value.apiKey, value.launcherControlEnabled,
     value.controlConsentVersion, value.controlConsentAcceptedAt,
     value.permissionMode, value.mailReadEnabled, value.mailConsentVersion,
     value.mailConsentAcceptedAt,
@@ -2477,6 +3099,8 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
   const writeKeys = new Set();
   let toolCount = 0;
   let finalContent = '';
+  // 最后一轮的 finish_reason：回复为空时用它给出一句能照着修的提示
+  let lastAssistantFinishReason = '';
   let mailRevision = null;
   let launcherRevision = null;
   const assertLauncherReadCurrent = () => {
@@ -2498,7 +3122,11 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
     onStatus?.('正在生成…');
     let assistant;
     try {
-      assistant = await requestAiTurn(config, working, tools, { signal, onDelta: tools.length ? null : onDelta });
+      // 流式**不再**因"提供了工具"而关闭：正文增量与工具调用本来就走在同一条
+      // SSE 里，前端会把增量显示出来、把工具调用合并起来。
+      // （旧代码在这里把 onDelta 置成 null —— 结果是只要开了 AI 控制权
+      //  （也就是提供了工具）就永远看不到流式输出。）
+      assistant = await requestAiTurn(config, working, tools, { signal, onDelta, onReasoning, onStatus });
     } catch (error) {
       if (error?.name === 'TimeoutError') {
         throw new Error(config.provider === 'api'
@@ -2509,6 +3137,7 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
     }
     const calls = normalizedToolCalls(assistant);
     finalContent = String(assistant.content || '').trim();
+    lastAssistantFinishReason = String(assistant.finishReason || '');
     if (!calls.length || !controlEnabled || !tools.length) break;
     working.push(assistant);
     for (let index = 0; index < calls.length; index += 1) {
@@ -2564,7 +3193,12 @@ async function aiChat(messages, { signal, onDelta, onStatus, useMemories, connec
       })
     : null;
   if (!finalContent) {
-    finalContent = proposal ? '我已整理出一份更改清单。它还没有写入，请先核对下面每一项。' : '没有收到有效回复。';
+    // 空回复要给一句**能照着修**的话。思考模式的模型会把输出预算先用在思考上，
+    // 用光时 API 会返回 HTTP 200 + 空 content + finish_reason=length（不抛异常），
+    // 以前只会显示"没有收到有效回复"，用户完全不知道该改什么。
+    finalContent = proposal
+      ? '我已整理出一份更改清单。它还没有写入，请先核对下面每一项。'
+      : emptyReplyMessage(lastAssistantFinishReason, config);
   }
   return { content: finalContent, proposal, controlUsed: controlEnabled && toolCount > 0 };
 }
@@ -2689,6 +3323,7 @@ async function streamAiChat(event, requestId, messages, options = {}) {
     emit({ type: 'status', status: config.provider === 'local' ? '正在连接本机模型…' : '正在连接 AI…' });
     await avoidWarmupRace(config);
     let receivedToken = false;
+    let receivedThinking = false;
     const result = await aiChat(messages, {
       useMemories: options?.useMemories === true,
       connectionKey: options?.connectionKey,
@@ -2698,6 +3333,12 @@ async function streamAiChat(event, requestId, messages, options = {}) {
       onDelta: (delta) => {
         if (!receivedToken) { receivedToken = true; emit({ type: 'status', status: '正在生成…' }); }
         emit({ type: 'delta', delta: String(delta || '') });
+      },
+      // 思考模式的模型会把思考内容单独流出来。单独发一种事件，
+      // 前端折进「思考过程」块里，不跟正文混在一起。
+      onReasoning: (text) => {
+        if (!receivedThinking) { receivedThinking = true; emit({ type: 'status', status: '正在思考…' }); }
+        emit({ type: 'reasoning', delta: String(text || '') });
       },
       onStatus: (status) => emit({ type: 'status', status }),
     });
@@ -2907,6 +3548,260 @@ function reconcileSharedSchedule() {
   }
 }
 
+/**
+ * phix 统一账号 · 云同步（与 Pinghe Launcher Lite 共用同一套账号与数据文件）。
+ *
+ * 界面需要的一切都在这一组通道后面：登录/注册、解锁、同步、预览、冲突、设备。
+ * 统一返回 `{ ok:true, data }` / `{ ok:false, error, code }`，
+ * 这样渲染进程只要判 `ok` 并把 `error` 直接显示出来就够了。
+ */
+function createPhixSession() {
+  return new phixSessionModule.PhixSession({
+    log: (message) => console.warn(String(message).slice(0, 300)),
+    // 同步落盘之后：把云端那份 AI 服务商与 Key 收进内存（见
+    // `adoptAiProvidersFromSharedSettings` 上面的说明）。
+    onSyncApplied: () => {
+      adoptAiProvidersFromSharedSettings();
+      // 账号可能是**登录之后**才从云端下来的：这时启动那一轮学校同步早就跑过了，
+      // 页面会一直停在"登录并同步"（用户 2026-09-18 实测）。这里补一次。
+      syncSchoolAfterAccountsArrived();
+    },
+  });
+}
+
+const phixSession = createPhixSession();
+
+/** 会话第一次被用到时把数据根交给它（数据根在启动时就定下来了，之后不变）。 */
+function phixDataRoot() {
+  const layout = dataRoot();
+  phixSessionModule.configure({ dataDir: layout.root });
+  return layout;
+}
+
+async function phixCall(handler) {
+  try {
+    phixDataRoot();
+    return { ok: true, data: await handler() };
+  } catch (error) {
+    const code = error?.code || '';
+    if (code && code !== 'server_error') {
+      return { ok: false, error: String(error.message || error), code };
+    }
+    return { ok: false, error: String(error?.message || error), code: code || 'phix_error' };
+  }
+}
+
+/**
+ * 心履账号自动跟着 phix 账号走（用户 2026-09-19：「心履的账号自动用 phix 账号登录」）。
+ * 只在 phix 登录/注册**成功之后**调用；失败不抛、不打扰用户，只写一行日志。
+ */
+function adoptXinlvAccount(username, password) {
+  if (!xinlvService || !username || !password) return;
+  void xinlvService.adoptAccount(username, password).catch((error) => {
+    console.warn('心履自动登录跳过：', error?.message || error);
+  });
+}
+
+/**
+ * 启动时把 phix 会话接回来（用户 2026-09-19 报「同步还是不管用」的根因：原来只有
+ * 「引导没走完」时才 restore，装好之后重启 → `logged_in` 恒为 false → 云同步根本不会跑）。
+ *
+ * 顺序：
+ *   1. `restore()`：用本机令牌把登录状态接回来（不发业务请求，很便宜）；
+ *   2. 还锁着（DEK 只在内存里）→ 拿记住的账号密码 `unlock()` 解一次
+ *      （`unlock` 只读一次 keyInfo，**不会**在服务器上多开一条会话）；
+ *   3. 都就绪 → `startAutoSync()`（一秒一轮的变更探测）；
+ *   4. 顺手把心履也登上（心履是另一个服务，用 phix 的账号密码换它的令牌）。
+ * 全程静默；任何一步失败只写日志，不弹任何东西。
+ */
+async function restorePhixAtStartup() {
+  try {
+    phixDataRoot();
+    const saved = secureStore.phixLoginCredentials();
+    const restored = await phixSession.restore();
+    if (!restored) {
+      // 没有令牌：如果记着账号密码，就直接登录一次（用户什么都不用做）。
+      if (saved.username && saved.password) {
+        await phixSession.login(await resolvePhixServer(), saved.username, saved.password, '', '');
+        publishCredentialChange();
+      }
+    } else if (!phixSession.status().unlocked) {
+      if (saved.username && saved.password) {
+        // 密码模式：登录密码就是解锁口令；独立同步口令模式解不开（口令没存在盘上）。
+        if (phixSession.status().key_mode !== 'syncphrase') {
+          try {
+            await phixSession.unlock(saved.password);
+          } catch (error) {
+            console.warn('phix 自动解锁失败（下次登录即可）：', error?.message || error);
+          }
+        }
+      }
+    }
+    const status = phixSession.status();
+    if (status.unlocked) {
+      phixSession.startAutoSync();
+      publishCredentialChange();
+    }
+    adoptXinlvAccount(saved.username, saved.password);
+  } catch (error) {
+    console.warn('phix 启动恢复跳过：', error?.message || error);
+  }
+}
+
+/**
+ * 该连哪台服务器。**界面不再问用户**（用户明确要求登录页只要账号密码）：
+ *   1. 界面上填了的（老版本/高级用法）优先；
+ *   2. 配置里记着的（登录过一次就记住了）；
+ *   3. 挨个 ping 候选：内网自建（由部署者用 `PHIX_LAN_SERVER` 或 `.phix-local.json`
+ *      指定，不进源码）→ 官网公网入口（`https://phix.ing/api/v1`）。
+ * `/ping` 是明文只读接口，不带任何凭据；失败就换下一个。
+ * 全都不通时回首选地址，让登录把真实错误（连不上/账号密码不对）说出来。
+ */
+const { serverCandidates: phixServerCandidates, defaultServer: phixDefaultServer } = require('./phix-servers.cjs');
+
+async function resolvePhixServer(explicit = '') {
+  const asked = String(explicit || '').trim();
+  if (asked) return phixSessionModule.normalizeServer(asked);
+  const remembered = String(phixSession.status()?.server || '').trim();
+  if (remembered) return remembered;
+  for (const candidate of phixServerCandidates()) {
+    try {
+      await phixSessionModule.makeClient(candidate).ping();
+      return candidate;
+    } catch { /* 换下一个候选 */ }
+  }
+  return phixDefaultServer();
+}
+
+function registerPhixIpc() {
+  const handle = (name, handler) => ipcMain.handle(`phix:${name}`, async (event, ...args) => {
+    assertMainRenderer(event);
+    return phixCall(() => handler(...args));
+  });
+
+  handle('status', () => phixSession.status());
+  // 渲染进程不硬编码内网地址，向主进程要候选列表（部署者配置只存在本机）。
+  handle('server-candidates', () => phixServerCandidates());
+  handle('restore', async () => {
+    const result = await phixSession.restore();
+    return result || { logged_in: false };
+  });
+  handle('profile', () => {
+    const layout = phixDataRoot();
+    const profilePath = require('node:path').join(layout.root, 'Profile');
+    try {
+      const text = require('node:fs').readFileSync(profilePath, 'utf8');
+      return JSON.parse(text);
+    } catch { return null; }
+  });
+  handle('save-profile', (input) => {
+    const layout = phixDataRoot();
+    const profilePath = require('node:path').join(layout.root, 'Profile');
+    const doc = input && typeof input === 'object' ? input : {};
+    doc.updated_at = doc.updated_at || new Date().toISOString();
+    require('node:fs').writeFileSync(profilePath, JSON.stringify(doc, null, 2), 'utf8');
+    return doc;
+  });
+  handle('ping', async (server) => {
+    const target = await resolvePhixServer(server);
+    // 用与同步同一套客户端（含应用层加密与公钥固定）："测试连接"测的就是真实链路。
+    // `/ping` 本身永远走明文（要先拿服务器公钥），这一步顺带把公钥固定下来。
+    const info = await phixSessionModule.makeClient(target).ping();
+    return {
+      server: target,
+      version: info.version,
+      server_time: info.server_time,
+      key_modes: info.key_modes || [],
+      limits: info.limits || {},
+      encrypted: Number(info.enc || 0) === 1,
+      has_key: Boolean(info.pk),
+    };
+  });
+  handle('register', async (input) => {
+    const status = await phixSession.register(
+      await resolvePhixServer(input?.server), input?.username, input?.password,
+      input?.key_mode || 'password');
+    secureStore.rememberPhixLogin(input?.username, input?.password);
+    adoptXinlvAccount(input?.username, input?.password);
+    return status;
+  });
+  handle('login', async (input) => {
+    const status = await phixSession.login(
+      await resolvePhixServer(input?.server), input?.username, input?.password,
+      String(input?.sync_passphrase || '').trim(), input?.device || '');
+    // 同步落盘后账号会被写进共用 settings.yaml，界面上的账号状态要跟着刷新。
+    publishCredentialChange();
+    // 记住账号密码：重启后自动接上（解锁云端数据），心履也据此自动登录。
+    secureStore.rememberPhixLogin(input?.username, input?.password);
+    // 心履账号就是 phix 账号（用户 2026-09-19）：登录成功后顺手把心履也登上，
+    // 用户不需要在心履页面再输一遍账号密码。
+    adoptXinlvAccount(input?.username, input?.password);
+    // 登录时口令对、但数据是用独立同步口令包的：这一步没同步，账号也不会到，
+    // 交给"解锁之后"的那条路补（见下面的 unlock）。
+    return status;
+  });
+  // 解锁之后数据才拿得到，accounts 也可能这时才落盘 → 顺手检查学校账号。
+  handle('unlock', async (passphrase) => {
+    const status = await phixSession.unlock(String(passphrase || ''));
+    publishCredentialChange();
+    syncSchoolAfterAccountsArrived();
+    return status;
+  });
+  handle('logout', () => { secureStore.forgetPhixLogin(); return phixSession.logout(true); });
+  handle('sync', (input) => phixSession.sync({
+    force: Boolean(input?.force),
+    dryRun: Boolean(input?.dry_run),
+    objects: Array.isArray(input?.objects) && input.objects.length ? input.objects.map(String) : undefined,
+  }).then((report) => ({
+    report,
+    summary: phixSessionModule.brief(report),
+    status: phixSession.status(),
+  })));
+  // 预览：只算不写，让用户先看清这轮会拉什么、推什么（force 跳过并发护栏）。
+  handle('sync-preview', () => phixSession.sync({ force: true, dryRun: true })
+    .then((report) => ({ report, summary: phixSessionModule.brief(report) })));
+  handle('conflicts', () => ({ conflicts: (phixSession.status().state || {}).conflicts || [] }));
+  // 服务器换了加密公钥时才该点：清掉本机记住的公钥、重新信任一次。
+  handle('trust-key', () => phixSession.trustServerKey());
+  handle('devices', async () => ({ devices: await phixSession.devices() }));
+  // P3：会话（= 一次登录 = 一台设备）+ 注销某台 / 注销除本机外全部
+  handle('sessions', () => phixSession.sessions());
+  handle('session-revoke', (input) => phixSession.revokeSession({
+    sessionId: Number(input?.session_id) || 0,
+    allExceptCurrent: input?.all_except_current === true,
+  }));
+  handle('settings-save', (input) => {
+    const payload = input && typeof input === 'object' ? input : {};
+    const changes = {};
+    if (typeof payload.auto_sync === 'boolean') changes.auto_sync = payload.auto_sync;
+    if (payload.sync_interval_minutes) changes.sync_interval_minutes = Math.max(2, Number(payload.sync_interval_minutes) || 10);
+    if (Array.isArray(payload.objects)) {
+      const names = payload.objects.map(String).filter((name) => name && !phixCloud.SyncEngine.isForbidden(name));
+      if (!names.length) throw new Error('至少要选一项要同步的内容');
+      changes.objects = names;
+    }
+    if (payload.device) changes.device = String(payload.device).slice(0, 100);
+    if (Object.keys(changes).length) phixSessionModule.saveConfig(changes);
+    // 开关变了要立刻生效，不用等下一次登录。
+    if (changes.auto_sync === false) phixSession.stopAutoSync();
+    else if (phixSession.dek !== null) phixSession.startAutoSync();
+    return phixSession.status();
+  });
+  handle('set-passphrase', (input) => phixSession.setSyncPassphrase(
+    String(input?.login_password || ''), String(input?.sync_passphrase || '')));
+  handle('use-login-password', (input) => phixSession.useLoginPassword(
+    String(input?.login_password || ''), String(input?.new_password || '')));
+  handle('change-password', (input) => phixSession.changePassword(
+    String(input?.old_password || ''), String(input?.new_password || '')));
+  handle('open-data-dir', async () => {
+    const layout = phixDataRoot();
+    const syncDir = path.join(layout.root, phixCloud.SYNC_DIR);
+    const target = fs.existsSync(syncDir) ? syncDir : layout.root;
+    const error = await shell.openPath(target);
+    return { path: target, opened: !error, error: error || '' };
+  });
+}
+
 function registerIpc() {
   const calendarHandle = (name, handler) => ipcMain.handle(`calendar:${name}`, (event, ...args) => { assertMainRenderer(event); return handler(...args); });
   const saveCalendar = (next) => {
@@ -2950,7 +3845,28 @@ function registerIpc() {
     getLanguage: () => secureStore.data.settings.language,
   });
   mailController = mailbox;
-  for (const name of ['status', 'list', 'read', 'contacts', 'download', 'send', 'openLink']) {
+  // 内嵌图片：`phl-mail://asset/<uid>/<附件 id>` → 邮件里那一份内嵌资源的字节。
+  // 只服务当前邮箱账号自己的邮件；任何别的路径一律 404。
+  protocol.handle(MAIL_ASSET_SCHEME, async (request) => {
+    try {
+      const url = new URL(request.url);
+      const parts = url.pathname.split('/').filter(Boolean);
+      const uid = decodeURIComponent(parts[1] || '');
+      const attachmentId = decodeURIComponent(parts[2] || '');
+      if (!uid || !/^attachment-\d+-[a-f0-9]{16}$/.test(attachmentId)) {
+        return new Response('not found', { status: 404 });
+      }
+      const asset = await mailbox.bytes(uid, attachmentId);
+      return new Response(asset.data, {
+        status: 200,
+        headers: { 'Content-Type': asset.contentType, 'Cache-Control': 'no-store' },
+      });
+    } catch {
+      // 取不到就回 404：正文里显示成一张破图，不影响其余内容。
+      return new Response('not found', { status: 404 });
+    }
+  });
+  for (const name of ['status', 'list', 'read', 'contacts', 'harvestContacts', 'download', 'downloadBytes', 'fetchImage', 'send', 'openLink']) {
     ipcMain.handle(`mail:${name}`, async (event, input) => {
       assertMainRenderer(event);
       const result = await mailbox[name](input);
@@ -2970,9 +3886,17 @@ function registerIpc() {
   });
   xinlvHandle('status', () => xinlvService.status());
   xinlvHandle('ping', () => xinlvService.ping());
-  xinlvHandle('login', (input) => xinlvService.login(input?.username, input?.password));
-  xinlvHandle('register', (input) => xinlvService.register(input?.username, input?.password));
-  xinlvHandle('logout', () => xinlvService.logout());
+  xinlvHandle('login', async (input) => {
+    const status = await xinlvService.login(input?.username, input?.password);
+    xinlvService.startAutoSync();
+    return status;
+  });
+  xinlvHandle('register', async (input) => {
+    const status = await xinlvService.register(input?.username, input?.password);
+    xinlvService.startAutoSync();
+    return status;
+  });
+  xinlvHandle('logout', async () => { xinlvService.stopAutoSync(); return xinlvService.logout(); });
   xinlvHandle('profile', () => xinlvService.profile());
   xinlvHandle('list', (input) => xinlvService.listMoods(input || {}));
   xinlvHandle('add', (input) => xinlvService.addMood(input || {}));
@@ -2985,6 +3909,7 @@ function registerIpc() {
   xinlvHandle('history', () => xinlvService.chatHistory());
   xinlvHandle('proactive', (since) => xinlvService.proactive(since));
   xinlvHandle('clear-chat', () => xinlvService.clearChat());
+  registerPhixIpc();
   schoolHandle('preferences', (input) => updateSchoolPreferences(input || {}));
   schoolHandle('import-plan', importSchoolPlan);
   schoolHandle('course', (id) => readSchoolDetail(() => schoolClient.getCourseDetail(id)));
@@ -2992,6 +3917,13 @@ function registerIpc() {
   schoolHandle('discussion', (courseId, id) => readSchoolDetail(() => schoolClient.getDiscussionDetail(courseId, id)));
   schoolHandle('task', (courseId, id) => readSchoolDetail(() => schoolClient.getTaskDetail(courseId, id)));
   schoolHandle('ib-overview', (kind) => readSchoolDetail(() => schoolClient.getCoreOverview(kind)));
+  // 通知 / 待办（与网页端同一口径）。读得到就顺手写进共用 data/School，
+  // 让 Pinghe Launcher Lite 也少一次抓取。
+  schoolHandle('notifications', async () => {
+    const result = await readSchoolDetail(() => schoolClient.getNotifications());
+    try { sharedSchool.updateSchool(dataRoot().school, { notifications: result }); } catch { /* 共用文件写不进去不影响本机 */ }
+    return result;
+  });
   schoolHandle('open-url', async (raw) => {
     const url = new URL(String(raw || ''));
     const siteId = url.origin === 'https://shph.managebac.cn' ? 'managebac' : url.origin === 'https://pingheschool.edupage.org' ? 'edupage' : '';
@@ -3001,6 +3933,37 @@ function registerIpc() {
     if (!isSiteViewUsable(entry)) throw new Error('网页暂未准备好');
     await entry.view.webContents.loadURL(validated);
     return { ok: true };
+  });
+  /**
+   * 导出课表（与网页端同一套：行 = 星期、列 = 节次）。
+   * CSV 是渲染进程拼好的文本；PNG 是渲染进程画的 canvas（dataURL），这里只负责落盘。
+   * 文件由用户在自己的对话框里选路径 —— 不往程序目录里偷偷写东西。
+   */
+  schoolHandle('export-timetable', async (input) => {
+    const format = input?.format === 'png' ? 'png' : 'csv';
+    const suggested = String(input?.name || '').replace(/[\\/:*?"<>|]/g, '').slice(0, 120)
+      || `课表-${new Date().toISOString().slice(0, 10)}.${format}`;
+    const result = await showLocalizedSaveDialog(mainWindow, {
+      title: format === 'png' ? '导出课表图片' : '导出课表表格',
+      defaultPath: path.join(app.getPath('documents'), suggested),
+      filters: format === 'png'
+        ? [{ name: 'PNG 图片', extensions: ['png'] }]
+        : [{ name: 'CSV 表格', extensions: ['csv'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    if (format === 'csv') {
+      const text = String(input?.text ?? '');
+      if (text.length > 2_000_000) throw new Error('课表内容异常大，已取消导出');
+      fs.writeFileSync(result.filePath, text, 'utf8');
+    } else {
+      const raw = String(input?.dataUrl || '');
+      const base64 = raw.startsWith('data:image/png;base64,') ? raw.slice('data:image/png;base64,'.length) : '';
+      if (!base64) throw new Error('课表图片生成失败，请重试');
+      const bytes = Buffer.from(base64, 'base64');
+      if (!bytes.length || bytes.length > 24 * 1024 * 1024) throw new Error('课表图片大小异常，已取消导出');
+      fs.writeFileSync(result.filePath, bytes);
+    }
+    return { ok: true, filePath: result.filePath };
   });
   const vocabHandle = (name, handler) => ipcMain.handle(`vocabulary:${name}`, (event, ...args) => {
     assertMainRenderer(event);
@@ -3134,6 +4097,12 @@ function registerIpc() {
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
     const exportData = structuredClone(secureStore.data);
     exportData.settings.ai.apiKey = '';
+    // 多服务商列表里的 Key 同样是明文，导出备份里一律清掉（与 apiKey 同一个理由）。
+    if (Array.isArray(exportData.settings.ai.providers)) {
+      exportData.settings.ai.providers = exportData.settings.ai.providers.map((row) => (
+        row && typeof row === 'object' && !Array.isArray(row) ? { ...row, api_key: '' } : row
+      ));
+    }
     // A plaintext backup must never contain the Xinlv password or token.
     if (exportData.xinlv && typeof exportData.xinlv === 'object') {
       exportData.xinlv.password = '';
@@ -3963,7 +4932,7 @@ async function runSelfTest() {
     navigate('courses');
     await window.schoolUI.refresh();
     const coursesRendered = document.querySelector('#schoolPage h1')?.textContent === '我的课程'
-      && document.querySelectorAll('#schoolPage [data-course-tab]').length === 3
+      && ['courses', 'notifications', 'tasks', 'discussions', 'core'].every(tab => document.querySelector('#schoolPage [data-course-tab="' + tab + '"]'))
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'courses';
     navigate('mail');
     await window.mailUI.open();
@@ -4126,7 +5095,31 @@ async function runSelfTest() {
   sendToRenderer('ai:stream', { requestId: 'old-other-session', type: 'delta', delta: 'SHOULD_NOT_APPEAR' });
   sendToRenderer('ai:stream', { requestId: 'ui-stream-test', type: 'delta', delta: 'student' });
   checks.streamedTextVisible = await mainWindow.webContents.executeJavaScript("document.querySelector('#chatMessages .chat-bubble').textContent === 'Hello student' && document.querySelector('#aiSend').title === '停止生成'");
-  await mainWindow.webContents.executeJavaScript("state.aiRequestId=''; state.aiBusy=false; state.aiMessages=[]; window.i18n.apply('en');");
+
+  // 思考内容：走单独的流事件，折进「思考过程」块；正文到达后不该和正文混在一起。
+  sendToRenderer('ai:stream', { requestId: 'ui-stream-test', type: 'reasoning', delta: '先看课表。' });
+  checks.reasoningStreamed = await mainWindow.webContents.executeJavaScript(
+    "(() => { const el = document.querySelector('#chatMessages .chat-thinking');"
+    + " return Boolean(el) && el.querySelector('.chat-thinking-body').textContent === '先看课表。'; })()");
+  checks.reasoningCollapsedOnceAnswerArrives = await mainWindow.webContents.executeJavaScript(
+    "document.querySelector('#chatMessages .chat-thinking').open === false");
+  checks.reasoningSeparateFromAnswer = await mainWindow.webContents.executeJavaScript(
+    "document.querySelector('#chatMessages .chat-bubble').textContent === 'Hello student'");
+
+  // Markdown：AI 回复按 Markdown 渲染（表格/代码块/标题），并且危险标签被清掉。
+  checks.markdownRendered = await mainWindow.webContents.executeJavaScript(
+    "(() => { const host = document.createElement('div');"
+    + " host.innerHTML = markdownToHtml('# 标题\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n\\n```python\\nprint(1)\\n```\\n\\n**粗**');"
+    + " return Boolean(host.querySelector('h1')) && Boolean(host.querySelector('table th'))"
+    + " && Boolean(host.querySelector('pre code')) && Boolean(host.querySelector('strong')); })()");
+  checks.markdownSanitized = await mainWindow.webContents.executeJavaScript(
+    "(() => { const host = document.createElement('div');"
+    + " host.innerHTML = markdownToHtml('<img src=x onerror=alert(1)>\\n\\n<iframe src=//x></iframe>');"
+    + " return !host.querySelector('iframe') && !host.innerHTML.includes('onerror'); })()");
+  checks.markdownVendorsLoaded = await mainWindow.webContents.executeJavaScript(
+    "typeof window.marked?.parse === 'function' && typeof window.DOMPurify?.sanitize === 'function'");
+
+  await mainWindow.webContents.executeJavaScript("state.aiRequestId=''; state.aiBusy=false; state.aiMessages=[]; state.aiThinkingOpen=undefined; window.i18n.apply('en');");
   checks.languageSwitchWorks = await mainWindow.webContents.executeJavaScript("document.documentElement.lang === 'en' && document.querySelector('[data-route=settings] span').textContent==='Settings'");
   checks.success = Object.values(checks).every(Boolean);
   console.log(`SELF_TEST_RESULT ${JSON.stringify(checks)}`);
@@ -4146,7 +5139,8 @@ function createWindow() {
     // The window is shown as soon as the splash has painted (ready-to-show),
     // so the user never stares at an empty frame while services start.
     show: IS_CAPTURE || CAPTURE_SITE ? true : false,
-    backgroundColor: theme.paper,
+    // 第一帧就是开机画面（墨绿），窗口底色也用同一个色，免得渲染前闪一下米白。
+    backgroundColor: SPLASH_INK,
     title: 'PH Launcher',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: {
@@ -4161,9 +5155,11 @@ function createWindow() {
     },
   };
   if (process.platform !== 'darwin') {
+    // 开机画面是墨绿的（三端统一样式）：窗口控件那块底色先跟着它，
+    // 开机画面淡出后由 `finishSplash()` 换回顶栏配色。
     windowOptions.titleBarOverlay = {
-      color: theme.primary,
-      symbolColor: theme.symbol,
+      color: SPLASH_INK,
+      symbolColor: '#fbfaf6',
       height: TOPBAR_HEIGHT,
     };
   }
@@ -4212,8 +5208,17 @@ function createWindow() {
   }, 1200);
   mainWindow.webContents.on('did-finish-load', () => {
     selfTestStage('ui-loaded');
+    // 云同步面板是设置页里动态挂上去的一块，界面脚本出错不会让 did-finish-load
+    // 失败，所以这里显式确认它真的渲染出来了（挂上了就有 #phixSettings 的子节点）。
+    if (IS_SELF_TEST) {
+      mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('#phixSettings .phix-box, #phixSettings .phix-dim'))")
+        .then((mounted) => selfTestStage(`phix-panel-${mounted ? 'mounted' : 'missing'}`))
+        .catch(() => selfTestStage('phix-panel-unknown'));
+    }
     startupMark('ui-loaded');
     sendToRenderer('app:ready', { sites: SITES, shortcuts: DEFAULT_SHORTCUTS });
+    // 引导"再出现一次"是**命令行的选择**，不写任何用户数据（见 `--ph-force-onboarding`）。
+    if (IS_FORCE_ONBOARDING) sendToRenderer('app:force-onboarding', { force: true });
     // Fetch and preload while the splash is still on screen. Headless checks
     // drive their own fixtures and must not race this.
     if (!IS_HEADLESS && !IS_CAPTURE && !CAPTURE_SITE) {
@@ -4418,7 +5423,21 @@ app.whenReady().then(() => {
       secureStore.updateXinlvData(patch);
       sendToRenderer('data:changed', secureStore.forRenderer());
     },
+    // 后台那一秒一轮的同步拉到新记录时：通知界面刷新（用户无感，不弹任何东西）。
+    onChanged: (result) => {
+      sendToRenderer('xinlv:changed', { pulled: Number(result?.pulled) || 0, at: new Date().toISOString() });
+    },
   });
+  // 心履用 phix 账号自动登录（用户 2026-09-19）：启动时先兜底登录一次 +
+  // 打开一秒一轮的静默同步；phix 登录成功后还会再调 `adoptAccount` 对齐账号。
+  try {
+    void xinlvService.ensureLogin();
+  } catch (error) {
+    console.warn('心履自动登录跳过：', error?.message || error);
+  }
+  // phix 会话启动就接回来（令牌 + 记住的账号密码解锁）：一秒一轮的云同步才会真的跑起来，
+  // 心履也才有 phix 账号可用（用户 2026-09-19 报「同步还是不管用」的根因就在这里）。
+  setTimeout(() => { void restorePhixAtStartup(); }, 800);
   const schoolFetch = createSchoolFetch({ net, getSession: (siteId) => {
     const siteSession = session.fromPartition(SITES[siteId].partition, { cache: true });
     siteStoragePersistence.watch(siteSession);
@@ -4493,6 +5512,7 @@ app.whenReady().then(() => {
     emit: (deployment) => sendToRenderer('ai:deployment-state', deployment),
   });
   startupMark('services-ready');
+  if (IS_SCHOOL_PROBE) { void runSchoolAuthProbe(); return; }
   // 检测到共用账号就自动同步（后台执行，不挡窗口显示）。
   setTimeout(() => { void startupSchoolSync().then((result) => { if (result.synced.length) startupMark('startup-sync-' + result.synced.join('-')); }); }, 1200);
   configureApplicationMenu();
@@ -4500,6 +5520,13 @@ app.whenReady().then(() => {
   startupMark('ipc-ready');
   createWindow();
   startupMark('window-created');
+  // 应用内自动更新：Windows 全自动（electron-updater），macOS 半自动（提示下载页）。
+  // 自检/冒烟/截图模式不联网检查，避免干扰测试与自动化。
+  if (IS_HEADLESS) {
+    autoUpdater.disableAutoUpdater();
+  } else {
+    autoUpdater.initAutoUpdater();
+  }
   if (!IS_HEADLESS) {
     reminderWindows = createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow: () => mainWindow,
       getAppearance: () => secureStore.data.settings.appearance, getLanguage: () => secureStore.data.settings.language,
@@ -4516,6 +5543,13 @@ app.whenReady().then(() => {
   if (!IS_HEADLESS) registerShortcuts();
   if (!IS_HEADLESS) applyLoginItemSetting();
   setInterval(scheduleReminderTick, 15_000).unref();
+  // 自动化用：到点自己优雅退出（走 will-quit → 托盘正常注销，不留幽灵图标）。
+  if (QUIT_AFTER_MS > 0) {
+    setTimeout(() => {
+      isQuitting = true;
+      app.quit();
+    }, QUIT_AFTER_MS).unref();
+  }
   app.on('activate', () => {
     if (!mainWindow) createWindow();
     else mainWindow.show();

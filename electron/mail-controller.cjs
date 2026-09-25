@@ -6,6 +6,8 @@ const fs = require('node:fs/promises');
 
 const UNCERTAIN_SEND = '发送结果不确定，请先查已发送，不要重复点击';
 const LINK_OPEN_ERROR = '无法打开邮件链接，请稍后重试';
+//: 正文里的外部图片：单张上限 3 MB（超过就当取不到，隐藏掉，不要让一封信把内存吃满）。
+const MAX_INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
 
 function safeAttachmentFilename(value) {
   let name;
@@ -68,8 +70,53 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
         openingLink = false;
       }
     },
-    async download(input) {
-      const before = revision();
+    /**
+     * 内嵌图片（`<img src="cid:…">`）取字节用：**不弹保存对话框**，只回字节。
+     * 只给自定义协议 `phl-mail:` 用，不跨渲染进程（见 main.cjs 的协议注册）。
+     */
+    async bytes(uid, attachmentId) {
+      const client = getClient();
+      const detail = await client.read(uid);
+      const attachment = (detail.attachments || []).find((item) => item.id === attachmentId);
+      if (!attachment) throw new Error('附件不存在，请刷新邮件后重试');
+      const data = await client.attachment(uid, attachment.id);
+      return { data, contentType: attachment.contentType || 'application/octet-stream' };
+    },
+    /**
+     * 邮件正文里的**外部图片**：由主进程去取字节，回给渲染进程。
+     *
+     * 为什么必须由主进程取：正文渲染在 `sandbox="allow-same-origin"`（不带 allow-scripts）
+     * 的 iframe 里，`<img src="https://…">` 在那种沙箱下加载不出来 —— 用户看到的就是
+     * 一个破图框。改成主进程取回来、渲染进程转成 data: URL 再放进正文。
+     *
+     * 安全边界：只允许 http/https；单个不超过 3 MB、总共不超过 12 MB；10 秒超时；
+     * 不回跳转目标之外的地址；失败就回空，让前端把那处图片隐藏。
+     */
+    async fetchImage(input) {
+      const raw = String(input?.url || '').trim();
+      let target;
+      try { target = new URL(raw); } catch { throw new Error('图片地址不合法'); }
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('只支持 http/https 图片');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const response = await fetch(target.href, {
+          redirect: 'follow', signal: controller.signal,
+          headers: { accept: 'image/*' },
+        });
+        if (!response.ok) throw new Error(`图片返回 ${response.status}`);
+        const declared = Number(response.headers.get('content-length') || 0);
+        if (declared > MAX_INLINE_IMAGE_BYTES) throw new Error('图片太大');
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (!buffer.length) throw new Error('图片是空的');
+        if (buffer.length > MAX_INLINE_IMAGE_BYTES) throw new Error('图片太大');
+        const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim();
+        return { data: buffer, contentType: /^image\//.test(contentType) ? contentType : 'image/png' };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async download(input) {      const before = revision();
       const client = getClient();
       const detail = await client.read(input?.uid);
       sameAccount(before);
@@ -94,9 +141,36 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
       try {
         client = getClient();
         before = revision();
-        // No URL, filesystem path, HTML, BCC or attachments can cross this UI
-        // boundary. Mail content is data and cannot invoke this handler.
-        prepared = await client.prepareSend({ to: input?.to, cc: input?.cc, subject: input?.subject, text: input?.text });
+        // 附件（File 对象跨 IPC 会变成普通对象，但 ArrayBuffer 保真）要带上，
+        // 否则"写信里加了附件，发出去却没有"。
+        // **不收 bcc**：启动器的边界是"发出去的人和用户看到的收件人一致"，
+        // 密送容易造成"悄悄发给别人"（tests/mail-controller.test.cjs 钉着这条）。
+        const draftPayload = { to: input?.to, cc: input?.cc, subject: input?.subject, text: input?.text };
+        if (Array.isArray(input?.attachments) && input.attachments.length) {
+          if (input.attachments.length > 20) throw new Error('附件最多 20 个');
+          const attachments = [];
+          let total = 0;
+          for (const file of input.attachments) {
+            if (!file || typeof file !== 'object') continue;
+            const bytes = file.content ?? file.bytes ?? file.data;
+            const buffer = Buffer.isBuffer(bytes) ? bytes
+              : bytes instanceof Uint8Array ? Buffer.from(bytes)
+                : bytes instanceof ArrayBuffer ? Buffer.from(new Uint8Array(bytes)) : null;
+            if (!buffer || !buffer.length) continue;   // 没有字节的条目（例如只带路径）一律丢掉
+            total += buffer.length;
+            if (buffer.length > 20 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new Error('附件总大小不能超过 20 MiB');
+            attachments.push({
+              // 用本文件里已有的文件名清洗（去路径、去控制字符），
+              // 不让 `../../x` 这种名字进到 MIME 头里。
+              name: safeAttachmentFilename(file.name || file.filename) || '附件',
+              type: String(file.type || file.contentType || 'application/octet-stream'),
+              bytes: buffer,
+            });
+          }
+          if (attachments.length) draftPayload.attachments = attachments;
+        }
+        // No URL, filesystem path or HTML can cross this UI boundary.
+        prepared = await client.prepareSend(draftPayload);
         sameAccount(before);
         const result = await dialog.showMessageBox(getWindow(), {
           type: 'question', title: '确认发送邮件', message: '现在发送这封邮件？',

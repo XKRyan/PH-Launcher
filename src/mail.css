@@ -1,20 +1,26 @@
 #mailPage { max-width: 1440px; --ink-1:var(--ink); --green-200:var(--green-100); --green-600:var(--green-700); }
+/* 2026-09-19 用户要求「所有东西都小一点，把显示邮件内容的地方放大」：
+   页面自己撑满可用高度，阅读栏按剩余空间分配 —— 不再用 `100vh - 290px` 那种
+   手算常数（改一次抬头就得重算一次，算错就是页面多出一条滚动条）。
+   注意写成 `#mailPage.active`：`.page` 平时是 `display:none`，用 id 直接写
+   `display:flex` 会让没打开的邮箱页一直显示。 */
+#mailPage.active { display:flex; flex-direction:column; height:100%; padding-bottom:22px; }
 .mail-page-head, .mail-head-actions, .mail-compose-head, .mail-compose-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-.mail-page-head { margin-bottom:20px; }
-.mail-page-head h2 { margin:5px 0 7px; font-size:1.8rem; letter-spacing:-.035em; }
+.mail-page-head { margin-bottom:12px; flex:0 0 auto; }
+.mail-page-head h2 { margin:3px 0 5px; font-size:1.5rem; letter-spacing:-.035em; }
 .mail-page-head p, .mail-contact-note, .mail-compose-actions span { margin:0; color:var(--ink-3); font-size:.78rem; line-height:1.65; }
-.mail-status { min-height:20px; margin:0 0 10px; color:var(--green-800); font-size:.8rem; }
+.mail-status { min-height:0; margin:0 0 8px; color:var(--green-800); font-size:.8rem; flex:0 0 auto; }
 .mail-status:empty { display:none; }
 .mail-status.error, .mail-form-error { color:var(--wine-700); }
-.mail-layout { display:grid; grid-template-columns:minmax(300px, .8fr) minmax(0, 1.7fr); grid-template-rows:minmax(0,1fr); height:calc(100vh - 290px); min-height:420px; border:1px solid var(--border); border-radius:18px; overflow:hidden; background:var(--white); }
+.mail-layout { display:grid; grid-template-columns:minmax(300px, .8fr) minmax(0, 1.7fr); grid-template-rows:minmax(0,1fr); flex:1 1 auto; height:auto; min-height:320px; border:1px solid var(--border); border-radius:18px; overflow:hidden; background:var(--white); }
 .mail-list-pane { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border-right:1px solid var(--border); background:var(--ivory-50); }
-.mail-filter { display:flex; gap:5px; padding:12px 12px 8px; }
+.mail-filter { display:flex; gap:5px; padding:9px 12px 6px; }
 .mail-filter button { display:flex; align-items:center; gap:7px; padding:8px 11px; border-radius:9px; color:var(--ink-3); background:transparent; font-size:.77rem; }
 .mail-filter button.active { color:var(--green-800); background:var(--green-100); font-weight:700; }
 .mail-filter span { min-width:18px; padding:1px 5px; border-radius:8px; background:var(--white); text-align:center; font-size:.66rem; }
 .mail-contact-note { padding:0 16px 11px; border-bottom:1px solid var(--border); }
 .mail-list { overflow:auto; min-height:0; }
-.mail-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto; column-gap:8px; width:100%; padding:13px 15px; border-radius:0; border-bottom:1px solid var(--border); color:var(--ink-2); background:transparent; text-align:left; }
+.mail-row { display:grid; grid-template-columns:10px minmax(0,1fr) auto; column-gap:8px; width:100%; padding:10px 14px; border-radius:0; border-bottom:1px solid var(--border); color:var(--ink-2); background:transparent; text-align:left; }
 .mail-row:hover, .mail-row.active { background:var(--green-50); }
 .mail-row.unread { color:var(--ink-1); }
 .mail-dot { grid-row:1 / span 2; align-self:center; width:6px; height:6px; border-radius:50%; background:transparent; }
@@ -24,18 +30,37 @@
 .mail-row.unread strong { font-weight:750; }
 .mail-row time { grid-column:3; grid-row:1; color:var(--ink-3); font-size:.64rem; white-space:nowrap; }
 .mail-empty-list { padding:35px 20px; color:var(--ink-3); text-align:center; font-size:.8rem; }
-.mail-read-pane { min-width:0; overflow:auto; background:var(--white); }
+.mail-read-pane { display:flex; flex-direction:column; min-width:0; overflow:auto; background:var(--white); }
+.mail-read-pane > * { flex:1 1 auto; min-height:0; }
+.mail-message { display:flex; flex-direction:column; min-height:0; }
+/* 正文框吃掉抬头、操作条、附件之外的剩余高度 —— 窗口越高，正文越大。 */
+.mail-message > header, .mail-message > .mail-message-actions { flex:0 0 auto; }
+.mail-message .mail-preview-frame { flex:1 1 auto; height:auto; }
+.mail-message .mail-text { flex:0 0 auto; }
 .mail-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; padding:40px; color:var(--ink-3); text-align:center; }
 .mail-empty h3 { margin:0 0 7px; color:var(--ink-2); font-size:1.1rem; }
 .mail-empty p { margin:0; line-height:1.7; }
-.mail-message { padding:30px clamp(20px,4vw,52px); }
-.mail-message header { padding-bottom:20px; border-bottom:1px solid var(--border); }
-.mail-message h3 { margin:0 0 18px; color:var(--ink-1); font-size:1.45rem; line-height:1.45; overflow-wrap:anywhere; }
-.mail-message dl { display:grid; gap:6px; margin:0; }
-.mail-message dl div { display:grid; grid-template-columns:52px minmax(0,1fr); gap:10px; }
-.mail-message dt { color:var(--ink-3); font-size:.72rem; }
-.mail-message dd { margin:0; color:var(--ink-2); font-size:.78rem; overflow-wrap:anywhere; }
-.mail-text { margin:24px 0; color:var(--ink-1); white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; font-size:.9rem; line-height:1.9; }
+/* 2026-09-19 用户要求：「回复/转发按钮和邮件内容没有垂直间距，按钮小一点、附件也小一点，
+   所有东西都小一点，把显示邮件内容的地方放大」。所以整体收紧、正文区放大。 */
+.mail-message { padding:14px clamp(14px,2.2vw,26px) 18px; }
+.mail-message header { padding-bottom:8px; border-bottom:1px solid var(--border); }
+.mail-message h3 { margin:0 0 4px; color:var(--ink-1); font-size:1.12rem; line-height:1.4; overflow-wrap:anywhere; }
+/* 抬头（2026-09-19 用户定的版式）：
+   第二行 = `发件人 · 时间` + 两个小字「详细信息」「展开附件」+ 回复/转发，全在同一行、
+   同一个字号；展开后 发件人/收件人/时间 一个一行，附件也一个一行。 */
+.mail-meta-line { --mail-meta-size: .72rem; display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:var(--mail-meta-size); line-height:1.5; }
+.mail-meta-who { display:flex; align-items:baseline; gap:6px; min-width:0; color:var(--ink-3); }
+.mail-meta-who strong { color:var(--ink-2); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:46ch; }
+.mail-meta-dot { color:var(--ink-3); opacity:.6; }
+.mail-meta-link { flex:0 0 auto; padding:0; border:0; background:transparent; color:var(--green-800); font-size:var(--mail-meta-size); line-height:1.5; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+.mail-meta-link:hover { color:var(--green-700); }
+.mail-meta-detail { margin-top:4px; }
+.mail-meta-dl { display:grid; gap:1px; margin:0; }
+.mail-meta-dl div { display:grid; grid-template-columns:46px minmax(0,1fr); gap:8px; }
+.mail-meta-dl dt { color:var(--ink-3); font-size:var(--mail-meta-size, .72rem); }
+.mail-meta-dl dd { margin:0; color:var(--ink-2); font-size:var(--mail-meta-size, .72rem); line-height:1.5; overflow-wrap:anywhere; }
+.mail-meta-line .mail-message-actions { margin-left:auto; }
+.mail-text { margin:10px 0; color:var(--ink-1); white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; font-size:.875rem; line-height:1.75; }
 .mail-links { margin:22px 0; padding:18px; border:1px solid var(--border); border-radius:14px; background:var(--green-50); }
 .mail-links h4 { margin:0 0 6px; color:var(--ink-1); font-size:1rem; }
 .mail-links p { margin:0 0 14px; color:var(--ink-2); font-size:.85rem; line-height:1.65; }
@@ -46,12 +71,13 @@
 .mail-link-copy small { color:var(--ink-2); font-size:.85rem; }
 .mail-link-action { flex:0 0 auto; font-size:.85rem; }
 @media(max-width:1100px) { .mail-links button { align-items:flex-start; flex-direction:column; gap:10px; } }
-.mail-attachments { margin-top:22px; padding-top:18px; border-top:1px solid var(--border); }
-.mail-attachments h4 { margin:0 0 10px; color:var(--ink-2); font-size:.85rem; }
-.mail-attachments button { display:flex; align-items:center; justify-content:space-between; gap:14px; width:100%; padding:11px 13px; margin-top:7px; border:1px solid var(--border); border-radius:10px; color:var(--ink-2); background:var(--ivory-50); text-align:left; }
+/* 附件（点「展开附件」才出现）：一个一行，和抬头同一个字号。 */
+.mail-attachments { display:flex; flex-direction:column; align-items:flex-start; gap:3px; margin-top:4px; }
+.mail-attachments button { display:inline-flex; align-items:baseline; gap:8px; width:auto; max-width:100%; padding:2px 8px; margin:0; border:1px solid var(--border); border-radius:7px; color:var(--ink-2); background:var(--ivory-50); text-align:left; font-size:var(--mail-meta-size, .72rem); line-height:1.5; }
 .mail-attachments button:hover { background:var(--green-50); border-color:var(--green-200); }
 .mail-attachments span { overflow-wrap:anywhere; }
-.mail-attachments small { flex:0 0 auto; color:var(--green-800); font-size:.72rem; }
+.mail-attachments small { flex:0 0 auto; color:var(--ink-3); font-size:var(--mail-meta-size, .72rem); }
+.mail-attach-empty { margin:2px 0 0; color:var(--ink-3); font-size:var(--mail-meta-size, .72rem); }
 /* Write-mail: centered card over a dimmed, blurred backdrop (same pattern
    as the Hello! Pinghe launcher compose dialog). */
 .mail-compose-overlay { position:fixed; inset:0; z-index:60; background:rgba(16,45,37,.55); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; padding:24px; animation:mailOverlayIn .18s ease both; }
@@ -81,18 +107,38 @@
   .mail-list-pane { min-height:300px; max-height:45vh; border-right:0; border-bottom:1px solid var(--border); }
   .mail-empty { min-height:250px; }
   .mail-message { padding:22px; }
-  .mail-attachments button { align-items:flex-start; flex-direction:column; }
   .mail-compose-overlay { padding:12px; }
   .mail-compose { width:100%; height:92vh; padding:16px; }
 }
 
 /* HTML mail preview (sandboxed iframe) and collapsible recipients */
-.mail-attach-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
-.mail-attach-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 9px; border: 1px dashed var(--border); background: var(--ivory-50); color: var(--ink-2); cursor: pointer; font-size: .8125rem; transition: border-color .16s, background .16s; }
+.mail-attach-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.mail-attach-button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 9px; border: 1px dashed var(--border); background: var(--ivory-50); color: var(--ink-2); cursor: pointer; font-size: .78rem; transition: border-color .16s, background .16s; }
 .mail-attach-button:hover { border-color: var(--green-700); background: var(--green-50); }
 .mail-attach-button svg { width: 16px; height: 16px; }
 .mail-attach-count { font-size: .75rem; color: var(--ink-3); }
-.mail-preview-frame { width: 100%; min-height: 360px; max-height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: var(--white); }
+/* 正文区尽量占满阅读栏剩下的高度（旧写法是 `52vh` 定高，抬头一改就不准）。 */
+.mail-preview-frame { width: 100%; min-height: 220px; border: 1px solid var(--border); border-radius: 10px; background: var(--white); }
 .mail-recipient-row.mail-recipient-extra { display: none; }
-.mail-recipient-toggle { background: none; border: none; color: var(--green-800); cursor: pointer; font-size: .8125rem; padding: 4px 0; text-decoration: underline; }
+/* 「展开全部 N 个收件人」也在抬头明细里，和抬头同一个字号。 */
+.mail-recipient-toggle { background: none; border: none; color: var(--green-800); cursor: pointer; font-size: var(--mail-meta-size, .72rem); padding: 2px 0; text-decoration: underline; }
 .mail-message dd { overflow-wrap: anywhere; }
+
+/* 正文顶部的操作条（回复 / 转发）：和抬头那两个小字并列在同一行，做得更小。
+   2026-09-19：26px → 21px，字号 .75rem → .7rem。 */
+.mail-message-actions { display:inline-flex; align-items:center; gap:5px; flex-wrap:wrap; margin:0; padding:0; }
+.mail-message-actions button { display:inline-flex; align-items:center; justify-content:center; height:21px; min-height:21px; padding:0 8px; line-height:1; box-sizing:border-box; margin:0; font-size:.7rem; border-radius:6px; }
+.mail-message-actions .primary-button { padding:0 8px; }
+.mail-message-actions .secondary-button { padding:0 8px; }
+
+/* 角落那行不起眼的小字：当前数据时间（用户要求「所有同步都自动，最多留一行小字」）。 */
+.mail-data-stamp { position:fixed; right:18px; bottom:8px; z-index:1; color:var(--ink-3); font-size:.68rem; opacity:.65; pointer-events:none; }
+
+/* 撰写窗里的附件清单（每个都能单独移除） */
+.mail-attach-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mail-attach-list li { display: flex; align-items: center; gap: 8px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--ivory-50); font-size: .75rem; }
+.mail-attach-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-attach-list li small { color: var(--ink-3); font-size: .7rem; }
+.mail-attach-list li button { border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: .9rem; line-height: 1; padding: 0 3px; }
+.mail-attach-list li button:hover { color: var(--wine-700, #7d2b3a); }
+

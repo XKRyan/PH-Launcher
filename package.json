@@ -1,6 +1,6 @@
 {
   "name": "ph-launcher",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",
@@ -130,9 +130,14 @@
       "deleteAppDataOnUninstall": false,
       "artifactName": "PH-Launcher-${version}-Setup.${ext}",
       "include": "build/installer.nsh"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://phix.ing/updates/phl"
     }
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "imapflow": "1.7.7",
     "linkedom": "0.18.13",
     "mailparser": "3.9.20",

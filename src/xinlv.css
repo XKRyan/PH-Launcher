@@ -14,6 +14,8 @@
 .xinlv-hero-copy p { margin: 0; max-width: 62ch; font-size: .875rem; color: rgba(251, 250, 246, .78); }
 .xinlv-hero .section-kicker { color: var(--gold-500); }
 .xinlv-hero-side { display: flex; gap: 8px; flex: none; }
+/* 角落那行不起眼的小字：当前数据时间（同步已全部自动，页面上没有同步按钮）。 */
+.xinlv-data-stamp { position: fixed; right: 18px; bottom: 8px; z-index: 1; color: var(--ink-3); font-size: .7rem; opacity: .65; pointer-events: none; }
 .xinlv-hero-side .secondary-button { background: rgba(251, 250, 246, .12); border-color: rgba(251, 250, 246, .3); color: var(--ivory-50); }
 .xinlv-hero-side .secondary-button:hover { background: rgba(251, 250, 246, .2); }
 

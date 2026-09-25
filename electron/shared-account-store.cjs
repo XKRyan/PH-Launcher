@@ -48,6 +48,7 @@ class SharedAccountStore {
     this.loaded = true;
     this.records = {};
     this.loadError = '';
+    this._stamp = this._fileStamp();
     let text = '';
     try {
       text = settingsYaml.readTextFile(this.filePath);
@@ -74,8 +75,30 @@ class SharedAccountStore {
     return this.records;
   }
 
+  /** 文件指纹（大小 + mtime）。取不到就当空。 */
+  _fileStamp() {
+    try {
+      const stat = this.fs.statSync(this.filePath);
+      return `${stat.size}:${stat.mtimeMs}`;
+    } catch { return ''; }
+  }
+
+  /**
+   * 一旦文件被改过就重新读。
+   *
+   * 为什么必须有这一步：云同步（phix）会把 `settings.accounts` **写进同一个
+   * settings.yaml**。进程启动时文件里可能还没有账号，之后同步写进来了 ——
+   * 如果一直用启动时那份内存缓存，账号页与课表页就会一直显示"未登录/输入账号密码"，
+   * 哪怕文件里明明有账号。用户 2026-09-17 反馈的正是这个现象。
+   */
+  refreshIfChanged() {
+    const stamp = this._fileStamp();
+    if (!this.loaded || stamp !== this._stamp) this.load();
+    return this.records;
+  }
+
   status() {
-    this.ensureLoaded();
+    this.refreshIfChanged();
     const sites = {};
     for (const siteId of this.siteIds) {
       const record = this.records[siteId];
@@ -94,7 +117,7 @@ class SharedAccountStore {
   }
 
   validateCredential(input) {
-    this.ensureLoaded();
+    this.refreshIfChanged();
     const siteId = String(input?.siteId || '');
     if (!this.siteIds.includes(siteId)) throw new Error('此网站不支持保存密码');
     const existing = this.records[siteId];
@@ -113,7 +136,7 @@ class SharedAccountStore {
   }
 
   removeCredential(siteId) {
-    this.ensureLoaded();
+    this.refreshIfChanged();
     if (!this.siteIds.includes(siteId)) throw new Error('此网站不支持保存密码');
     const existed = Boolean(this.records[siteId]);
     const next = { ...this.records };
@@ -152,7 +175,7 @@ class SharedAccountStore {
   }
 
   getForFill(siteId, { allowDisabled = false } = {}) {
-    this.ensureLoaded();
+    this.refreshIfChanged();
     if (!this.siteIds.includes(siteId)) return null;
     const record = this.records[siteId];
     if (!record) return null;
@@ -160,7 +183,7 @@ class SharedAccountStore {
   }
 
   getForLogin(siteId) {
-    this.ensureLoaded();
+    this.refreshIfChanged();
     if (!['edupage', 'managebac'].includes(siteId)) return null;
     const record = this.records[siteId];
     // 共用账号就是"两个程序都用这一份"：账号+密码齐备即允许自动登录，

@@ -264,8 +264,44 @@ test('discussion client uses fixed read-only list and detail paths', async () =>
   ]);
 });
 
+// 通知 = 默认视图 + `?view=overdue` 合并去重：默认视图只列即将截止的，
+// 已经过期还没交的只在 overdue 视图里 —— 只读默认视图会漏掉它们（真机上漏了 9 条）。
+test('notifications merge the default and overdue deadline views without duplicates', async () => {
+  const tile = (title, id, due) => `<div class="f-tile f-task-tile"><div class="f-tile__body">
+    <p class="f-tile__title h5"><a class="f-tile__title-link" href="/student/classes/21/core_tasks/${id}"><span>${title}</span></a></p>
+    <div class="f-tile__description"><span>${due}</span><a href="/student/classes/21">Biology HL</a>
+    <span class="badge"><span class="badge-label">Summative</span></span></div></div></div>`;
+  const upcomingPage = tile('Ecology essay', 31, 'Sep 20, 11:55 PM') + tile('Old quiz', 30, 'Sep 1, 9:00 AM');
+  const overduePage = tile('Old quiz', 30, 'Sep 1, 9:00 AM') + tile('Missed lab', 29, 'Aug 20, 9:00 AM');
+  const studentPage = '<div class="js-messages-and-notifications-trigger" data-count="4" data-namespace="student"></div>';
+  const paths = [];
+  const client = new SchoolDataClient({ now: fixedNow, pause: async () => {}, fetch: async (site, url) => {
+    paths.push(url);
+    if (url.endsWith('/student')) return response(studentPage);
+    return response(url.includes('view=overdue') ? overduePage : upcomingPage);
+  } });
+  const feed = await client.getNotifications();
+  assert.deepEqual(paths, [
+    'https://shph.managebac.cn/student',
+    'https://shph.managebac.cn/student/tasks_and_deadlines',
+    'https://shph.managebac.cn/student/tasks_and_deadlines?view=overdue',
+  ]);
+  assert.equal(feed.items.length, 3, '三条不同作业，重复的那条只算一次');
+  assert.equal(feed.unreadCount, 4);
+  assert.deepEqual(feed.warnings, []);
+  // 还没到期的在前；已经过期的在后，且**刚错过的排最前**（几个月前的老账沉底）。
+  assert.deepEqual(feed.items.map((row) => row.title), ['Ecology essay', 'Old quiz', 'Missed lab']);
+});
+
+test('notifications stay empty with a warning when no deadline view can be read', async () => {
+  const client = new SchoolDataClient({ now: fixedNow, pause: async () => {}, fetch: async () => response('', 500) });
+  const feed = await client.getNotifications();
+  assert.deepEqual(feed.items, []);
+  assert.match(feed.warnings.join('；'), /未读到待办与截止日期/);
+});
+
 function schoolUiHarness(initialSnapshot) {
-  const { window } = parseHTML('<html><body><section id="schoolPage"></section></body></html>');
+  const { window } = parseHTML('<html><body><section id="schoolPage" class="page active"></section></body></html>');
   const document = window.document;
   window.HTMLElement.prototype.showModal = function () { this.open = true; };
   window.HTMLElement.prototype.close = function () { this.open = false; this.dispatchEvent(new window.Event('close')); };
@@ -292,18 +328,18 @@ function currentMonday() {
   return date.toISOString().slice(0, 10);
 }
 
-test('school UI mounts with explicit consent, no automatic school requests, and escaped course names', async () => {
+// 2026-09-19 用户要求：「所有同步、刷新全都自动，不要让用户察觉」——所以这里不再有
+// 「刷新课程与作业」按钮和一次性同意弹窗；同步只在「已登录过这个平台」时才在后台发生。
+test('school UI renders without a refresh button and never touches an account that was never signed in', async () => {
   const harness = schoolUiHarness({ edupage: null, managebac: { fetchedAt: fixedNow().toISOString(), courses: [{ id: '21', name: '<img src=x onerror=evil()>', grade: '6' }], tasks: [], warnings: [] }, preferences: {} });
   harness.context.window.schoolUI.mount(); await settleUi();
-  assert.equal(harness.syncCalls, 0);
-  harness.click('[data-school-action="sync"]');
-  assert.match(harness.document.querySelector('dialog').textContent, /不会自动发送给 AI/);
-  assert.equal(harness.syncCalls, 0);
-  harness.click('[data-school-action="consent"]'); await settleUi();
-  assert.equal(harness.syncCalls, 1);
+  assert.equal(harness.syncCalls, 0, '没登录过 ManageBac 就不该发请求');
+  assert.equal(harness.document.querySelector('[data-school-action="sync"]'), null, '没有刷新按钮');
   harness.context.window.schoolUI.open('courses'); await settleUi();
+  assert.equal(harness.syncCalls, 0);
   assert.equal(harness.document.querySelector('#schoolPage img'), null);
   assert.match(harness.document.querySelector('#schoolPage').textContent, /<img src=x onerror=evil\(\)>/);
+  assert.ok(harness.document.querySelector('.school-data-stamp'), '角落里有一行数据时间');
 });
 
 test('school UI distinguishes unselected teaching groups from deliberately empty selection', async () => {
@@ -369,10 +405,10 @@ test('course detail exposes read-only discussion list, text, replies, and attach
 });
 
 test('school UI shows login-expired errors instead of treating a failed sync as no classes', async () => {
-  const empty = { edupage: null, managebac: null, preferences: {} };
-  const harness = schoolUiHarness(empty); harness.api.sync = async () => { throw new Error('登录已过期，请重新登录'); };
-  harness.context.window.schoolUI.mount(); await settleUi();
-  harness.click('[data-school-action="sync"]'); harness.click('[data-school-action="consent"]'); await settleUi();
+  // 已登录过的账号 + 数据过期 → 后台自动同步失败时，照样要如实说明「登录已过期」。
+  const expired = { edupage: null, managebac: null, preferences: {}, accounts: { edupage: { saved: true } }, status: {} };
+  const harness = schoolUiHarness(expired); harness.api.sync = async () => { throw new Error('登录已过期，请重新登录'); };
+  await harness.context.window.schoolUI.open('timetable'); await settleUi();
   assert.match(harness.document.querySelector('[role="alert"]').textContent, /登录已过期/);
   assert.ok(harness.document.querySelector('[data-school-action="account"]'));
 });

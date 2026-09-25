@@ -54,6 +54,35 @@ contextBridge.exposeInMainWorld('ph', {
     history: () => ipcRenderer.invoke('xinlv:history'),
     proactive: (since) => ipcRenderer.invoke('xinlv:proactive', since),
     clearChat: () => ipcRenderer.invoke('xinlv:clear-chat'),
+    // 后台同步拉到新记录（别的设备/网页端改的）：界面据此静默刷新。
+    onChanged: (callback) => on('xinlv:changed', callback),
+  },
+  // phix 统一账号 · 云同步：与 Pinghe Launcher Lite 共用同一账号与同一份数据文件。
+  // 每个方法都回 { ok, data } 或 { ok:false, error, code }，界面直接判 ok。
+  phix: {
+    status: () => ipcRenderer.invoke('phix:status'),
+    serverCandidates: () => ipcRenderer.invoke('phix:server-candidates'),
+    restore: () => ipcRenderer.invoke('phix:restore'),
+    profile: () => ipcRenderer.invoke('phix:profile'),
+    saveProfile: (input) => ipcRenderer.invoke('phix:save-profile', input),
+    ping: (server) => ipcRenderer.invoke('phix:ping', server),
+    register: (input) => ipcRenderer.invoke('phix:register', input),
+    login: (input) => ipcRenderer.invoke('phix:login', input),
+    unlock: (passphrase) => ipcRenderer.invoke('phix:unlock', passphrase),
+    logout: () => ipcRenderer.invoke('phix:logout'),
+    sync: (input) => ipcRenderer.invoke('phix:sync', input),
+    syncPreview: () => ipcRenderer.invoke('phix:sync-preview'),
+    conflicts: () => ipcRenderer.invoke('phix:conflicts'),
+    trustKey: () => ipcRenderer.invoke('phix:trust-key'),
+    devices: () => ipcRenderer.invoke('phix:devices'),
+    // P3：会话列表（一次登录 = 一台设备）与注销某台 / 注销除本机外全部
+    sessions: () => ipcRenderer.invoke('phix:sessions'),
+    revokeSession: (input) => ipcRenderer.invoke('phix:session-revoke', input),
+    saveSettings: (input) => ipcRenderer.invoke('phix:settings-save', input),
+    setPassphrase: (input) => ipcRenderer.invoke('phix:set-passphrase', input),
+    useLoginPassword: (input) => ipcRenderer.invoke('phix:use-login-password', input),
+    changePassword: (input) => ipcRenderer.invoke('phix:change-password', input),
+    openDataDir: () => ipcRenderer.invoke('phix:open-data-dir'),
   },
   ai: {
     configure: (config) => ipcRenderer.invoke('ai:configure', config),
@@ -141,7 +170,11 @@ contextBridge.exposeInMainWorld('ph', {
     discussion: (courseId, id) => ipcRenderer.invoke('school:discussion', courseId, id),
     task: (courseId, id) => ipcRenderer.invoke('school:task', courseId, id),
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
+    // 通知 / 待办（ManageBac）：未读数 + 待办条目（与网页端同一口径）
+    notifications: () => ipcRenderer.invoke('school:notifications'),
     openUrl: (url) => ipcRenderer.invoke('school:open-url', url),
+    // 导出课表（CSV 文本 / PNG dataURL）：主进程弹保存对话框再落盘。
+    exportTimetable: (input) => ipcRenderer.invoke('school:export-timetable', input),
     onPlanImported: (callback) => on('school:plan-imported', callback),
     onSynced: (callback) => on('school:synced', callback),
   },
@@ -152,6 +185,10 @@ contextBridge.exposeInMainWorld('ph', {
     contacts: () => ipcRenderer.invoke('mail:contacts'),
     harvestContacts: (options) => ipcRenderer.invoke('mail:harvestContacts', options),
     download: (input) => ipcRenderer.invoke('mail:download', input),
+    // 内嵌图片 / 转发带原附件用：只回字节，不弹保存对话框。
+    downloadBytes: (input) => ipcRenderer.invoke('mail:downloadBytes', input),
+    // 正文里的外部图片：由主进程取字节（沙箱 iframe 里直接 <img src="https://…"> 加载不出来）
+    fetchImage: (input) => ipcRenderer.invoke('mail:fetchImage', input),
     openLink: (input) => ipcRenderer.invoke('mail:openLink', input),
     send: (draft) => ipcRenderer.invoke('mail:send', draft),
     onCleared: (callback) => on('mail:cleared', callback),
@@ -190,5 +227,7 @@ contextBridge.exposeInMainWorld('ph', {
     close: () => ipcRenderer.send('window:close'),
   },
   onReady: (callback) => on('app:ready', callback),
+  //: 命令行 `--ph-force-onboarding`：让首启引导再出现一次（只影响这一次运行）。
+  onForceOnboarding: (callback) => on('app:force-onboarding', callback),
   onTrayNavigate: (callback) => on('tray:navigate', callback),
 });

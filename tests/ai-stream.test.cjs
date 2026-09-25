@@ -123,7 +123,17 @@ test('streaming works with tools while writes still take the confirmed tool path
   // tool calls arrive in the same response and are merged.
   assert.match(source, /stream: Boolean\(onDelta\)/);
   assert.doesNotMatch(source, /stream: Boolean\(onDelta && !tools\.length\)/);
-  assert.match(source, /streamOpenAiChat\(\{ url: endpoint, headers, payload, signal: requestSignal, onDelta \}\)/);
+  // …and the turn runner must not drop onDelta just because tools were offered.
+  // That line was the real regression: offering tools is what enabling AI
+  // control does, so it turned streaming off for every normal conversation.
+  assert.doesNotMatch(source, /onDelta: tools\.length \? null : onDelta/);
+  assert.match(source, /requestAiTurn\(config, working, tools, \{ signal, onDelta, onReasoning, onStatus \}\)/);
+  // The OpenAI streaming call translates internal history into the wire format
+  // first (tool_calls need type:"function"; thinking-mode providers need
+  // reasoning_content echoed back on tool rounds) and streams both channels.
+  assert.match(source, /streamOpenAiChat\(\{/);
+  assert.match(source, /signal: requestSignal, onDelta, onReasoning/);
+  assert.match(source, /openAiMessages\(messages, passReasoning\)/);
   assert.match(source, /body\.toolCalls\?\.length \? \{ tool_calls: body\.toolCalls\.slice\(0, 16\) \}/);
   // The safety property is unchanged: writes are still proposals, never silent.
   assert.match(source, /const launcherTools = .*filter\(tool => !\['upsert_schedule', 'list_schedule', 'preview_edupage_timetable'\]/);
