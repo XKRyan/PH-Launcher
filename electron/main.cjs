@@ -40,6 +40,8 @@ const { canStartConfiguredLocalRuntime, ensureDefaultInstalledOllamaService } = 
 const { streamOllamaChat, streamOpenAiChat, streamAnthropicChat } = require('./ai-stream.cjs');
 // AI 服务商配置的规范形态（与网页端/PLL 共用的同步对象 settings.ai）
 const aiConfig = require('./ai-config.cjs');
+// 应用内自动更新（Windows 全自动 / macOS 半自动提示）
+const autoUpdater = require('./auto-updater.cjs');
 // 线格式转换与空回复提示：单独成模块才测得到（main.cjs 一 require 就建窗口）
 const { openAiMessages, needsReasoningPassthrough, emptyReplyMessage } = require('./ai-messages.cjs');
 // 名字直说：这是与 PLL / 网页端共用的那份同步对象所在的模块（同一套 `settings.yaml`）。
@@ -5518,6 +5520,13 @@ app.whenReady().then(() => {
   startupMark('ipc-ready');
   createWindow();
   startupMark('window-created');
+  // 应用内自动更新：Windows 全自动（electron-updater），macOS 半自动（提示下载页）。
+  // 自检/冒烟/截图模式不联网检查，避免干扰测试与自动化。
+  if (IS_HEADLESS) {
+    autoUpdater.disableAutoUpdater();
+  } else {
+    autoUpdater.initAutoUpdater();
+  }
   if (!IS_HEADLESS) {
     reminderWindows = createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow: () => mainWindow,
       getAppearance: () => secureStore.data.settings.appearance, getLanguage: () => secureStore.data.settings.language,

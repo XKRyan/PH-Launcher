@@ -130,9 +130,14 @@
       "deleteAppDataOnUninstall": false,
       "artifactName": "PH-Launcher-${version}-Setup.${ext}",
       "include": "build/installer.nsh"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://phix.ing/updates/phl"
     }
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "imapflow": "1.7.7",
     "linkedom": "0.18.13",
     "mailparser": "3.9.20",
