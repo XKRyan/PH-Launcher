@@ -160,10 +160,12 @@ def main():
         sys.exit(5)
 
     # ---------- 构建 ----------
+    # dmg 给用户手动安装；zip（内含 .app）给应用内自动更新用 —— 未签名应用
+    # 也能下载 zip、解压、替换自身，用户只需右键打开一次（见 electron/auto-updater.cjs）
     extra = "--universal" if args.arch == "universal" else f"--config.mac.target=dmg"
-    print(f"[5/7] electron-builder --mac dmg（arch={args.arch}，未签名测试包）…", flush=True)
+    print(f"[5/7] electron-builder --mac dmg zip（arch={args.arch}，未签名测试包）…", flush=True)
     build_cmd = (f"{PATH_PREFIX}{env_exports} cd {REMOTE_DIR}/src && "
-                 f'npx electron-builder --mac dmg --{args.arch} --publish never')
+                 f'npx electron-builder --mac dmg zip --{args.arch} --publish never')
     code, _ = sh(ssh, build_cmd, timeout=3600)
     if code != 0:
         print("      构建失败 —— 见上方原始错误输出。")
@@ -171,19 +173,22 @@ def main():
 
     # ---------- 列产物 ----------
     print("[6/7] 产物清单：", flush=True)
-    code, out = sh(ssh, f"cd {REMOTE_DIR}/src/release && ls -la *.dmg *.yml 2>/dev/null", show=False)
+    code, out = sh(ssh, f"cd {REMOTE_DIR}/src/release && ls -la *.dmg *.zip *.yml 2>/dev/null", show=False)
     print(out)
     dmgs = [l.split()[-1] for l in out.splitlines() if l.strip().endswith(".dmg")]
+    zips = [l.split()[-1] for l in out.splitlines() if l.strip().endswith(".zip")]
     if not dmgs:
         print("      release/ 里没有 dmg —— 构建没产出目标文件。")
         sys.exit(7)
+    if not zips:
+        print("      注意：没有产出 .zip（自更新载荷）—— 检查 --mac 是否带上了 zip target。")
 
     # ---------- 拉回 ----------
     out_dir = HERE / "release"
     out_dir.mkdir(exist_ok=True)
     print(f"[7/7] 拉回到 {out_dir} …", flush=True)
     sftp = ssh.open_sftp()
-    for name in dmgs:
+    for name in dmgs + zips:
         local = out_dir / name
         t0 = time.time()
         remote = f"{REMOTE_DIR}/src/release/{name}"
