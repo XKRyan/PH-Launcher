@@ -45,9 +45,10 @@ function runFixture() {
     await web.executeJavaScript(fs.readFileSync(path.resolve(__dirname, '..', 'src', 'calendar-ui.js'), 'utf8'));
     await web.executeJavaScript('window.calendarUI.mount()');
 
+    assert.equal(await web.executeJavaScript(`document.querySelector('.cal-week-heading span').textContent`), '周一');
+    await web.executeJavaScript(`document.querySelector('[data-cal-view="month"]').click()`);
     assert.equal(await web.executeJavaScript(`document.querySelector('.cal-weekday').textContent`), '周一');
     await web.executeJavaScript(`document.querySelector('[data-cal-view="week"]').click()`);
-    assert.equal(await web.executeJavaScript(`document.querySelector('.cal-week-heading span').textContent`), '周一');
 
     await web.executeJavaScript(`document.querySelector('.cal-week-heading').click()`);
     await web.executeJavaScript(`(() => { const form = document.querySelector('[data-cal-form]'); form.elements.title.value = 'Alex 的未保存安排'; form.elements.date.value = '2026-10-12'; form.elements.allDay.checked = false; form.elements.allDay.dispatchEvent(new Event('change', { bubbles: true })); form.elements.start.value = '13:15'; form.elements.end.value = '14:45'; form.querySelector('[name="repeatWeekdays"][value="1"]').checked = true; form.querySelector('[name="repeatWeekdays"][value="5"]').checked = true; form.elements.reminderMinutes.value = '15'; form.elements.notes.value = 'Bring draft.pdf'; form.elements.color.value = 'wine'; form.elements.notes.focus(); })()`);

@@ -75,7 +75,7 @@ test('credentials are encrypted at rest, reload correctly, and never appear in r
   assert.equal(result.sites.mail.updatedAt, '2026-09-06T08:00:00.000Z');
   assert.equal(Object.hasOwn(result.sites.mail, 'password'), false);
   const reopened = new CredentialVault(config);
-  assert.deepEqual(reopened.getForFill('mail'), { username: first.username, password: first.password });
+  assert.deepEqual(reopened.getForFill('mail'), { username: first.username, password: first.password, authcode: '' });
   assert.deepEqual(fs.readdirSync(directory), ['credentials']);
 });
 
@@ -107,9 +107,9 @@ test('explicitly disabled autofill still allows manual fill and password-preserv
   const { vault, config } = fixture(t);
   vault.saveCredential({ ...first, autoFill: false });
   assert.equal(vault.getForFill('mail'), null);
-  assert.deepEqual(vault.getForFill('mail', { allowDisabled: true }), { username: first.username, password: first.password });
+  assert.deepEqual(vault.getForFill('mail', { allowDisabled: true }), { username: first.username, password: first.password, authcode: '' });
   vault.saveCredential({ siteId: 'mail', username: 'new-account', password: '', autoFill: false });
-  assert.deepEqual(new CredentialVault(config).getForFill('mail', { allowDisabled: true }), { username: 'new-account', password: first.password });
+  assert.deepEqual(new CredentialVault(config).getForFill('mail', { allowDisabled: true }), { username: 'new-account', password: first.password, authcode: '' });
 });
 
 test('deleting one credential leaves other sites intact and survives reopening', (t) => {

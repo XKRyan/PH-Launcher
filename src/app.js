@@ -9,9 +9,9 @@ const BUILTIN_SITE_META = {
 };
 // Embedded first-party modules are fixed navigation items, but are deliberately
 // kept out of BUILTIN_SITE_META so they never appear in credential settings.
-const FIXED_SITE_META = {
-  psychology: { name: '心理', icon: 'i-spark', url: 'https://xin-lv.com/', eyebrow: 'WELLBEING', embedded: true },
-};
+// Xinlv moved from an embedded webpage to a native API-backed page, so this
+// map is intentionally empty now.
+const FIXED_SITE_META = {};
 const SITE_META = { ...BUILTIN_SITE_META, ...FIXED_SITE_META };
 const CUSTOM_SITE_COLORS = new Set(['green', 'wine', 'gold', 'blue', 'slate']);
 const ROUTE_META = {
@@ -23,6 +23,7 @@ const ROUTE_META = {
   timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
+  psychology: { title: '心履', eyebrow: 'WELLBEING' },
   'class-timetable': { title: '班级课表', eyebrow: 'CLASS TIMETABLE', page: 'school' },
   courses: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
@@ -68,6 +69,7 @@ const state = {
   dictionaryResult: null,
   dictionaryLoading: false,
   dictionaryRequestId: 0,
+  mailUnread: 0,
   hardware: null,
   hardwareLoading: false,
   aiDeployment: null,
@@ -77,6 +79,16 @@ const state = {
   aiBusy: false,
   aiRequestId: '',
   aiStreamStatus: '',
+  // 用户在 AI 页点了「本地 / API」但还没保存的那个选择。
+  // 主进程每推一次数据快照，state.data 就会被整体替换，而快照里的 provider 还是旧值
+  // ——不兜住它，选择会在半秒内被抹回去（用户实测："点啥都跳回不使用 AI"）。
+  aiPendingProvider: '',
+  //: #aiConfigPanel 当前渲染的是哪个 provider。数据刷新时据此跳过重建，
+  //: 免得把用户正在填的表单一起清掉。
+  aiPanelProvider: '',
+  // 「思考过程」是否被用户手动展开过。undefined = 跟着流式自动（正文没开始时展开）；
+  // true/false = 用户点过，之后重渲染都听他的。
+  aiThinkingOpen: undefined,
   aiLocalWarmup: { localWarmup: 'idle', detail: '' },
   aiUseMemories: undefined,
   aiMemoryProvider: '',
@@ -93,6 +105,10 @@ const state = {
   timerFinishing: false,
   onboardingStep: 0,
   onboardingPending: false,
+  phixOnboardingStep: 0,  // 0: 问有无账号, 1: 登录, 2: 注册
+  phixOnboardingPending: false,
+  phixStatus: null,        // 缓存的 phix 状态
+  phixAvatarDataUrl: '',   // 缓存的头像 data URL
 };
 
 let persistTimer = null;
@@ -107,6 +123,49 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+/* ---------------- AI 回复的 Markdown 渲染 ----------------
+   消息本来就是 Markdown（标题/表格/围栏代码块/有序列表/引用/链接），
+   在此之前一律走 escapeHtml 按纯文本显示，于是课表、DDL、代码全成了糊在一起的原文。
+   渲染交给 src/vendor/marked（MIT），再过一遍 src/vendor/DOMPurify 净化。
+
+   **净化不能省**：AI 回复是外部输入，而 window.ph.ai 能读写工作区文件、发邮件、
+   提交作业；回复里被塞一段 <img onerror=...> 就等于把这些能力交出去。 */
+function markdownToHtml(value) {
+  const text = String(value ?? '');
+  if (!text.trim()) return '';
+  const plain = () => escapeHtml(text).replaceAll('\n', '<br>');
+  const marked = window.marked;
+  const purify = window.DOMPurify;
+  if (!marked || typeof marked.parse !== 'function' || !purify || typeof purify.sanitize !== 'function') {
+    return plain();   // 兜底：库没加载时至少别白屏
+  }
+  try {
+    const html = marked.parse(text, { gfm: true, breaks: true, async: false });
+    const clean = purify.sanitize(html, {
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['style', 'srcset'],
+      ALLOW_DATA_ATTR: false,
+    });
+    // marked 的块级输出会以换行收尾（`<p>…</p>\n`），那会让 DOM 的 textContent
+    // 多出一个末尾换行 —— 显示上无所谓，但任何 textContent 比较都会被它绊倒。
+    return clean.trim();
+  } catch {
+    return plain();
+  }
+}
+
+/* 思考模式的模型（DeepSeek 等）会单独流出一段"思考过程"。
+   正文还没开始时默认展开 —— 否则用户只看到长时间没动静，以为卡死了；
+   正文一到就收起，之后由用户自己决定看不看。 */
+function thinkingMarkup(reasoning, hasContent, forceOpen) {
+  const text = String(reasoning || '');
+  if (!text.trim()) return '';
+  const open = forceOpen === undefined ? !hasContent : forceOpen;
+  return `<details class="chat-thinking"${open ? ' open' : ''}>`
+    + `<summary><span class="chat-thinking-dot" aria-hidden="true">🧠</span>思考过程</summary>`
+    + `<div class="chat-thinking-body">${escapeHtml(text)}</div></details>`;
 }
 
 function uid() {
@@ -190,6 +249,55 @@ function relativeTime(value) {
   return new Date(value).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
+/* ---------------- 发现新版本：卡片（取消 / 跳过本版本 / 更新） ----------------
+ * 主进程只负责**检查与通知**；下不下载、装不装，永远由用户在这张卡片上决定。
+ * 「跳过本版本」记住的是版本号本身：之后更高的版本还会再提示。
+ */
+//: 用户已经在卡片上做过选择（含按 Esc 关掉）——避免重复把选择回传主进程
+let updateChoiceSent = false;
+
+function showUpdateCard(info) {
+  const dialog = $('#updateDialog');
+  if (!dialog) return;
+  const latest = String(info?.version || '');
+  const current = String(info?.current || '');
+  $('#updateVersion').textContent = current
+    ? `新版本 v${latest}（当前 v${current}）`
+    : `新版本 v${latest}`;
+  const notes = String(info?.notes || '').trim();
+  $('#updateNotes').textContent = notes || '本次更新以稳定性与体验改进为主。';
+  $('#updateHint').textContent = '点「更新」之后才会开始下载并安装；不点就继续用现在这版，数据不会丢。';
+  $('#updateNow').disabled = false;
+  $('#updateSkip').disabled = false;
+  updateChoiceSent = false;
+  if (!dialog.open) dialog.showModal();
+}
+
+function handleUpdateProgress(progress) {
+  const dialog = $('#updateDialog');
+  const hint = $('#updateHint');
+  if (!hint) return;
+  const stage = String(progress?.stage || '');
+  if (stage === 'downloading') {
+    const pct = Number(progress?.percent);
+    hint.textContent = Number.isFinite(pct) && pct > 0
+      ? `正在下载新版本… ${Math.round(pct)}%`
+      : '正在下载新版本…';
+    $('#updateNow').disabled = true;
+    $('#updateSkip').disabled = true;
+  } else if (stage === 'applying') {
+    hint.textContent = progress?.message || '正在准备更新，应用即将重启…';
+  } else if (stage === 'error') {
+    hint.textContent = `更新失败：${progress?.message || '未知原因'}。可以稍后再试。`;
+    $('#updateNow').disabled = false;
+    $('#updateSkip').disabled = false;
+  } else if (stage === 'done') {
+    hint.textContent = progress?.message || '更新已就绪。';
+  }
+  if (dialog && !dialog.open && stage !== 'done') dialog.showModal();
+}
+
+
 function isToday(value) {
   return value && localDateKey(new Date(value)) === localDateKey();
 }
@@ -236,7 +344,7 @@ function updateClock() {
   const hour = now.getHours();
   const greeting = hour < 5 ? '夜深了' : hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
   const name = state.data?.settings?.studentName?.trim();
-  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天先做哪件事？`;
+  $('#greeting').textContent = `${greeting}${name ? `，${name}` : ''}，今天过的怎么样？`;
   $('#greetingKicker').textContent = hour < 12 ? 'A CALM START' : hour < 18 ? 'KEEP THE RHYTHM' : 'A CLEAR FINISH';
 }
 
@@ -280,6 +388,10 @@ function navigate(route) {
     window.mailUI?.markViewed?.();
     const opening = window.mailUI?.open?.();
     Promise.resolve(opening).then(() => { if (state.route === 'mail') window.mailUI?.markViewed?.(); }).catch(() => {});
+  }
+  if (route === 'psychology') {
+    if (typeof window.xinlvUI?.refresh === 'function') window.xinlvUI.refresh();
+    else window.xinlvUI?.mount?.();
   }
   if (route === 'dictionary') {
     renderDictionary();
@@ -382,13 +494,15 @@ function setNavCountBadge(badgeSelector, navSelector, label, rawCount) {
   const nav = $(navSelector);
   if (!badge || !nav) return;
   const count = Math.max(0, Math.floor(Number(rawCount) || 0));
-  badge.textContent = count > 99 ? '99+' : String(count);
+  // A hidden badge must not contribute text to its parent's textContent.
+  badge.textContent = count === 0 ? '' : count > 99 ? '99+' : String(count);
   badge.dataset.count = String(count);
   badge.classList.toggle('hidden', count === 0);
   nav.setAttribute('aria-label', count ? `${label}，${count} 项待处理` : label);
 }
 
 function updateMailBadge(count) {
+  state.mailUnread = count;
   setNavCountBadge('#navMailCount', '#mailNav', '平和邮箱', count);
 }
 
@@ -414,33 +528,7 @@ function renderDashboard() {
   if (!state.data) return;
   updateClock();
   const openTasks = state.data.tasks.filter((task) => !task.done);
-  const todayTasks = openTasks.filter((task) => isToday(task.dueAt));
-  const overdue = openTasks.filter(isOverdue);
-  $('#todayTaskMetric').textContent = `${todayTasks.length} 项任务`;
-  $('#overdueMetric').textContent = overdue.length ? `${overdue.length} 项已逾期` : '没有逾期任务';
-  $('#overdueMetric').style.color = overdue.length ? 'var(--wine-700)' : '';
-
-  const upcoming = nextLesson();
-  $('#nextClassName').textContent = upcoming?.lesson.course || '尚未添加课程';
-  $('#nextClassMeta').textContent = upcoming
-    ? `${formatCountdown(upcoming.date)} · ${upcoming.lesson.start}${upcoming.lesson.room ? ` · ${upcoming.lesson.room}` : ''}`
-    : '在“我的课表”查看学校课程';
-
-  const weekSessions = getWeekSessions();
-  const weekMinutes = weekSessions.reduce((sum, item) => sum + Number(item.minutes || 0), 0);
-  $('#weekFocusMetric').textContent = `${weekMinutes} 分钟`;
-  $('#weekSessionMetric').textContent = weekSessions.length ? `完成 ${weekSessions.length} 次专注` : '从一次 25 分钟开始';
-
-  const dashboardTasks = [...openTasks]
-    .sort((a, b) => (a.dueAt ? new Date(a.dueAt) : Infinity) - (b.dueAt ? new Date(b.dueAt) : Infinity))
-    .slice(0, 4);
-  $('#todayTaskList').innerHTML = dashboardTasks.length
-    ? dashboardTasks.map((task) => `
-      <div class="compact-task" data-task-row="${escapeHtml(task.id)}">
-        <button class="task-check" data-toggle-task="${escapeHtml(task.id)}" aria-label="完成任务">${icon('i-check')}</button>
-        <div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.subject || '通用')}${task.dueAt ? ` · ${escapeHtml(formatDateTime(task.dueAt, true))}` : ''}</span></div>
-      </div>`).join('')
-    : '<div class="empty-row">今天没有待处理任务。<br/>给自己留一点从容。</div>';
+  void window.dashboardData?.refresh();
   const count = openTasks.length;
   setNavCountBadge('#navTaskCount', '#planNav', '计划', count);
   renderCustomSites();
@@ -1355,13 +1443,13 @@ async function loadHardwareProfile() {
     state.hardware = { error: error.message };
   } finally {
     state.hardwareLoading = false;
-    if (state.route === 'ai') renderAiConfig();
+    if (state.route === 'ai') renderAiConfig(true);
   }
 }
 
 function renderAi() {
   if (!state.data) return;
-  const ai = state.data.settings.ai;
+  const ai = effectiveAi();
   const enabled = isAiConfigured(ai);
   const showSetup = !enabled || state.aiEditing;
   if (showSetup && !state.aiEditConfig) state.aiEditConfig = { ...ai };
@@ -1386,7 +1474,7 @@ function renderAi() {
   $('#aiEditConfig').classList.toggle('hidden', !enabled || showSetup);
   $$('.ai-choice-list > button').forEach((button) => button.classList.toggle('active', button.dataset.aiProvider === ai.provider));
   if (showSetup) {
-    renderAiConfig();
+    renderAiConfig(/* data refresh: don't rebuild the form */);
     if (state.route === 'ai') loadHardwareProfile();
   } else {
     if (!state.aiMessages.length) {
@@ -1398,6 +1486,22 @@ function renderAi() {
   $('#aiNavBadge').textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
 }
 
+/**
+ * 当前"界面上看到的" AI 配置。
+ *
+ * 用户在 AI 页点了「本地 / API」之后，这个选择**只存在内存里**（等他填完表单再保存）。
+ * 但主进程每推一次数据快照（学校同步、邮箱、phix 同步…），`state.data` 就会被整体替换，
+ * 那份快照里的 provider 还是旧值 —— 于是不到一秒选择就被抹回「不使用 AI」，
+ * 连带正在填的表单也被重建。用户看到的就是"点啥东西都跳回不使用 AI"（2026-09-24 报）。
+ *
+ * 这里把未保存的选择叠加在快照之上；真正保存（configureAi 成功）或离开这一页时清除。
+ */
+function effectiveAi() {
+  const ai = state.data.settings.ai;
+  if (!state.aiPendingProvider || state.aiPendingProvider === ai.provider) return ai;
+  return { ...ai, provider: state.aiPendingProvider };
+}
+
 function isAiConfigured(ai) {
   if (!ai?.enabled) return false;
   if (ai.provider === 'local') return Boolean(String(ai.localModel || '').trim());
@@ -1407,7 +1511,11 @@ function isAiConfigured(ai) {
 
 function beginAiEditing() {
   cancelAiStream();
-  state.aiEditConfig = { ...state.data.settings.ai };
+  // 深拷一份：服务商列表是嵌套数组，浅拷会让"取消编辑"也跟着改到已保存的配置。
+  state.aiEditConfig = {
+    ...state.data.settings.ai,
+    providers: (state.data.settings.ai.providers || []).map((row) => ({ ...row })),
+  };
   state.aiEditing = true;
   renderAi();
 }
@@ -1418,6 +1526,9 @@ function leaveAiSetup() {
   if (previousConfig) state.data.settings.ai = { ...previousConfig };
   state.aiEditConfig = null;
   state.aiEditing = false;
+  // 离开这一页就把"还没保存的选择"丢掉，别让它影响下次进来时的显示
+  state.aiPendingProvider = '';
+  state.aiPanelProvider = '';
   if (returnToChat) {
     renderAi();
     setTimeout(() => $('#aiInput')?.focus(), 30);
@@ -1497,10 +1608,15 @@ function localDeploymentMarkup(recommendation) {
     </section>`;
 }
 
-function renderAiConfig() {
+function renderAiConfig(force = false) {
   if (!state.data) return;
-  const ai = state.data.settings.ai;
+  const ai = effectiveAi();
   const panel = $('#aiConfigPanel');
+  // 数据刷新会走到这里。若面板已经在显示同一个 provider，就**不要重建** ——
+  // 重建会把用户正在填的服务商行、Base URL、Key 全部清掉。
+  // 需要强制刷新（例如硬件检测回来、保存后重画）时传 force。
+  if (!force && state.aiPanelProvider === ai.provider && panel.childElementCount) return;
+  state.aiPanelProvider = ai.provider;
   if (ai.provider === 'off') {
     panel.innerHTML = `<div class="ai-off-illustration"><div class="empty-icon">${icon('i-spark')}</div><h3>AI 保持关闭</h3><p>三所学校入口、笔记、任务、课程提醒、计时器和 IB 工具仍可完整使用。不会下载模型，也不会连接任何 AI 服务。</p></div><div class="config-actions"><button class="primary-button" id="saveAiOff">保持关闭</button></div>`;
     return;
@@ -1529,19 +1645,145 @@ function renderAiConfig() {
   }
   panel.innerHTML = `<h3>API AI</h3><p>普通对话只发送你主动提交的内容。若另外开启“AI 操作启动器”，经授权的任务、课表和少量笔记摘要也会按需发送；账号密码与完整网页不会提供给 AI。</p>
     <div class="recommendation-card">${icon('i-external')}<div><strong>云端数据提示</strong><span>提交的文字会发送给你配置的服务商；请不要粘贴账号密码、验证码或敏感个人信息。</span></div></div>
-    <div class="config-fields">
-      <label><span>API Endpoint</span><input id="apiEndpointInput" value="${escapeHtml(ai.apiEndpoint || 'https://api.openai.com/v1')}" placeholder="https://…/v1"/><small>非本机 API 必须使用 HTTPS，并支持 OpenAI-compatible Chat Completions。</small></label>
-      <label><span>模型名称</span><input id="apiModelInput" value="${escapeHtml(ai.apiModel || '')}" placeholder="由服务商提供"/></label>
-      <label><span>API Key</span><input id="apiKeyInput" type="password" value="" placeholder="${ai.apiKeySaved ? '已安全保存；留空则不修改' : '输入 API Key'}" autocomplete="new-password"/></label>
-    </div>
-    <div class="config-actions"><button class="primary-button" id="saveApiAi">启用 API AI</button>${ai.apiKeySaved ? '<button class="secondary-button" id="clearApiKey">删除已保存的 Key</button>' : ''}</div>`;
+    <div class="recommendation-card">${icon('i-check')}<div><strong>服务商与 Key 会随 phix 账号同步</strong><span>这里保存的服务商（名称 / 协议 / Base URL / 模型 / <b>API Key</b>）会写进账号的同步配置（服务端只存端到端密文），网页端和 Pinghe Launcher Lite 都读同一份：在任意一端填好，另外两端就能直接用。不登录 phix 账号时只存在本机（密钥在加密存储里）。</span></div></div>
+    ${aiProvidersMarkup(ai)}
+    <div class="config-actions">
+      <button class="secondary-button" id="addApiProvider">+ 添加服务商</button>
+      <button class="primary-button" id="saveApiAi">保存并使用（并同步到账号）</button>
+    </div>`;
+}
+
+/**
+ * 多服务商列表（规范形态，与网页端/PLL 同一个同步对象 settings.ai）。
+ *
+ * 字段名与网页端逐字一致：name / protocol / base_url / model / api_key + default_index。
+ * API Key 永不回显（`api_key_saved` 只表明"已保存"），留空 = 不改动。
+ */
+function aiProvidersMarkup(ai) {
+  const rows = Array.isArray(ai.providers) ? ai.providers : [];
+  const defaultIndex = Math.min(Math.max(Number(ai.default_index) || 0, 0), Math.max(rows.length - 1, 0));
+  if (!rows.length) {
+    return `<div class="ai-provider-empty">还没有服务商。点下面的“添加服务商”，填 Base URL、模型和 API Key 后保存。</div>`;
+  }
+  const updated = ai.updated_by
+    ? `<small class="ai-provider-meta">上次由「${escapeHtml(String(ai.updated_by))}」在 ${escapeHtml(String(ai.updated_at || '未知时间'))} 修改</small>`
+    : '';
+  return `${rows.map((row, index) => `
+    <section class="ai-provider-card" data-provider-index="${index}">
+      <div class="ai-provider-head">
+        <label class="ai-provider-default">
+          <input type="radio" name="aiDefaultProvider" value="${index}" ${index === defaultIndex ? 'checked' : ''}/>
+          <span>默认使用</span>
+        </label>
+        <span class="ai-provider-name">${escapeHtml(row.name || `服务商 ${index + 1}`)}</span>
+        <button type="button" class="text-button" data-remove-provider="${index}">删除</button>
+      </div>
+      <div class="config-fields">
+        <label><span>名称</span><input data-provider-field="name" value="${escapeHtml(row.name || '')}" placeholder="例如 DeepSeek"/></label>
+        <label><span>协议</span><select data-provider-field="protocol">
+          <option value="openai" ${row.protocol !== 'anthropic' ? 'selected' : ''}>openai（兼容 /chat/completions）</option>
+          <option value="anthropic" ${row.protocol === 'anthropic' ? 'selected' : ''}>anthropic（/v1/messages）</option>
+        </select></label>
+        <label><span>Base URL</span><input data-provider-field="base_url" value="${escapeHtml(row.base_url || '')}" placeholder="https://api.deepseek.com/v1"/><small>必须 HTTPS；只填到 /v1 即可，程序会自动补 /chat/completions 或 /v1/messages。</small></label>
+        <label><span>模型名称</span><input data-provider-field="model" value="${escapeHtml(row.model || '')}" placeholder="由服务商提供"/></label>
+        <label><span>API Key</span><input data-provider-field="api_key" type="password" value="" placeholder="${row.api_key_saved ? '已保存；留空则不修改' : '输入 API Key'}" autocomplete="new-password"/></label>
+      </div>
+      ${row.api_key_saved ? `<label class="ai-provider-clear"><input type="checkbox" data-provider-field="clear_api_key"/> 删除这个服务商已保存的 Key</label>` : ''}
+    </section>`).join('')}${updated}`;
+}
+
+//: 服务商是否"什么都没填"（空行）。保存时会被丢掉，界面上允许它存在。
+function isBlankAiProvider(row) {
+  return !row.name && !row.base_url && !row.model && !row.api_key && !row.api_key_saved;
+}
+
+/** 读界面上那张服务商列表；api_key 留空 = 后端保留旧值。 */
+function readAiProvidersFromPanel() {
+  const cards = $$('#aiConfigPanel .ai-provider-card');
+  const providers = cards.map((card) => {
+    const value = (field) => card.querySelector(`[data-provider-field="${field}"]`)?.value?.trim?.() || '';
+    const cleared = Boolean(card.querySelector('[data-provider-field="clear_api_key"]')?.checked);
+    const typed = value('api_key');
+    return {
+      name: value('name'),
+      protocol: value('protocol') === 'anthropic' ? 'anthropic' : 'openai',
+      base_url: value('base_url'),
+      model: value('model'),
+      // 界面上永远不回显 Key：没输入就传空（后端按名字保留旧值），只把"有没有保存"
+      // 这个非敏感状态留在本地草稿里，重新渲染时占位符才说得对。
+      api_key: typed,
+      api_key_saved: Boolean(typed) || (!cleared && Boolean(card.querySelector('[data-provider-field="api_key"]')?.placeholder?.includes('已保存'))),
+      ...(cleared ? { clear_api_key: true } : {}),
+    };
+  });
+  const picked = $('#aiConfigPanel input[name="aiDefaultProvider"]:checked');
+  const defaultIndex = picked ? Number(picked.value) || 0 : 0;
+  return { providers, default_index: Math.min(Math.max(defaultIndex, 0), Math.max(providers.length - 1, 0)) };
+}
+
+function blankAiProvider() {
+  return { name: '', protocol: 'openai', base_url: '', model: '', api_key_saved: false };
+}
+
+/**
+ * AI 设置面板里的点击（保存 / 添加服务商 / 删除服务商 / 本地部署按钮…）。
+ *
+ * 抽成具名函数是为了能和真实 DOM 点击走同一条代码（测试直接派发点击事件）。
+ */
+async function handleAiConfigPanelClick(event) {
+  if (event.target.closest('#saveAiOff')) configureAi('off');
+  if (event.target.closest('#saveLocalAi')) configureAi('local');
+  if (event.target.closest('#saveApiAi')) configureAi('api');
+  if (event.target.closest('#addApiProvider')) {
+    // 先把界面上已有的编辑读回来，再加一条空行 —— 否则"添加服务商"会把刚填的内容清掉。
+    const current = readAiProvidersFromPanel();
+    state.data.settings.ai.providers = [...current.providers, blankAiProvider()];
+    renderAiConfig(true);
+  }
+  const removeProvider = event.target.closest('[data-remove-provider]');
+  if (removeProvider) {
+    const current = readAiProvidersFromPanel();
+    const index = Number(removeProvider.dataset.removeProvider);
+    const providers = current.providers.filter((_, position) => position !== index);
+    const defaultIndex = current.default_index === index ? 0
+      : current.default_index > index ? current.default_index - 1 : current.default_index;
+    state.data.settings.ai.providers = providers;
+    state.data.settings.ai.default_index = Math.min(Math.max(defaultIndex, 0), Math.max(providers.length - 1, 0));
+    renderAiConfig(true);
+  }
+  if (event.target.closest('#deployLocalAi')) startLocalAiDeployment();
+  if (event.target.closest('#cancelLocalDeployment')) cancelLocalAiDeployment();
+  if (event.target.closest('#openOllamaDownload')) window.ph.system.openUrl(state.hardware?.platform === 'darwin' ? 'https://ollama.com/download/mac' : 'https://ollama.com/download/windows');
+  if (event.target.closest('#showDeploymentLog')) {
+    window.ph.ai.showDeploymentLog().catch((error) => toast(error.message, 'error'));
+  }
+  if (event.target.closest('#refreshHardware')) {
+    state.hardware = null;
+    state.hardwareLoading = false;
+    renderAiConfig(true);
+    loadHardwareProfile();
+  }
+  if (event.target.closest('#copyModelCommand')) {
+    const model = $('#localModelInput')?.value.trim() || state.hardware?.recommendation?.model || '';
+    if (!model) return toast('当前检测不建议安装本地模型；没有可复制的推荐命令', 'error');
+    await navigator.clipboard.writeText(`ollama run ${model}`);
+    toast('模型命令已复制');
+  }
+  if (event.target.closest('#clearApiKey')) {
+    cancelAiStream();
+    const saved = await window.ph.ai.configure({ clearApiKey: true, enabled: false });
+    state.data.settings.ai = saved;
+    await window.agentUI?.loadHistory?.();
+    renderAiConfig(true);
+    toast('API Key 已删除');
+  }
 }
 
 async function startLocalAiDeployment() {
   if (state.aiDeployment?.running) return;
   try {
     state.aiDeployment = await window.ph.ai.deployLocal();
-    renderAiConfig();
+    renderAiConfig(true);
     toast('本地 AI 一键部署已开始');
   } catch (error) {
     toast(`无法开始部署：${error.message}`, 'error');
@@ -1552,7 +1794,7 @@ async function cancelLocalAiDeployment() {
   if (!state.aiDeployment?.running) return;
   try {
     state.aiDeployment = await window.ph.ai.cancelDeployment();
-    renderAiConfig();
+    renderAiConfig(true);
   } catch (error) {
     toast(`无法取消部署：${error.message}`, 'error');
   }
@@ -1573,19 +1815,41 @@ async function configureAi(provider) {
       };
       if (!config.localModel) throw new Error('请填写模型名称');
     } else {
+      // 多服务商：整份列表一次性提交（规范形态），默认项由"默认使用"单选决定。
+      // 界面上完全空的那一行（用户加了行但没填）直接丢掉。
+      const read = readAiProvidersFromPanel();
+      const kept = read.providers
+        .map((row, index) => ({ row, index }))
+        .filter((entry) => !isBlankAiProvider(entry.row));
+      if (!kept.length) throw new Error('请至少添加一个服务商');
+      const providers = kept.map((entry) => entry.row);
+      const chosenAt = kept.findIndex((entry) => entry.index === read.default_index);
+      const defaultIndex = chosenAt >= 0 ? chosenAt : 0;
+      const chosen = providers[defaultIndex];
+      if (!chosen.base_url) throw new Error('请填写默认服务商的 Base URL');
+      if (!chosen.model) throw new Error('请填写默认服务商的模型名称');
+      for (const row of providers) {
+        if (!row.base_url) throw new Error(`服务商「${row.name || '未命名'}」缺少 Base URL`);
+      }
       config = {
         enabled: true,
         provider: 'api',
-        apiEndpoint: $('#apiEndpointInput').value.trim(),
-        apiModel: $('#apiModelInput').value.trim(),
-        apiKey: $('#apiKeyInput').value.trim(),
+        // api_key_saved 只是界面草稿里的提示位，绝不回传主进程（不给它多余的键）。
+        providers: providers.map((row) => ({
+          name: row.name, protocol: row.protocol, base_url: row.base_url,
+          model: row.model, api_key: row.api_key,
+          ...(row.clear_api_key ? { clear_api_key: true } : {}),
+        })),
+        default_index: defaultIndex,
       };
-      if (!config.apiModel) throw new Error('请填写模型名称');
     }
     const saved = await window.ph.ai.configure(config);
     state.data.settings.ai = saved;
     state.aiEditing = false;
     state.aiEditConfig = null;
+    // 已经落到主进程了，pending 的使命结束 —— 不清的话下次点开还会拿它覆盖真值
+    state.aiPendingProvider = '';
+    state.aiPanelProvider = '';
     await window.agentUI?.loadHistory?.();
     renderAi();
     toast(provider === 'off' ? 'AI 已保持关闭' : 'AI 连接设置已保存');
@@ -1618,9 +1882,9 @@ async function openAiControlDialog(mode = 'confirm') {
   $('#aiControlDialogTitle').textContent = full ? '允许 AI 使用完整权限' : '允许 AI 操作启动器';
   $('#aiControlRiskIntro').textContent = full
     ? state.data.settings.ai.provider === 'api'
-      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码，任何写入仍需你确认。'
-    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改。';
+      ? '完整权限会在你提出请求时允许 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；相应内容会发送给你配置的第三方 API 服务商。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+      : '完整权限会在你提出请求时允许本地 AI 读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习资料；内容留在这台机器上。不会开放密码、Cookie 或授权码。任何写入都要先在清单上确认；确认后可以写入你选定的工作区、发送邮件（还会再确认一次）、提交作业或回复讨论。'
+    : '开启后，AI 可以读取你授权的任务、笔记摘要、课程表与 EduPage 常规课表，并提出更改；若已选择工作区，还可以读写该文件夹内的文件。';
   refreshAiControlAcceptance();
   $('#aiApiRisk').classList.toggle('hidden', state.data.settings.ai.provider !== 'api');
   $('#aiControlDialog').showModal();
@@ -1671,11 +1935,18 @@ function proposalMarkup(proposal) {
   const status = proposal.status === 'committed' ? '已写入' : proposal.status === 'canceled' ? '已取消' : proposal.status === 'working' ? '处理中' : '等待确认';
   const recurrence = (item) => item.repeatWeekdays?.length ? `<small translate="no">${window.i18n?.locale() === 'en' ? 'Weekly: ' : '每周：'}${item.repeatWeekdays.map(day => (window.i18n?.locale() === 'en' ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'] : ['','周一','周二','周三','周四','周五','周六','周日'])[day] || '').join(' / ')}</small>` : '';
   const groups = proposal.groups.map((group) => `<section class="proposal-group"><b>${escapeHtml(group.title)}</b>${(group.items || []).map((item) => `<div class="proposal-item"><strong>${escapeHtml(item.primary)}</strong><span>${escapeHtml(item.secondary)}${recurrence(item)}</span></div>`).join('')}</section>`).join('');
+  // External actions leave the launcher (files, mail, school submissions), so the
+  // card must not promise that confirming only saves local data.
+  const external = proposal.groups.some((group) => ['workspace-file', 'email', 'managebac-submission', 'managebac-reply'].includes(group.type));
+  const sendsMail = proposal.groups.some((group) => group.type === 'email');
+  const hint = external
+    ? `只有确认后才会执行；邮件、提交和回复发布后无法撤回${sendsMail ? '，发送前还会再弹出一次系统确认' : ''}`
+    : '只有确认后才会保存到 PH Launcher';
   return `<section class="ai-proposal-card${resolved ? ' resolved' : ''}" data-proposal-id="${escapeHtml(proposal.id)}">
-    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>只有确认后才会保存到 PH Launcher</span></div><em>${escapeHtml(status)}</em></div>
+    <div class="proposal-head"><div><strong>${escapeHtml(proposal.title || 'AI 建议的更改')}</strong><span>${escapeHtml(hint)}</span></div><em>${escapeHtml(status)}</em></div>
     <div class="proposal-groups">${groups}</div>
     ${proposal.warning ? `<p class="proposal-warning">${escapeHtml(proposal.warning)}</p>` : ''}
-    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>核对无误，确认写入</button></div>
+    <div class="proposal-actions"><button class="ghost-button" data-cancel-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>不采用</button><button class="primary-button" data-confirm-proposal="${escapeHtml(proposal.id)}" ${proposal.status === 'working' ? 'disabled' : ''}>${external ? '核对无误，确认执行' : '核对无误，确认写入'}</button></div>
   </section>`;
 }
 
@@ -1684,11 +1955,17 @@ function renderChat() {
   const messages = state.aiMessages.filter((message) => message.role !== 'system');
   $('#chatMessages').innerHTML = messages.map((message) => {
     const visibleContent = message.streaming && !message.content ? (window.i18n?.t(state.aiStreamStatus || '正在连接 AI…') || state.aiStreamStatus || '正在连接 AI…') : message.content;
-    const content = `<div class="chat-bubble">${escapeHtml(visibleContent)}</div>`;
+    // AI 的回复按 Markdown 渲染；用户自己打的字按纯文本原样显示
+    // （他写什么就看到什么，不替他解释星号和井号）。
+    const body = message.role === 'assistant' ? markdownToHtml(visibleContent) : escapeHtml(visibleContent);
+    const content = `<div class="chat-bubble">${body}</div>`;
+    const thinking = message.role === 'assistant'
+      ? thinkingMarkup(message.reasoning, Boolean(String(message.content || '').trim()), state.aiThinkingOpen)
+      : '';
     if (message.role === 'assistant' && message.proposal) {
-      return `<div class="chat-message assistant"><div class="chat-response">${content}${proposalMarkup(message.proposal)}</div></div>`;
+      return `<div class="chat-message assistant"><div class="chat-response">${thinking}${content}${proposalMarkup(message.proposal)}</div></div>`;
     }
-    return `<div class="chat-message ${escapeHtml(message.role)}">${content}</div>`;
+    return `<div class="chat-message ${escapeHtml(message.role)}">${thinking}${content}</div>`;
   }).join('') + (state.aiBusy && !messages.some((message) => message.streaming) ? `<div class="chat-message assistant"><div class="chat-bubble">${escapeHtml(state.aiStreamStatus || '正在处理…')}</div></div>` : '');
   $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
   const send = $('#aiSend');
@@ -1715,6 +1992,14 @@ function committedSummary(counts = {}) {
   return parts.length ? parts.join('、') : '没有需要重复写入的内容';
 }
 
+// File, mail and school writes report their own outcome; a failure must never be
+// shown as a completed change.
+function effectOutcome(effects) {
+  const list = Array.isArray(effects) ? effects.filter((effect) => effect?.message) : [];
+  if (!list.length) return { text: '', failed: false };
+  return { text: list.map((effect) => effect.message).join('；'), failed: list.some((effect) => effect.ok === false) };
+}
+
 async function confirmAiProposal(proposalId) {
   const message = proposalMessage(proposalId);
   if (!message || message.proposal.status === 'working') return;
@@ -1726,7 +2011,9 @@ async function confirmAiProposal(proposalId) {
     if (result.data) state.data = result.data;
     renderAll();
     if (result.counts?.calendarEvents || result.counts?.calendarEventsRemoved) await window.calendarUI?.refresh();
-    toast(`已写入：${committedSummary(result.counts)}`);
+    const outcome = effectOutcome(result.effects);
+    if (outcome.failed) toast(outcome.text, 'error');
+    else toast(`已写入：${committedSummary(result.counts)}${outcome.text ? ` · ${outcome.text}` : ''}`);
   } catch (error) {
     message.proposal.status = '';
     toast(`未写入：${error.message}`, 'error');
@@ -1818,6 +2105,7 @@ async function sendAiMessage() {
   state.aiBusy = true;
   state.aiRequestId = requestId;
   state.aiStreamStatus = state.aiLocalWarmup.localWarmup === 'warming' ? '正在准备本机模型…' : '正在连接 AI…';
+  state.aiThinkingOpen = undefined;   // 新一轮重新按"自动展开"来
   window.agentUI?.scheduleSave();
   renderChat();
   const system = {
@@ -1869,6 +2157,9 @@ function renderWebsiteSettings() {
   </div>`).join('');
   renderCredentialSettings();
   renderCustomWebsiteSettings();
+  // Accounts shared through settings.yaml are only known after the main process
+  // has read the shared file.
+  void refreshSharedAccounts().then(() => renderCredentialSettings());
 }
 
 function credentialEntry(siteId) {
@@ -1878,6 +2169,18 @@ function credentialEntry(siteId) {
     displayUsername: '',
     autoFill: false,
     updatedAt: '',
+  };
+}
+
+const XINLV_ACCOUNT = { id: 'xinlv', name: '心履', icon: 'i-spark' };
+
+function xinlvAccountStatus() {
+  const status = state.data?.xinlv || {};
+  return {
+    configured: Boolean(status.configured),
+    username: String(status.username || ''),
+    totalEntries: Number(status.totalEntries || 0),
+    pendingSync: Number(status.pendingSync || 0),
   };
 }
 
@@ -1891,15 +2194,18 @@ function renderCredentialSettings() {
   }
   if (!status.supported || status.issue) {
     const reason = status.issue || status.reason || '当前系统无法安全保存密码';
-    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small></div>`;
+    // 旧加密文件解不开（换了启动方式/系统账户）时给一条显式重建出路：
+    // 旧文件先改名留档，之后可以重新保存或从共用 settings.yaml 导入。
+    const rebuildable = String(reason).includes('无法解锁');
+    container.innerHTML = `<div class="credential-unavailable"><strong>账号记忆暂不可用</strong><span>${escapeHtml(reason)}</span><small>仍可使用每个网站自己的“保持登录”选项。</small>${rebuildable ? '<div class="credential-actions"><button type="button" class="danger" data-discard-credentials>留档旧文件并重建账号记忆</button></div>' : ''}</div>`;
     return;
   }
   container.innerHTML = Object.entries(BUILTIN_SITE_META).map(([siteId, site]) => {
     const credential = credentialEntry(siteId);
     const statusText = credential.saved
       ? siteId === 'mail'
-        ? `已加密保存 ${credential.displayUsername || '账号'} · 用于本地收件箱`
-        : `已加密保存 ${credential.displayUsername || '账号'} · ${credential.autoLogin ? '允许自动重新登录' : credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
+        ? `已保存 ${credential.displayUsername || '账号'} · 用于本地收件箱`
+         : `已保存 ${credential.displayUsername || '账号'} · ${credential.autoLogin ? '允许自动重新登录' : credential.autoFill ? '登录页自动填入' : '仅手动填入'}`
       : siteId === 'mail' ? '尚未登录；添加账号后可使用本地收件箱' : '未保存密码；仍可使用网站自己的保持登录';
     const actions = credential.saved
       ? siteId === 'mail'
@@ -1907,10 +2213,30 @@ function renderCredentialSettings() {
         : `<button type="button" data-connect-credential="${siteId}">登录</button><button type="button" data-edit-credential="${siteId}">修改账号</button><button type="button" class="danger" data-remove-credential="${siteId}">删除</button>`
       : `<button type="button" data-edit-credential="${siteId}">添加账号</button>`;
     return `<div class="credential-setting"><div class="site-card-icon ${siteId === 'mail' ? 'green' : siteId === 'managebac' ? 'wine' : 'gold'}">${icon(site.icon)}</div><div><strong>${escapeHtml(site.name)}</strong><small>${escapeHtml(statusText)}</small></div><div class="credential-actions">${actions}</div></div>`;
-  }).join('');
+  }).join('') + xinlvCredentialCard();
+}
+
+// Accounts can be shared with Pinghe Launcher Lite through settings.yaml. Both
+// directions are explicit, and the file is plain text, so the warning is shown
+// before anything is written.
+function sharedAccountCard() {
+  const shared = state.sharedAccounts;
+  if (!shared?.available) return '';
+  const known = shared.platforms.filter((entry) => entry.supported);
+  if (!known.length) return '';
+  const names = known.map((entry) => `${entry.platform}${entry.username ? `（${entry.username}）` : ''}`).join('、');
+  return `<div class="credential-setting shared-account-setting"><div class="site-card-icon blue">${icon('#i-check')}</div><div><strong>共用 settings.yaml 里的账号</strong><small>检测到 ${escapeHtml(names)}；导入后保存在本机，不会自动登录</small></div><div class="credential-actions"><button type="button" data-import-shared-accounts>导入账号</button><button type="button" data-export-shared-accounts>写入共用文件</button></div></div>`;
+}
+
+// 心履**不再出现在「设置 → 网站」里**：它的账号就是 phix 账号，同一个东西，
+// 单独列一张卡会让人以为要再登录一次（用户 2026-09-18 的要求）。
+// 心履页面本身照旧（首次打开时按需登录），这里只是不再把它当成一个"网站"。
+function xinlvCredentialCard() {
+  return '';
 }
 
 function openCredentialDialog(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) return openXinlvLoginDialog();
   const site = BUILTIN_SITE_META[siteId];
   const status = state.credentialStatus;
   if (!site || !status?.supported || status.issue) {
@@ -1918,23 +2244,31 @@ function openCredentialDialog(siteId) {
     return false;
   }
   const credential = credentialEntry(siteId);
+  const isMail = siteId === 'mail';
   $('#credentialForm').reset();
   $('#credentialSiteId').value = siteId;
   $('#credentialUsername').value = credential.username || '';
   $('#credentialPassword').required = !credential.saved;
-  $('#credentialPasswordNote').textContent = credential.saved
-    ? '如需保留原密码，请留空；保存后不会显示密码。'
-    : '保存后不会显示密码；如需更新，请重新输入。';
-  const isMail = siteId === 'mail';
+  // Only the mail account needs the client authorization code; the other
+  // sites use plain username + password.  form.reset() may clear the
+  // hidden attribute, so reapply it unconditionally.
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  if (isMail) { $('#credentialAuthcodeRow').hidden = false; if ($('#credentialAuthcode')) $('#credentialAuthcode').required = true; }
   $('#credentialAutoFill').checked = isMail ? false : credential.saved ? Boolean(credential.autoFill) : true;
   $('#credentialAutoFillRow').hidden = isMail;
   $('#credentialAutoLoginRow').hidden = isMail;
   $('#credentialAutoLogin').checked = siteId !== 'mail' && credential.autoLogin === true;
-  $('#credentialDialogTitle').textContent = '账号登录';
-  $('#credentialPasswordLabel').textContent = isMail ? '密码或客户端授权码' : '密码';
-  $('#credentialIntro').textContent = siteId === 'mail'
-    ? '网易邮箱可能需要先开启 IMAP/SMTP，并使用客户端授权码。密码或授权码会使用当前系统用户密钥加密，只发送到网易固定邮件服务器；邮件内容不会交给 AI。'
-    : `密码会使用当前系统用户密钥单独加密，只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
+  $('#credentialDialogTitle').textContent = isMail ? '邮箱登录' : '账号登录';
+  $('#credentialPasswordLabel').textContent = isMail ? '网页密码（可选回退）' : '密码';
+  $('#credentialPasswordNote').textContent = isMail
+    ? 'IMAP/SMTP 收发信必须使用客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）；网页密码仅在邮箱仍允许普通登录时作为回退。授权码必填，密码可选。'
+    : credential.saved
+      ? '如需保留原密码，请留空；保存后不会显示密码。'
+      : '保存后不会显示密码；如需更新，请重新输入。';
+  $('#credentialIntro').textContent = isMail
+    ? '网易企业邮的 IMAP/SMTP 服务需要客户端授权码（网页邮箱 → 设置 → 客户端设置 生成）。授权码与密码都只用于连接网易固定邮件服务器，以明文保存在本机共享数据目录（当前版本未启用加密）；邮件内容不会交给 AI。'
+    : `密码以明文保存在本机共享数据目录（当前版本未启用加密），只会发送到 ${site.name} 以登录并读取${siteId === 'edupage' ? '课表' : '课程'}；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。`;
   $('#credentialRiskAccepted').checked = false;
   $('#saveCredentialButton').disabled = true;
   $('#saveCredentialButton').textContent = '保存并登录';
@@ -1943,21 +2277,83 @@ function openCredentialDialog(siteId) {
   return true;
 }
 
+// Xinlv is not a website: it signs in through its REST API, so the dialog keeps
+// the same shape but hides webview-only options (autofill, auto re-login).
+function openXinlvLoginDialog() {
+  const status = state.credentialStatus;
+  if (!status?.supported || status.issue) {
+    return toast(status?.issue || status?.reason || '账号记忆暂不可用', 'error');
+  }
+  const account = xinlvAccountStatus();
+  $('#credentialForm').reset();
+  $('#credentialSiteId').value = XINLV_ACCOUNT.id;
+  $('#credentialUsername').value = account.username || '';
+  $('#credentialPassword').required = true;
+  $('#credentialPasswordLabel').textContent = '密码';
+  $('#credentialPasswordNote').textContent = '密码与登录令牌以明文保存在本机共享数据目录（当前版本未启用加密），只用于登录心履，保存后不会再次显示。';
+  $('#credentialAuthcodeRow').hidden = true;
+  if ($('#credentialAuthcode')) { $('#credentialAuthcode').value = ''; $('#credentialAuthcode').required = false; }
+  $('#credentialAutoFillRow').hidden = true;
+  $('#credentialAutoLoginRow').hidden = true;
+  $('#credentialDialogTitle').textContent = '心履登录';
+  $('#credentialIntro').textContent = '心履账号与学校账号相互独立。账号和密码只用于调用心履官方 API；心情记录保存在本机（当前未加密），只有你主动同步时才会发送到心履服务器。登录失败不会自动重试，避免账号被锁定。';
+  $('#credentialRiskAccepted').checked = false;
+  $('#saveCredentialButton').disabled = true;
+  $('#saveCredentialButton').textContent = account.configured ? '重新登录' : '登录心履';
+  $('#credentialDialog').showModal();
+  setTimeout(() => $('#credentialUsername').focus(), 30);
+}
+
+async function saveXinlvLoginFromDialog() {
+  const saveButton = $('#saveCredentialButton');
+  const username = $('#credentialUsername').value.trim();
+  const password = $('#credentialPassword').value;
+  if (!username || !password) return toast('请填写心履账号和密码', 'error');
+  $('#credentialPassword').value = '';
+  saveButton.disabled = true;
+  credentialSubmitInFlight = true;
+  const statusEl = $('#credentialConnectStatus');
+  if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在连接心履服务…'; }
+  try {
+    if (typeof window.xinlvUI?.connect !== 'function') throw new Error('心履模块尚未准备好');
+    await window.xinlvUI.connect({ username, password });
+    $('#credentialDialog').close();
+    state.data = await window.ph.data.get();
+    renderCredentialSettings();
+    if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = '心履登录成功，可同步心情记录'; }
+    toast('已登录心履');
+    setTimeout(() => { if (statusEl) statusEl.hidden = true; }, 1500);
+  } catch (error) {
+    if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `登录失败：${error.message}`; }
+    toast(`无法登录心履：${error.message}`, 'error');
+  } finally {
+    credentialSubmitInFlight = false;
+    if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
+  }
+}
+
 async function saveCredentialFromDialog(event) {
   event.preventDefault();
   if (credentialSubmitInFlight) return;
   if (!$('#credentialRiskAccepted').checked) return toast('请先阅读并确认风险提示', 'error');
   const saveButton = $('#saveCredentialButton');
+  const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
+  if ($('#credentialSiteId')?.value === 'xinlv') return saveXinlvLoginFromDialog();
   const credential = {
     siteId: $('#credentialSiteId').value,
     username: $('#credentialUsername').value,
     password: $('#credentialPassword').value,
+    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '') : '',
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };
+  if (isMailSubmit && !credential.password && !credential.authcode) {
+    return toast('客户端授权码必填（网页邮箱 → 设置 → 客户端设置 生成）', 'error');
+  }
   // Clear the editable password field before waiting for IPC. The main process
   // receives the value through the isolated bridge and never returns it.
   $('#credentialPassword').value = '';
+  if ($('#credentialAuthcode')) $('#credentialAuthcode').value = '';
   saveButton.disabled = true;
   credentialSubmitInFlight = true;
   try {
@@ -1972,11 +2368,17 @@ async function saveCredentialFromDialog(event) {
     if ($('#credentialDialog').open) saveButton.disabled = !$('#credentialRiskAccepted').checked;
   }
   if (credential.siteId === 'mail') {
+    const statusEl = $('#credentialConnectStatus');
+    if (statusEl) { statusEl.hidden = false; statusEl.className = 'credential-connect-status testing'; statusEl.textContent = '正在测试 IMAP 连接…'; }
     try {
       if (typeof window.mailUI?.connect !== 'function') throw new Error('邮箱服务尚未准备好');
       const connected = await window.mailUI.connect();
+      if (statusEl) { statusEl.className = 'credential-connect-status ok'; statusEl.textContent = connected ? 'IMAP 连接成功，收件箱同步完成' : '连接已建立'; }
       if (connected) toast('已登录并同步最近邮件');
+      if (typeof setTimeout === 'function') setTimeout(() => { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }, 1500);
+      else { if (statusEl) statusEl.hidden = true; renderCredentialSettings(); }
     } catch (error) {
+      if (statusEl) { statusEl.className = 'credential-connect-status error'; statusEl.textContent = `连接失败：${error.message}`; }
       toast(`账号已保存，但无法连接邮箱：${error.message}`, 'error');
     }
     return;
@@ -1991,6 +2393,22 @@ async function saveCredentialFromDialog(event) {
 }
 
 async function connectWithSavedCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    try {
+      if (typeof window.ph.xinlv?.sync !== 'function') throw new Error('心履服务尚未准备好');
+      const result = await window.ph.xinlv.sync({});
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.refresh?.();
+      renderCredentialSettings();
+      const parts = [];
+      if (result?.pushed) parts.push(`上传 ${result.pushed} 条`);
+      if (result?.pulled) parts.push(`下载 ${result.pulled} 条`);
+      toast(parts.length ? `心履同步完成：${parts.join('，')}` : '心履已是最新状态');
+    } catch (error) {
+      toast(`无法同步心履：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site) return;
   try {
@@ -2009,8 +2427,27 @@ async function connectWithSavedCredential(siteId) {
 }
 
 window.openSchoolAccount = openCredentialDialog;
+// Native modules (for example Xinlv) sign in through their own API and need to
+// refresh the shared account list after login or logout.
+window.refreshAccountSettings = async () => {
+  state.data = await window.ph.data.get();
+  renderCredentialSettings();
+};
 
 async function removeCredential(siteId) {
+  if (siteId === XINLV_ACCOUNT.id) {
+    if (!await localizedConfirm('退出心履登录？本机心情记录会保留，但不再自动同步。')) return;
+    try {
+      await window.ph.xinlv.logout();
+      state.data = await window.ph.data.get();
+      window.xinlvUI?.clear?.();
+      renderCredentialSettings();
+      toast('已退出心履登录');
+    } catch (error) {
+      toast(`无法退出心履登录：${error.message}`, 'error');
+    }
+    return;
+  }
   const site = BUILTIN_SITE_META[siteId];
   if (!site || !await localizedConfirm(`删除 ${site.name} 保存的账号和密码？网站登录状态不会受影响。`)) return;
   try {
@@ -2076,7 +2513,9 @@ async function openCustomSiteDialog(site = null) {
   $('#customSiteId').value = site?.id || '';
   $('#customSiteName').value = site?.name || '';
   $('#customSiteUrl').value = site?.url || '';
-  $('#customSiteColor').value = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  const siteColor = CUSTOM_SITE_COLORS.has(site?.color) ? site.color : 'green';
+  $('#customSiteColor').value = siteColor;
+  $$('#customSiteColorSwatches input[name="customSiteColorRadio"]').forEach((radio) => { radio.checked = radio.value === siteColor; });
   $('#customSiteShortcut').value = site?.shortcut || '';
   $('#customSiteShortcutEnabled').checked = Boolean(site?.shortcutEnabled);
   $('#customSiteDialogTitle').textContent = site ? '编辑网页' : '添加网页';
@@ -2161,11 +2600,74 @@ function renderSettings() {
   $('#reminderSetting').value = String(settings.defaultReminderMinutes ?? 10);
   $('#encryptionStatus').textContent = state.data.meta?.encrypted
     ? state.data.meta?.platform === 'darwin' ? '本地数据已使用 macOS 钥匙串保护' : '本地数据已使用当前系统用户密钥加密'
-    : '当前系统无法提供加密，数据仅保存在本机';
-  $('#dataPathLabel').textContent = state.data.meta?.dataPath || '';
+    : '本地数据以明文保存在共享数据目录（当前版本未启用加密）';
+  const meta = state.data.meta || {};
+  const shared = Array.isArray(meta.sharedFiles) && meta.sharedFiles.length ? meta.sharedFiles.join(' / ') : '';
+  $('#dataPathLabel').textContent = [
+    meta.dataPath ? `${window.i18n?.t('本应用数据') || '本应用数据'}：${meta.dataPath}` : '',
+    meta.dataRoot ? `${window.i18n?.t('共享数据目录') || '共享数据目录'}：${meta.dataRoot}${shared ? `（${shared}）` : ''}` : '',
+  ].filter(Boolean).join(' · ');
   renderWebsiteSettings();
   renderXinlvSettings();
   renderShortcutSettings();
+  void renderDataChoice();
+}
+
+// The data folder is decided at startup, so this only reports the current choice
+// and offers the two explicit alternatives.
+async function renderDataChoice() {
+  const hint = $('#dataShareHint');
+  const share = $('#shareDataLite');
+  const own = $('#useOwnData');
+  if (!hint || !share || !own) return;
+  let choice = null;
+  try { choice = await window.ph.system.dataChoice(); } catch { choice = null; }
+  if (!choice) { hint.textContent = ''; share.hidden = true; own.hidden = true; return; }
+  const sourceLabel = {
+    pointer: '你选择的目录',
+    portable: '便携模式：程序目录下的 data',
+    profile: '本应用默认目录',
+    env: '由启动参数指定',
+  }[choice.source] || '本应用默认目录';
+  const parts = [`当前：${sourceLabel}`];
+  if (choice.liteAvailable && choice.root !== choice.liteRoot) parts.push(`检测到 Pinghe Launcher Lite 的数据目录：${choice.liteRoot}`);
+  parts.push('两个程序使用同一个数据目录时，会共用 settings.yaml 里的账号、Schedule 日程和 agent 会话记录；本应用自己的任务、笔记与词汇仍单独保存。');
+  hint.textContent = parts.join('｜');
+  share.hidden = !(choice.liteAvailable && choice.root !== choice.liteRoot);
+  own.hidden = choice.source !== 'pointer' && choice.source !== 'portable';
+}
+
+async function refreshSharedAccounts() {
+  try { state.sharedAccounts = await window.ph.school.sharedAccounts(); }
+  catch { state.sharedAccounts = { available: false, platforms: [] }; }
+}
+
+async function discardCredentials() {
+  if (!await localizedConfirm('把解不开的旧账号文件留档并重建？旧文件会改名保留在同目录，不会删除；之后可重新保存账号，或从共用 settings.yaml 导入。')) return;
+  try {
+    const result = await window.ph.credentials.discardUnreadable();
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    toast(`已重建账号记忆；旧文件留档在 ${result.backup}`);
+  } catch (error) { toast(`重建失败：${error.message}`, 'error'); }
+}
+
+async function importSharedAccounts() {
+  try {
+    const result = await window.ph.school.importSharedAccounts();
+    state.credentialStatus = result.status;
+    renderCredentialSettings();
+    const imported = (result.imported || []).map((entry) => entry.platform).join('、');
+    toast(imported ? `已导入 ${imported}；账号保存在本机` : '没有可导入的账号（本机已有或字段不全）');
+  } catch (error) { toast(`导入失败：${error.message}`, 'error'); }
+}
+
+async function exportSharedAccounts() {
+  if (!await localizedConfirm('把本机保存的账号写入共用的 settings.yaml？该文件是明文，同机其他程序可以读取。')) return;
+  try {
+    const result = await window.ph.school.exportSharedAccounts();
+    toast(`已写入 ${result.exported.join('、')}；文件是明文，请注意本机安全`);
+  } catch (error) { toast(`写入失败：${error.message}`, 'error'); }
 }
 
 function renderXinlvSettings() {
@@ -2351,6 +2853,33 @@ function renderAll() {
   window.appearanceUI?.render();
   renderFocusStats();
   updateTimerUi();
+  renderAvatar();
+}
+
+/** 引导**按需**显示：已经有的东西不要再让用户配一遍。
+ *
+ *  用户 2026-09-18 的要求：「如果用户登录了 phix 账号并且账号中有数据，
+ *  就不需要显示登录三个网站的引导了，否则缺什么数据就显示什么引导，不需要全部显示」。
+ *
+ *  三样东西各自判断：
+ *   * 三个平台账号（`settings.accounts`，phix 同步下来就在了）；
+ *   * 课表 / 课程数据（共用快照 `edupage` / `managebac` 段）；
+ *   * 教学组选择（本机偏好里的 `groups`，或共用 settings.yaml 的 `lessons` 段）。
+ */
+function onboardingNeeds() {
+  const sites = state.credentialStatus?.sites || {};
+  const missingAccounts = ['edupage', 'managebac', 'mail'].filter((id) => !sites[id]?.saved);
+  const snapshot = (typeof window.schoolUI?.snapshot === 'function' ? window.schoolUI.snapshot() : null)
+    || state.schoolSnapshot || {};
+  const prefs = snapshot.preferences || {};
+  const groups = Array.isArray(prefs.groups) ? prefs.groups : [];
+  return {
+    missingAccounts,
+    needsAccounts: missingAccounts.length > 0,
+    hasSchoolData: Boolean((snapshot.edupage && (snapshot.edupage.lessons || []).length)
+      || (snapshot.managebac && (snapshot.managebac.courses || []).length)),
+    needsGroups: groups.length === 0,
+  };
 }
 
 function renderOnboarding() {
@@ -2358,30 +2887,37 @@ function renderOnboarding() {
   const dialog = $('#onboardingDialog');
   if (!content || !dialog) return;
   const en = window.i18n?.locale?.() === 'en';
-  const accounts = [
-    ['edupage', en ? 'EduPage timetable' : 'EduPage 课表'],
-    ['managebac', 'ManageBac'],
-    ['mail', en ? 'Pinghe Mail' : '平和邮箱'],
+  const needs = onboardingNeeds();
+  const label = { edupage: en ? 'EduPage timetable' : 'EduPage 课表', managebac: 'ManageBac', mail: en ? 'Pinghe Mail' : '平和邮箱' };
+  // 只列**还缺**的账号；三个都齐了这一步根本不会出现（见下面的 steps）。
+  const accountRows = (needs.needsAccounts ? needs.missingAccounts : ['edupage', 'managebac', 'mail'])
+    .map((id) => `<button type="button" data-onboarding-account="${id}"><span><strong>${label[id]}</strong><small>${en ? 'Set up account' : '去设置账号'}</small></span><span>→</span></button>`).join('');
+
+  const candidates = [
+    needs.needsAccounts ? {
+      title: en ? 'Connect your school services' : '连接学校服务',
+      copy: en
+        ? `Your phix account did not include: ${needs.missingAccounts.join(', ')}. Set them up here — each one can also be skipped for now.`
+        : `你的 phix 账号里还没有这些平台的账号：${needs.missingAccounts.map((id) => label[id]).join('、')}。在这里补齐即可，也可以先跳过。`,
+      body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">${en ? 'You can change these later in Settings → Websites.' : '之后可在“设置 → 网站”修改账号。'}</p>`,
+    } : null,
+    needs.needsGroups && needs.hasSchoolData ? {
+      title: en ? 'Choose your teaching groups' : '选择你的教学组',
+      copy: en
+        ? 'Your timetable is synced. Pick the teaching groups you actually attend so the personal timetable is accurate.'
+        : '课表已经同步好了。勾选你实际参加的教学组，个人课表才会只显示你自己的课。',
+      body: `<button type="button" class="secondary-button" id="onboardingGroups">${en ? 'Choose groups' : '去选择教学组'}</button><p class="onboarding-step-copy">${en ? 'You can change this anytime from My Timetable.' : '之后随时可以在“我的课表”里改。'}</p>`,
+    } : null,
+    {
+      title: en ? 'Set up AI (optional)' : '设置 AI（可选）',
+      copy: en ? 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.' : '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。',
+      body: `<button type="button" class="secondary-button" id="onboardingAiSettings">${en ? 'Open AI settings' : '打开 AI 设置'}</button><p class="onboarding-step-copy">${en ? 'You can skip this and enable it anytime from AI Learning Assistant.' : '可以跳过，之后随时从“AI 学习助手”启用。'}</p>`,
+    },
   ];
-  const accountRows = accounts.map(([id, label]) => {
-    const saved = credentialEntry(id).saved;
-    return `<button type="button" data-onboarding-account="${id}" aria-label="${en ? `Enter ${label} username and password` : `输入${label}用户名和密码`}"><span><strong>${label}</strong><small>${saved ? (en ? 'Configured' : '已配置') : (en ? 'Enter username and password' : '输入用户名和密码')}</small></span><span>${saved ? '✓' : '→'}</span></button>`;
-  }).join('');
-  const steps = en ? [
-    { title: 'Welcome to PH Launcher', copy: 'A calm workspace for your timetable, assignments, calendar, mail and study tools.', body: '<p class="onboarding-step-copy">This short guide is optional. You can skip it now and change everything later in Settings.</p>' },
-    { title: 'Connect your school services', copy: 'Enter your username and password directly in PH Launcher. The original school websites will not open during setup; each service can be skipped for now.', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">Passwords are encrypted locally. You can change these accounts later in Settings → Websites.</p>` },
-    { title: 'Set up AI (optional)', copy: 'Local AI keeps your study data on this computer and avoids API fees. API AI is also supported.', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">Open AI settings</button><p class="onboarding-step-copy">You can skip this and enable it anytime from AI Learning Assistant.</p>' },
-    { title: 'Try Wellbeing (optional)', copy: 'Xinlv is embedded as a launcher module for reflection and wellbeing support. Your Xinlv login is separate.', body: '<button type="button" class="secondary-button" id="onboardingPsychology">Open Wellbeing</button><p class="onboarding-step-copy">You can skip this and open Wellbeing from the sidebar later.</p>' },
-    { title: 'Start with one small action', copy: 'Tasks hold things to do. My calendar holds timed and weekly activities. Vocabulary keeps your learning and reviews together.', body: '<div class="onboarding-list"><button type="button" data-guide-route="vocabulary">Import a wordbook and start learning →</button><button type="button" data-guide-route="calendar">Add an activity or weekly schedule →</button><button type="button" data-guide-route="plan">Create a task and set a focus goal →</button></div><p class="onboarding-step-copy">Use Search and quick actions (Ctrl/Cmd K) to jump to a page. Reopen this guide below Settings anytime.</p>' },
-  ] : [
-    { title: '欢迎使用 PH Launcher', copy: '把课表、作业、日程、邮件和学习工具放在一个安静的工作台。', body: '<p class="onboarding-step-copy">这段引导可以跳过，之后也能在“设置”中修改所有选项。</p>' },
-    { title: '先连接学校服务', copy: '直接在 PH Launcher 输入用户名和密码，设置期间不会自动打开学校原网页；三个服务都可以暂时跳过。', body: `<div class="onboarding-list">${accountRows}</div><p class="onboarding-step-copy">密码会在本机加密保存，之后可在“设置 → 网站”修改账号。</p>` },
-    { title: '设置 AI（可选）', copy: '本地 AI 会让学习资料留在本机，也不会产生 API 费用；你也可以选择 API AI。', body: '<button type="button" class="secondary-button" id="onboardingAiSettings">打开 AI 设置</button><p class="onboarding-step-copy">可以跳过，之后随时从“AI 学习助手”启用。</p>' },
-    { title: '试试心理模块（可选）', copy: '心履已作为启动器中的独立模块嵌入，登录与启动器其他网站分开保存。', body: '<button type="button" class="secondary-button" id="onboardingPsychology">打开心理</button><p class="onboarding-step-copy">可以跳过，之后从侧栏“心理”打开。</p>' },
-    { title: '从一件小事开始', copy: '计划管理待办；我的日程安排具体时间和每周活动；背单词集中管理学习与复习。', body: '<div class="onboarding-list"><button type="button" data-guide-route="vocabulary">导入词书，开始背单词 →</button><button type="button" data-guide-route="calendar">添加日程或每周固定活动 →</button><button type="button" data-guide-route="plan">创建任务，设置专注目标 →</button></div><p class="onboarding-step-copy">按 Ctrl/Cmd K 打开搜索与快捷操作。随时从侧栏“设置”下方重新打开导览。</p>' },
-  ];
-  const step = steps[Math.max(0, Math.min(state.onboardingStep, steps.length - 1))];
-  content.innerHTML = `<p class="onboarding-step-copy">${en ? 'Step' : '步骤'} ${state.onboardingStep + 1} / ${steps.length}</p><h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
+  const steps = candidates.filter(Boolean);
+  state.onboardingStep = Math.max(0, Math.min(Number(state.onboardingStep) || 0, steps.length - 1));
+  const step = steps[state.onboardingStep];
+  content.innerHTML = `<h3>${step.title}</h3><p class="onboarding-step-copy">${step.copy}</p>${step.body}`;
   $('#onboardingBack').hidden = state.onboardingStep === 0;
   $('#onboardingNext').textContent = state.onboardingStep === steps.length - 1 ? (en ? 'Finish' : '完成') : (en ? 'Next' : '下一步');
   state.data.settings.onboardingStep = state.onboardingStep;
@@ -2401,10 +2937,17 @@ function finishOnboarding() {
 function openOnboarding(step = state.data?.settings.onboardingStep || 0, force = false) {
   if (!state.data || state.data.settings.onboardingCompleted === true && !force && !state.onboardingPending) return;
   state.onboardingPending = false;
-  state.onboardingStep = Math.max(0, Math.min(4, Number(step) || 0));
-  renderOnboarding();
-  const dialog = $('#onboardingDialog');
-  if (dialog && !dialog.open) dialog.showModal();
+  state.onboardingStep = Math.max(0, Math.min(2, Number(step) || 0));
+  // 引导要**按需**显示（已有数据就不再要求配一遍），所以先把账号状态与学校快照
+  // 读到最新，再渲染。失败就用现有的一份，不让引导打不开。
+  void Promise.all([
+    window.ph.credentials.status().then((status) => { state.credentialStatus = status; }).catch(() => {}),
+    window.schoolUI?.refresh?.().catch(() => {}),
+  ]).finally(() => {
+    renderOnboarding();
+    const dialog = $('#onboardingDialog');
+    if (dialog && !dialog.open) dialog.showModal();
+  });
 }
 
 function openOnboardingDestination(action) {
@@ -2414,7 +2957,331 @@ function openOnboardingDestination(action) {
   action();
 }
 
+// ---------------------------------------------------------------- phix 首启引导
+//: 首选服务器：公网入口。内网自建地址**不写在这里**（由主进程按部署者配置解析，
+//: 见 electron/phix-servers.cjs）—— 源码是公开的，不能带内网拓扑。
+const PHIX_PUBLIC_SERVER = 'https://phix.ing/api/v1';
+//: 服务器地址**不让用户填**：先试记下来的那份，再挨个 ping 这些候选，谁先应答用谁。
+async function phixServerCandidates() {
+  try {
+    const r = await window.ph.phix.serverCandidates();
+    const list = Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : []);
+    if (list.length) return [...new Set([...list, PHIX_PUBLIC_SERVER].filter(Boolean))];
+  } catch { /* 拿不到就只用公网 */ }
+  return [PHIX_PUBLIC_SERVER];
+}
+
+/** 得出该连哪台服务器：设过的 > 探测得到的 > 首选。
+ *
+ *  探测只发 `/ping`（明文、只读、不带任何凭据），失败就换下一个。
+ *  这一步的意义是用户只需要填账号密码 —— 服务器地址是他不该关心的事。 */
+async function resolvePhixServer() {
+  const remembered = String(state.phixStatus?.server || '').trim();
+  if (remembered) return remembered;
+  for (const candidate of await phixServerCandidates()) {
+    try {
+      const result = await window.ph.phix.ping(candidate);
+      if (result?.ok) return result.data?.server || candidate;
+    } catch { /* 换下一个候选 */ }
+  }
+  return PHIX_PUBLIC_SERVER;
+}
+
+function renderPhixOnboarding() {
+  const content = $('#phixOnboardingContent');
+  const actions = $('#phixOnboardingActions');
+  const dialog = $('#phixOnboardingDialog');
+  if (!content || !dialog) return;
+  const en = window.i18n?.locale?.() === 'en';
+  const step = state.phixOnboardingStep;
+
+  if (step === 0) {
+    // 问：你有 phix 账号吗？
+    content.innerHTML = `<p class="onboarding-step-copy">${en
+      ? 'phix keeps your data synced across devices with end-to-end encryption. Do you have a phix account?'
+      : 'phix 让你的数据在多台设备间同步，且全程端到端加密。你有 phix 账号吗？'}</p>`;
+    actions.innerHTML = `<button class="secondary-button" type="button" id="phixObHave">${en ? 'Yes, log in' : '有，去登录'}</button>`
+      + `<button class="secondary-button" type="button" id="phixObRegister">${en ? 'Register new' : '没有，注册一个'}</button>`;
+  } else if (step === 1) {
+    // 登录：只问账号密码 —— 服务器地址由客户端自己定（可以探测/回退），
+    // 同步口令也不在这里问（那是强模式账号才有的事，登录时按需再补，见
+    // `needPassphrase` 分支）。**用户明确要求过：不要服务器地址、不要模式口令。**
+    content.innerHTML = `<div class="phix-box" id="phixObLoginBox">`
+      + `<div class="phix-row"><input class="text-input phix-grow" id="phixObUsername" type="text" autocomplete="username" placeholder="${en ? 'Username' : '账号'}"/></div>`
+      + `<div class="phix-row"><input class="text-input phix-grow" id="phixObPassword" type="password" autocomplete="current-password" placeholder="${en ? 'Password' : '密码'}"/></div>`
+      + `<div class="phix-row" id="phixObPassphraseRow" hidden><input class="text-input phix-grow" id="phixObSyncphrase" type="password" autocomplete="off" placeholder="${en ? 'Sync passphrase' : '独立同步口令'}"/><button class="primary-button" type="button" id="phixObUsePassphrase">${en ? 'Unlock' : '用口令登录'}</button></div>`
+      + `<p class="phix-dim" id="phixObError"></p></div>`;
+    actions.innerHTML = `<button class="secondary-button" type="button" id="phixObBack">${en ? 'Back' : '返回'}</button>`
+      + `<button class="primary-button" type="button" id="phixObDoLogin">${en ? 'Log in' : '登录'}</button>`;
+  } else if (step === 2) {
+    // 注册：同样只问账号密码
+    content.innerHTML = `<div class="phix-box" id="phixObRegBox">`
+      + `<div class="phix-row"><input class="text-input phix-grow" id="phixObRegUsername" type="text" autocomplete="username" placeholder="${en ? 'Username' : '账号'}"/></div>`
+      + `<div class="phix-row"><input class="text-input phix-grow" id="phixObRegPassword" type="password" autocomplete="new-password" placeholder="${en ? 'Password' : '密码'}"/></div>`
+      + `<p class="phix-dim" id="phixObRegError"></p></div>`;
+    actions.innerHTML = `<button class="secondary-button" type="button" id="phixObBack">${en ? 'Back' : '返回'}</button>`
+      + `<button class="primary-button" type="button" id="phixObDoRegister">${en ? 'Register' : '注册'}</button>`;
+  }
+}
+
+function openPhixOnboarding(step = 0) {
+  state.phixOnboardingPending = true;
+  state.phixOnboardingStep = step;
+  renderPhixOnboarding();
+  const dialog = $('#phixOnboardingDialog');
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function closePhixOnboarding() {
+  state.phixOnboardingPending = false;
+  $('#phixOnboardingDialog')?.close();
+}
+
+/** phix 引导完成后进入原有引导。 */
+function proceedToOriginalOnboarding() {
+  closePhixOnboarding();
+  if (!state.data || state.data.settings.onboardingCompleted === true) return;
+  setTimeout(() => openOnboarding(), 200);
+}
+
+/** 尝试 restore phix 会话（盘上有令牌就恢复，跳过整个 phix 引导）。 */
+async function tryPhixRestore() {
+  try {
+    const result = await window.ph.phix.restore();
+    if (result && result.logged_in) {
+      state.phixStatus = result;
+      // restore 成功，拉一次头像
+      void refreshPhixAvatar();
+      return true;
+    }
+  } catch { /* restore 失败 = 没有令牌 */ }
+  return false;
+}
+
+/** 从 phix profile 同步对象拉头像。 */
+async function refreshPhixAvatar() {
+  try {
+    const result = await window.ph.phix.status();
+    if (result?.ok && result.data) state.phixStatus = result.data;
+    // 从同步状态读 profile 数据 —— 如果已同步过，本地 data/Profile 就有
+    // （这里不直接读文件，而是依赖 phixStatus 里后续可扩展的字段）
+  } catch { /* 读不到就算了 */ }
+}
+
+function handlePhixOnboardingClick(event) {
+  if (event.target.closest('#phixOnboardingClose') || event.target.closest('#phixOnboardingSkip')) {
+    closePhixOnboarding();
+    proceedToOriginalOnboarding();
+    return;
+  }
+  if (event.target.closest('#phixObHave')) {
+    state.phixOnboardingStep = 1;
+    renderPhixOnboarding();
+    return;
+  }
+  if (event.target.closest('#phixObRegister')) {
+    state.phixOnboardingStep = 2;
+    renderPhixOnboarding();
+    return;
+  }
+  if (event.target.closest('#phixObBack')) {
+    state.phixOnboardingStep = 0;
+    renderPhixOnboarding();
+    return;
+  }
+  if (event.target.closest('#phixObDoLogin')) {
+    void doPhixObLogin();
+    return;
+  }
+  if (event.target.closest('#phixObDoRegister')) {
+    void doPhixObRegister();
+    return;
+  }
+  if (event.target.closest('#phixObUsePassphrase')) {
+    void doPhixObLogin();
+    return;
+  }
+}
+
+/** 登录框上的一句提示（登录中 / 出错 / 需要口令）。 */
+function phixObNotice(text, kind = '') {
+  const el = $('#phixObError') || $('#phixObRegError');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = kind === 'error' ? 'phix-dim phix-error' : 'phix-dim';
+}
+
+/** 一次登录尝试。`passphrase` 非空时按"强模式账号"再试一次。 */
+async function phixObAttempt(server, username, password, passphrase) {
+  return window.ph.phix.login({ server, username, password, sync_passphrase: passphrase || '' });
+}
+
+async function doPhixObLogin() {
+  const en = window.i18n?.locale?.() === 'en';
+  const username = ($('#phixObUsername')?.value || '').trim();
+  const password = $('#phixObPassword')?.value || '';
+  const syncphrase = ($('#phixObSyncphrase')?.value || '').trim();
+  const button = $('#phixObDoLogin');
+  if (!username || !password) {
+    phixObNotice(en ? 'Enter your username and password.' : '请填写账号和密码。', 'error');
+    return;
+  }
+  // 登录期间给一句人话：否则点了没动静，用户会以为卡住了（用户反馈过）。
+  const original = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = en ? 'Logging in…' : '正在登录…'; }
+  phixObNotice(en ? 'Signing in and syncing…' : '正在登录并同步…');
+  try {
+    const server = await resolvePhixServer();
+    let result = await phixObAttempt(server, username, password, syncphrase);
+    // 强模式账号（key_mode = syncphrase）：密码对、但数据是用独立同步口令包的，
+    // 主进程返回 logged_in=true 而 unlocked=false。**这时才把口令那一行露出来。**
+    if (result?.ok && result.data && result.data.logged_in === true && result.data.unlocked === false) {
+      const row = $('#phixObPassphraseRow');
+      if (row) row.hidden = false;
+      phixObNotice(en
+        ? 'This account uses an independent sync passphrase. Enter it and press “Unlock”.'
+        : '这个账号用了独立同步口令（连服务器都解不开你的数据）。请填入口令后点「用口令登录」。', 'error');
+      $('#phixObSyncphrase')?.focus();
+      return;
+    }
+    if (result?.ok) {
+      state.phixStatus = result.data;
+      void refreshPhixAvatar();
+      try { await window.ph.phix.sync({}); } catch { /* 同步失败不阻塞 */ }
+      phixObNotice('');
+      proceedToOriginalOnboarding();
+    } else {
+      phixObNotice(result?.error || (en ? 'Login failed' : '登录失败'), 'error');
+    }
+  } catch (error) {
+    phixObNotice(error?.message || (en ? 'Login failed' : '登录失败'), 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original; }
+  }
+}
+
+async function doPhixObRegister() {
+  const en = window.i18n?.locale?.() === 'en';
+  const username = ($('#phixObRegUsername')?.value || '').trim();
+  const password = $('#phixObRegPassword')?.value || '';
+  const errorEl = $('#phixObRegError');
+  if (!username || !password) {
+    if (errorEl) errorEl.textContent = en ? 'Enter a username and password.' : '请填写账号和密码。';
+    return;
+  }
+  const button = $('#phixObDoRegister');
+  const original = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = en ? 'Registering…' : '正在注册…'; }
+  if (errorEl) errorEl.textContent = en ? 'Creating the account…' : '正在注册…';
+  try {
+    const server = await resolvePhixServer();
+    const result = await window.ph.phix.register({ server, username, password });
+    if (result?.ok) {
+      state.phixStatus = result.data;
+      void refreshPhixAvatar();
+      // 注册成功 → 提示恢复码（这里简要提示，详细在后续页面）
+      try { await window.ph.phix.sync({}); } catch { /* 同步失败不阻塞 */ }
+      proceedToOriginalOnboarding();
+    } else {
+      if (errorEl) errorEl.textContent = result?.error || (en ? 'Registration failed' : '注册失败');
+    }
+  } catch (error) {
+    if (errorEl) errorEl.textContent = error?.message || (en ? 'Registration failed' : '注册失败');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original; }
+  }
+}
+
+// ---------------------------------------------------------------- 头像
+/** 从 phix profile 同步对象拉头像并显示在顶栏。 */
+async function loadAndShowAvatar() {
+  try {
+    const status = await window.ph.phix.status();
+    if (status?.ok && status.data?.logged_in) {
+      state.phixStatus = status.data;
+    }
+  } catch { /* 未登录或读不到 */ }
+  // 读本地 Profile 文件获取头像
+  try {
+    const profile = await window.ph.phix.profile();
+    if (profile && profile.avatar) {
+      state.phixAvatarDataUrl = profile.avatar;
+    }
+  } catch { /* 读不到 */ }
+  renderAvatar();
+}
+
+/** 渲染顶栏头像（如果有 profile.avatar 的话）。 */
+function renderAvatar() {
+  const btn = $('#phixAvatar');
+  if (!btn) return;
+  // 尝试从本地 Profile 文件读头像 —— 已同步到本地就有
+  // 这里用 phixStatus 里可能缓存的 avatar
+  const avatar = state.phixAvatarDataUrl || '';
+  if (avatar) {
+    btn.hidden = false;
+    btn.style.backgroundImage = `url(${avatar})`;
+    btn.textContent = '';
+  } else {
+    btn.hidden = true;
+  }
+}
+
+/** 选择图片 → canvas 压缩到 256×256 → base64 data URL。 */
+function compressAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        // 等比缩放居中裁剪
+        const minDim = Math.min(img.width, img.height);
+        const sx = (img.width - minDim) / 2;
+        const sy = (img.height - minDim) / 2;
+        ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 256, 256);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('图片加载失败'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 上传头像：选图 → 压缩 → 写 profile → 推同步。 */
+async function uploadAvatar() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await compressAvatar(file);
+      state.phixAvatarDataUrl = dataUrl;
+      renderAvatar();
+      // 写入 profile 对象并推同步
+      const existing = await window.ph.phix.profile().catch(() => null);
+      const profile = { ...(existing || {}), avatar: dataUrl, updated_at: new Date().toISOString() };
+      await window.ph.phix.saveProfile(profile);
+      toast('头像已保存，正在同步…');
+      try { await window.ph.phix.sync({}); } catch { /* 同步失败不阻塞 */ }
+      toast('头像已同步');
+    } catch (error) {
+      toast(`头像处理失败：${error.message}`, 'error');
+    }
+  };
+  input.click();
+}
+
 function handleBodyClick(event) {
+  // phix 首启引导对话框的按钮
+  if (event.target.closest('#phixOnboardingDialog')) { handlePhixOnboardingClick(event); return; }
   if (event.target.closest('#openUserGuide')) {
     if (state.activeSite) navigate('today');
     openOnboarding(state.onboardingPending ? state.onboardingStep : 0, true); return;
@@ -2441,7 +3308,7 @@ function handleBodyClick(event) {
     return;
   }
   if (event.target.closest('#onboardingAiSettings')) { openOnboardingDestination(() => navigate('ai')); return; }
-  if (event.target.closest('#onboardingPsychology')) { openOnboardingDestination(() => openSite('psychology')); return; }
+  if (event.target.closest('#onboardingGroups')) { openOnboardingDestination(() => { navigate('timetable'); window.schoolUI?.open?.('timetable'); }); return; }
   if (event.target.closest('#onboardingNext')) {
     if (state.onboardingStep >= 4) finishOnboarding(); else { state.onboardingStep += 1; renderOnboarding(); }
     return;
@@ -2509,10 +3376,15 @@ function handleBodyClick(event) {
       toast('请先取消正在进行的本地 AI 部署', 'error');
       return;
     }
-    state.data.settings.ai.provider = aiProvider.dataset.aiProvider;
+    const picked = aiProvider.dataset.aiProvider;
+    state.data.settings.ai.provider = picked;
     state.data.settings.ai.enabled = false;
+    // 这个选择还没保存（用户要先填表单）。记进 pending，好让它在数据刷新
+    // 替换掉 state.data 之后仍然留在界面上 —— 否则不到一秒就跳回「不使用 AI」。
+    state.aiPendingProvider = picked;
+    state.aiPanelProvider = '';   // 换了 provider，面板必须重画
     $$('.ai-choice-list > button').forEach((button) => button.classList.toggle('active', button === aiProvider));
-    renderAiConfig();
+    renderAiConfig(true);
   }
 
   const template = event.target.closest('[data-template]');
@@ -2531,6 +3403,12 @@ function handleBodyClick(event) {
 
 function bindEvents() {
   document.body.addEventListener('click', handleBodyClick);
+  // Close any dialog when clicking the gray backdrop (the dialog element itself).
+  // Use mousedown instead of click to match the standard UI pattern and avoid
+  // race conditions where the dialog opens and immediately closes.
+  document.addEventListener('mousedown', (event) => {
+    if (event.target.tagName === 'DIALOG' && event.target.open) event.target.close();
+  });
   $('#taskForm').addEventListener('submit', saveTaskFromDialog);
   $('#lessonForm').addEventListener('submit', saveLessonFromDialog);
   $('#deleteTask').addEventListener('click', () => deleteTask($('#taskId').value));
@@ -2705,37 +3583,39 @@ function bindEvents() {
     if (confirmId) confirmAiProposal(confirmId);
     if (cancelId) cancelAiProposal(cancelId);
   });
+  // renderChat 每次都会重建整段 innerHTML，<details> 的展开状态会被重置。
+  // 记住用户点过的状态，重渲染时沿用 —— 否则流式期间刚展开又被收回去。
+  $('#chatMessages').addEventListener('toggle', (event) => {
+    if (event.target instanceof HTMLDetailsElement && event.target.classList.contains('chat-thinking')) {
+      state.aiThinkingOpen = event.target.open;
+    }
+  }, true);
   $('#aiEditConfig').addEventListener('click', beginAiEditing);
-  $('#aiConfigPanel').addEventListener('click', async (event) => {
-    if (event.target.closest('#saveAiOff')) configureAi('off');
-    if (event.target.closest('#saveLocalAi')) configureAi('local');
-    if (event.target.closest('#saveApiAi')) configureAi('api');
-    if (event.target.closest('#deployLocalAi')) startLocalAiDeployment();
-    if (event.target.closest('#cancelLocalDeployment')) cancelLocalAiDeployment();
-    if (event.target.closest('#openOllamaDownload')) window.ph.system.openUrl(state.hardware?.platform === 'darwin' ? 'https://ollama.com/download/mac' : 'https://ollama.com/download/windows');
-    if (event.target.closest('#showDeploymentLog')) {
-      window.ph.ai.showDeploymentLog().catch((error) => toast(error.message, 'error'));
-    }
-    if (event.target.closest('#refreshHardware')) {
-      state.hardware = null;
-      state.hardwareLoading = false;
-      renderAiConfig();
-      loadHardwareProfile();
-    }
-    if (event.target.closest('#copyModelCommand')) {
-      const model = $('#localModelInput')?.value.trim() || state.hardware?.recommendation?.model || '';
-      if (!model) return toast('当前检测不建议安装本地模型；没有可复制的推荐命令', 'error');
-      await navigator.clipboard.writeText(`ollama run ${model}`);
-      toast('模型命令已复制');
-    }
-    if (event.target.closest('#clearApiKey')) {
-      cancelAiStream();
-      const saved = await window.ph.ai.configure({ clearApiKey: true, enabled: false });
-      state.data.settings.ai = saved;
-      await window.agentUI?.loadHistory?.();
-      renderAiConfig();
-      toast('API Key 已删除');
-    }
+  $('#aiConfigPanel').addEventListener('click', handleAiConfigPanelClick);
+
+  // 更新卡片的三个按钮：取消（这次先不选）/ 跳过本版本 / 更新
+  // 按 Esc 关掉卡片也算「取消」—— 也要上报一次，但别和按钮重复上报。
+  $('#updateDialog')?.addEventListener('close', () => {
+    if (updateChoiceSent) return;
+    updateChoiceSent = true;
+    window.ph.updateChoice?.('cancel');
+  });
+  $('#updateCancel')?.addEventListener('click', async () => {
+    updateChoiceSent = true;
+    $('#updateDialog')?.close();
+    await window.ph.updateChoice?.('cancel');
+  });
+  $('#updateSkip')?.addEventListener('click', async () => {
+    updateChoiceSent = true;
+    $('#updateDialog')?.close();
+    await window.ph.updateChoice?.('skip');
+    toast('已跳过这个版本；更高的新版本仍会提示', 'normal');
+  });
+  $('#updateNow')?.addEventListener('click', async () => {
+    updateChoiceSent = true;
+    $('#updateNow').disabled = true;
+    $('#updateSkip').disabled = true;
+    await window.ph.updateChoice?.('update');
   });
 
   $('#studentNameSetting').addEventListener('input', (event) => { state.data.settings.studentName = event.target.value; updateClock(); persistData(); });
@@ -2761,6 +3641,11 @@ function bindEvents() {
     if (removeId) return removeCredential(removeId);
     if (fillId) return fillCredentialOnce(fillId);
     if (connectId) return connectWithSavedCredential(connectId);
+    // 心履不再是一张"网站账号卡"（账号就是 phix 账号），所以这里也不再有
+    // data-*-xinlv 那几个钩子；心履页面用自己那份登录表单（src/xinlv-ui.js）。
+    if (event.target.closest('[data-discard-credentials]')) return discardCredentials();
+    if (event.target.closest('[data-import-shared-accounts]')) return importSharedAccounts();
+    if (event.target.closest('[data-export-shared-accounts]')) return exportSharedAccounts();
   });
   $('#credentialRiskAccepted').addEventListener('change', (event) => {
     $('#saveCredentialButton').disabled = !event.target.checked;
@@ -2773,6 +3658,11 @@ function bindEvents() {
     if (state.onboardingPending && state.route === 'today') setTimeout(() => openOnboarding(state.onboardingStep), 50);
   });
   $('#customSiteForm').addEventListener('submit', saveCustomSiteFromDialog);
+  $('#customSiteColorSwatches').addEventListener('change', (event) => {
+    const radio = event.target.closest('input[name="customSiteColorRadio"]');
+    if (!radio) return;
+    $('#customSiteColor').value = radio.value;
+  });
   $('#customWebsiteSettings').addEventListener('click', async (event) => {
     const editId = event.target.closest('[data-edit-custom-site]')?.dataset.editCustomSite;
     const removeId = event.target.closest('[data-remove-custom-site]')?.dataset.removeCustomSite;
@@ -2813,6 +3703,18 @@ function bindEvents() {
     } catch (error) { toast(`恢复失败：${error.message}`, 'error'); }
   });
   $('#showData').addEventListener('click', () => window.ph.system.showData());
+  $('#shareDataLite').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.shareDataWithLite();
+      if (result?.ok) toast(`已记录共用目录：${result.root}；重启 PH Launcher 后生效`);
+    } catch (error) { toast(`无法设置共用目录：${error.message}`, 'error'); }
+  });
+  $('#useOwnData').addEventListener('click', async () => {
+    try {
+      const result = await window.ph.system.useOwnDataFolder();
+      if (result?.ok) toast(`已恢复本应用自己的数据目录；重启后生效`);
+    } catch (error) { toast(`无法恢复数据目录：${error.message}`, 'error'); }
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
@@ -2847,7 +3749,13 @@ async function init() {
   window.schoolUI?.mount();
   window.calendarUI?.mount();
   window.mailUI?.mount();
-  window.mailUI?.onUnreadChange?.((count) => updateMailBadge(state.route === 'mail' ? 0 : count));
+  window.mailUI?.onUnreadChange?.((count) => {
+    // The dashboard card always shows the real unread total; the nav badge
+    // reads zero while the user is inside the mail page itself.
+    const cardEl = $('#unreadMailCount');
+    if (cardEl) cardEl.textContent = count == null ? '邮箱尚未同步' : `${count} 封未读`;
+    updateMailBadge(state.route === 'mail' ? 0 : (count || 0));
+  });
   $('#dictionaryResult').addEventListener('click', (event) => {
     if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
   });
@@ -2888,7 +3796,35 @@ async function init() {
     void window.agentUI?.loadHistory?.();
     navigate('today');
     void window.mailUI?.open?.();
-    if (state.data.settings.onboardingCompleted !== true) setTimeout(() => openOnboarding(), 350);
+    // 加载 phix 头像（无论是否已登录）
+    void loadAndShowAvatar();
+    // 命令行 `--ph-force-onboarding`：让引导再走一遍（只影响这一次运行，不动数据）。
+    window.ph.onForceOnboarding?.(() => {
+      state.phixStatus = null;
+      void tryPhixRestore().then((restored) => {
+        if (restored) setTimeout(() => openOnboarding(), 300);
+        else setTimeout(() => openPhixOnboarding(), 300);
+      });
+    });
+    // 发现新版本：弹卡片让用户决定（取消 / 跳过本版本 / 更新）—— 绝不自动更新。
+    window.ph.onUpdateAvailable?.((info) => showUpdateCard(info));
+    window.ph.onUpdateProgress?.((progress) => handleUpdateProgress(progress));
+    // 检查是并发的，可能在上面的监听注册之前就发现新版本了（那条 IPC 没人接就没了）。
+    // 启动时主动拉一次待办，补弹卡片。
+    void window.ph.updatePending?.()
+      .then((pending) => { if (pending && pending.version) showUpdateCard(pending); })
+      .catch(() => { /* 拿不到就算了：下次启动还会提示 */ });
+    if (state.data.settings.onboardingCompleted !== true) {
+      // 先尝试恢复 phix 会话（盘上有令牌就跳过 phix 引导）
+      const restored = await tryPhixRestore();
+      if (restored) {
+        // restore 成功，直接进原有引导
+        setTimeout(() => openOnboarding(), 350);
+      } else {
+        // 没有令牌 → 弹 phix 引导（完成后进原有引导）
+        setTimeout(() => openPhixOnboarding(), 350);
+      }
+    }
     setPlanTab('tasks');
     state.shortcutResults = await window.ph.shortcuts.register();
   } catch (error) {
@@ -2900,11 +3836,30 @@ async function init() {
     if (state.route === 'settings') renderCredentialSettings();
     if ($('#onboardingDialog')?.open) renderOnboarding();
   });
+  /** 主动重读一次账号状态。
+   *
+   *  为什么要主动读：账号存在**共用 settings.yaml** 里，云同步（phix）与另一个
+   *  程序（Pinghe Launcher Lite）都会改这个文件；改完不一定有 IPC 事件过来
+   *  （主进程那份账号表是懒读的）。同步之后调一次它，账号页/课表页才会立刻
+   *  显示"已登录"，而不是等用户下次重启——用户 2026-09-17 反馈过这个。 */
+  window.credentialsUI = {
+    async refresh() {
+      try {
+        state.credentialStatus = await window.ph.credentials.status();
+      } catch { /* 读不到就保持原样 */ }
+      if (state.route === 'settings') renderCredentialSettings();
+      return state.credentialStatus;
+    },
+  };
   window.ph.xinlv?.onStatus?.((status) => {
     state.xinlvStatus = { ...state.xinlvStatus, ...(status || {}) };
     if (state.route === 'settings') renderXinlvSettings();
   });
   window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
+  // Tray quick entries focus the existing window and ask it to jump to a page.
+  window.ph.onTrayNavigate?.((route) => {
+    if (route && (ROUTE_META[route] || ROUTE_ALIASES[route])) navigate(route);
+  });
   window.ph.shortcuts.onAction((action) => {
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
@@ -2927,7 +3882,7 @@ async function init() {
         state.aiEditing = false;
         renderAi();
       } else if (!$('#aiSetup').classList.contains('hidden')) {
-        renderAiConfig();
+        renderAiConfig(true);
       }
     }
     if (deployment.stage !== previousStage) {
@@ -2948,6 +3903,8 @@ async function init() {
     if (!message) return;
     if (event.type === 'status') state.aiStreamStatus = String(event.status || '正在生成…');
     if (event.type === 'delta') message.content += String(event.delta || '');
+    // 思考内容单独攒：它要折进「思考过程」块里，不跟正文混在一起
+    if (event.type === 'reasoning') message.reasoning = (message.reasoning || '') + String(event.delta || '');
     renderChat();
   });
   window.ph.ai.onCommand((command) => {
@@ -2971,14 +3928,37 @@ async function init() {
     if ($('#onboardingDialog')?.open) renderOnboarding();
   });
   window.ph.vocabulary?.onChanged?.((payload) => updateVocabularyBadge(payload));
+  // 主进程检测到账号会自动登录同步，完成后刷新学校页面数据。
+  window.ph.school.onSynced?.((payload) => {
+    void window.schoolUI?.refresh?.();
+    if (Array.isArray(payload?.synced) && payload.synced.length) {
+      window.setTimeout(() => { void window.schoolUI?.refresh?.(); }, 1500);
+    }
+  });
   window.ph.school.onPlanImported((schedule) => {
     state.data.schedule = schedule;
     renderSchedule(); renderDashboard();
   });
   setInterval(() => { updateClock(); refreshVocabularyBadge(); void window.mailUI?.open?.(); }, 60_000);
   setInterval(updateTimerUi, 500);
+  // Keep the home cards honest: re-project the school snapshot every minute.
+  setInterval(() => { if (state.route === 'today') void window.dashboardData?.refresh(); }, 60_000);
   document.body.dataset.initialized = 'true';
-  if (state.data) void window.startupSyncUI?.run({ enabled: state.data.settings.schoolStartupSync !== false, accounts: state.credentialStatus?.sites || {} });
+  // The splash overlay is owned by splash-ui: it waits for the real preload
+  // bars (school data, mail, page preload) before revealing the app, so no
+  // page has to show its own spinner after entry.
+  const reveal = () => {
+    // Repaint from the now-populated cache; this reads memory, not the network.
+    if (window.schoolUI?.refresh) void window.schoolUI.refresh().catch(() => {});
+    void window.dashboardData?.refresh();
+    void window.mailUI?.open?.();
+  };
+  if (window.splashUI) window.splashUI.ready(reveal);
+  else document.body.classList.add('loaded');
 }
+
+// Safety net: if init() errors out before the splash is released (e.g. corrupt
+// user data), the overlay stays forever. Force it visible after a hard cap.
+setTimeout(() => { if (!document.body.classList.contains('loaded')) document.body.classList.add('loaded'); }, 26000);
 
 document.addEventListener('DOMContentLoaded', init);

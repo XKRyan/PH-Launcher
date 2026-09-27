@@ -19,6 +19,8 @@ function harness({ siteId = 'edupage', saveError, connectError, connected = true
     ['credentialPassword', { value: 'fixture-secret' }],
     ['credentialAutoFill', { checked: true }],
     ['credentialAutoLogin', { checked: false }],
+    ['credentialAuthcode', { value: 'fixture-authcode' }],
+    ['credentialConnectStatus', { hidden: true, className: '', textContent: '' }],
     ['credentialDialog', { open: true, close() { this.open = false; } }],
   ]);
   const calls = [];
@@ -88,12 +90,34 @@ test('connection failure is reported after saving, without claiming a successful
 test('mail saves first, then hands off to the native mail client without schoolUI.connect', async () => {
   const ui = harness({ siteId: 'mail' });
   await ui.context.submitCredential({ preventDefault() {} });
-  assert.deepEqual(ui.calls, ['save', 'render', 'mail-connect']);
+  assert.deepEqual(ui.calls, ['save', 'render', 'mail-connect', 'render']);
   assert.match(ui.toasts.at(-1).message, /已登录并同步最近邮件/);
+  assert.equal(ui.nodes.credentialConnectStatus.className, 'credential-connect-status ok');
+});
+
+test('xinlv login is routed to its own API handler instead of the website credential vault', async () => {
+  const ui = harness({ siteId: 'xinlv' });
+  ui.context.saveXinlvLoginFromDialog = async () => { ui.calls.push('xinlv-login'); return true; };
+  await ui.context.submitCredential({ preventDefault() {} });
+  assert.deepEqual(ui.calls, ['xinlv-login'], 'xinlv must never write to the website credential vault');
+  assert.equal(ui.nodes.credentialPassword.value, 'fixture-secret', 'the API handler owns clearing the field');
 });
 
 test('app exposes the school account dialog and keeps automatic re-login opt-in', () => {
   assert.match(appSource, /window\.openSchoolAccount\s*=\s*openCredentialDialog/);
   assert.match(appSource, /autoLogin:\s*\$\('#credentialSiteId'\)\.value !== 'mail' && \$\('#credentialAutoLogin'\)\.checked/);
   assert.match(indexSource, /id="credentialAutoLogin" type="checkbox"\/>/);
+});
+
+// 2026-09-18 用户要求：心履**不再**出现在"设置 → 网站"的账号列表里 ——
+// 心履账号就是 phix 账号，同一个东西，单独列一张卡会让人以为要再登录一次。
+// 心履页面本身没动（侧栏还能用），它的登录表单在 src/xinlv-ui.js 里。
+test('设置 → 网站里不再有心履那张账号卡（心履 = phix 账号）', () => {
+  assert.match(appSource, /function xinlvCredentialCard\(\)/);
+  assert.match(appSource, /function xinlvCredentialCard\(\) \{\s*return '';/, '这张卡现在返回空串');
+  assert.doesNotMatch(appSource, /data-edit-xinlv/);
+  assert.doesNotMatch(appSource, /data-connect-xinlv/);
+  assert.doesNotMatch(appSource, /data-remove-xinlv/);
+  // 心履页面自己的登录表单还在（登出/登录都在那儿）
+  assert.ok(indexSource.includes('id="xinlvPage"'), '心履页面要保留');
 });

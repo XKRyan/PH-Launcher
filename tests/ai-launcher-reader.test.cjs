@@ -25,8 +25,32 @@ function schoolFixture() {
 }
 
 test('declares a small, read-only launcher tool surface', () => {
-  assert.deepEqual(AI_LAUNCHER_READ_TOOLS.map((tool) => tool.function.name), ['read_launcher_data', 'read_school_cache', 'read_school_detail']);
+  assert.deepEqual(AI_LAUNCHER_READ_TOOLS.map((tool) => tool.function.name), ['read_launcher_data', 'read_school_cache', 'read_school_detail', 'list_deadlines']);
   assert.ok(AI_LAUNCHER_READ_TOOLS.every((tool) => tool.function.parameters.additionalProperties === false));
+});
+
+test('DDL listing returns only dated tasks inside the requested window, sorted', async () => {
+  const snapshot = schoolFixture();
+  const at = (days) => new Date(Date.now() + days * 86_400_000).toISOString();
+  snapshot.managebac.tasks = [
+    { id: 'managebac:11:22', courseId: '11', course: 'Biology', title: 'Lab', dueAt: at(3), dueText: 'in three days', status: 'Pending' },
+    { id: 'managebac:11:23', courseId: '11', course: 'Biology', title: 'Essay', dueAt: at(1), dueText: 'tomorrow', status: 'Submitted' },
+    { id: 'managebac:11:24', courseId: '11', course: 'Biology', title: 'No date', dueAt: '', status: 'Pending' },
+    { id: 'managebac:11:25', courseId: '11', course: 'Biology', title: 'Far away', dueAt: at(400), status: 'Pending' },
+  ];
+  const reader = createAiLauncherReader({ getData: () => fixture(), getSchoolSnapshot: () => snapshot, readSchoolDetail: async () => ({}), getRevision: () => 1, assertAllowed: () => {} });
+  const result = await reader.execute('list_deadlines', { days: 30 });
+  assert.deepEqual(result.items.map((item) => item.title), ['Essay', 'Lab']);
+  assert.equal(result.items[0].submitted, true);
+  assert.equal(result.items[1].submitted, false);
+  assert.equal(result.pending, 1);
+  assert.equal(result.total, 2);
+  const narrow = await reader.execute('list_deadlines', { days: 2 });
+  assert.deepEqual(narrow.items.map((item) => item.title), ['Essay']);
+  const missing = createAiLauncherReader({ getData: () => fixture(), getSchoolSnapshot: () => ({}), readSchoolDetail: async () => ({}), getRevision: () => 1, assertAllowed: () => {} });
+  const empty = await missing.execute('list_deadlines', {});
+  assert.equal(empty.available, false);
+  assert.match(empty.message, /ManageBac/);
 });
 
 test('projects actual local fields, bytesafe body chunks, and never exposes secrets', async () => {

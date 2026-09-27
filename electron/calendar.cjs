@@ -80,6 +80,9 @@ function normalizeCalendarEvent(input, { idFactory = randomUUID } = {}) {
   if (repeatWeekdays.length) result.repeatWeekdays = repeatWeekdays;
   if (reminderState) result.reminderState = reminderState;
   if (attachments.length) result.attachments = attachments;
+  // Identifies the entry in the day-based `Schedule` file both launchers share,
+  // so an update or removal can be matched instead of duplicated.
+  if (Number.isSafeInteger(input.sharedScheduleId) && input.sharedScheduleId > 0) result.sharedScheduleId = input.sharedScheduleId;
   return result;
 }
 
@@ -106,6 +109,7 @@ function upsertCalendarEvent(events, input) {
     reminderState: input.reminderState === undefined ? existing.reminderState : input.reminderState,
     repeatWeekdays: input.repeatWeekdays === undefined ? existing.repeatWeekdays : input.repeatWeekdays,
     attachments: input.attachments === undefined ? existing.attachments : input.attachments,
+    sharedScheduleId: input.sharedScheduleId === undefined ? existing.sharedScheduleId : input.sharedScheduleId,
   } : input);
   const index = current.findIndex((event) => event.id === updated.id);
   if (input?.id && index < 0) throw new Error('这条日程已不存在，请关闭后重新添加');
