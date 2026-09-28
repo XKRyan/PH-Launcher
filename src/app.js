@@ -3803,9 +3803,15 @@ async function init() {
       state.phixStatus = null;
       void tryPhixRestore().then((restored) => {
         if (restored) setTimeout(() => openOnboarding(), 300);
-        else setTimeout(() => openPhixOnboarding(), 300);
+        // 没登录：走与 PHL Lite 共用的那一套账号界面（登录 / 注册 / 暂时跳过）
+        else setTimeout(() => window.AccountUI?.login({
+          firstRun: true,
+          onFinish: () => void refreshPhixAvatar(),
+        }), 300);
       });
     });
+    // 设置页里的账号卡片（同一个界面模块，PHL Lite 那边也是它画的）
+    void window.AccountUI?.card(document.getElementById('accountCard'));
     // 发现新版本：弹卡片让用户决定（取消 / 跳过本版本 / 更新）—— 绝不自动更新。
     window.ph.onUpdateAvailable?.((info) => showUpdateCard(info));
     window.ph.onUpdateProgress?.((progress) => handleUpdateProgress(progress));
@@ -3815,15 +3821,16 @@ async function init() {
       .then((pending) => { if (pending && pending.version) showUpdateCard(pending); })
       .catch(() => { /* 拿不到就算了：下次启动还会提示 */ });
     if (state.data.settings.onboardingCompleted !== true) {
-      // 先尝试恢复 phix 会话（盘上有令牌就跳过 phix 引导）
+      // 首次打开：走与微软开机流程一致的那一套
+      // （登录 → 注册 → 选"本地覆盖云端 / 云端覆盖本地" → 正在为你准备你的软件 → 原有引导）
       const restored = await tryPhixRestore();
-      if (restored) {
-        // restore 成功，直接进原有引导
-        setTimeout(() => openOnboarding(), 350);
-      } else {
-        // 没有令牌 → 弹 phix 引导（完成后进原有引导）
-        setTimeout(() => openPhixOnboarding(), 350);
-      }
+      setTimeout(() => {
+        if (restored) {
+          void window.AccountUI?.firstRun({ onFinish: () => openOnboarding() });
+        } else {
+          void window.AccountUI?.login({ firstRun: true, onFinish: () => openOnboarding() });
+        }
+      }, 350);
     }
     setPlanTab('tasks');
     state.shortcutResults = await window.ph.shortcuts.register();

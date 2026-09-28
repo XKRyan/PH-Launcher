@@ -3741,6 +3741,70 @@ async function resolvePhixServer(explicit = '') {
   return phixDefaultServer();
 }
 
+/**
+ * 「我们正在为你准备你的软件」的逐项步骤（用户 2026-09-28 要求，微软那种）。
+ *
+ * 每一步都可能失败，但**失败不挡人**：界面会把那一步标红、后面继续跑。
+ * detail 是显示在右侧的小字（"已登录 2 个"、"2026-09-22 · 6 节"），
+ * 只是给用户一个"确实在动"的反馈，不参与任何判断。
+ */
+const PREPARE_STEPS = [
+  {
+    id: 'accounts',
+    label: '账号与密码',
+    run: async () => {
+      const sites = credentialStatus().sites || {};
+      const saved = ['edupage', 'managebac', 'mail', 'xinlv'].filter((key) => Boolean(sites[key]?.saved));
+      return { ok: true, detail: saved.length ? `${saved.length} 个平台已就绪` : '暂无已保存的账号' };
+    },
+  },
+  {
+    id: 'school',
+    label: '登录学校账号',
+    run: async () => {
+      const result = await startupSchoolSync({ force: true });
+      const ok = (result?.synced || []).length;
+      const bad = (result?.failed || []).length;
+      if (ok) return { ok: true, detail: `已登录 ${ok} 个` };
+      if (bad) return { ok: false, detail: `${bad} 个需要重新登录` };
+      return { ok: true, detail: '没有需要登录的账号' };
+    },
+  },
+  {
+    id: 'timetable',
+    label: '课表',
+    run: async () => {
+      const week = schoolState.week || '';
+      const snapshot = schoolState.snapshot();
+      const lessons = (snapshot?.edupage?.lessons || []).length;
+      if (lessons) return { ok: true, detail: `${week} · ${lessons} 节` };
+      return { ok: true, detail: '等下次同步' };
+    },
+  },
+  {
+    id: 'calendar',
+    label: '日程',
+    run: async () => {
+      const events = secureStore?.data?.calendarEvents || [];
+      return { ok: true, detail: events.length ? `${events.length} 条` : '暂无日程' };
+    },
+  },
+  {
+    id: 'profile',
+    label: '个人资料',
+    run: async () => {
+      const layout = phixDataRoot();
+      let doc = null;
+      try {
+        doc = JSON.parse(require('node:fs').readFileSync(
+          require('node:path').join(layout.root, 'Profile'), 'utf8'));
+      } catch { doc = null; }
+      const name = String(doc?.display_name || '').trim();
+      return { ok: true, detail: name ? `你好，${name}` : '已就绪' };
+    },
+  },
+];
+
 function registerPhixIpc() {
   const handle = (name, handler) => ipcMain.handle(`phix:${name}`, async (event, ...args) => {
     assertMainRenderer(event);
@@ -3819,6 +3883,8 @@ function registerPhixIpc() {
   handle('sync', (input) => phixSession.sync({
     force: Boolean(input?.force),
     dryRun: Boolean(input?.dry_run),
+    // 'local' = 本地覆盖云端，'remote' = 云端覆盖本地（见 cloudsync 的 applyPreference）
+    prefer: input?.prefer === 'local' || input?.prefer === 'remote' ? input.prefer : undefined,
     objects: Array.isArray(input?.objects) && input.objects.length ? input.objects.map(String) : undefined,
   }).then((report) => ({
     report,
@@ -3829,6 +3895,19 @@ function registerPhixIpc() {
   handle('sync-preview', () => phixSession.sync({ force: true, dryRun: true })
     .then((report) => ({ report, summary: phixSessionModule.brief(report) })));
   handle('conflicts', () => ({ conflicts: (phixSession.status().state || {}).conflicts || [] }));
+  // ---- 「我们正在为你准备你的软件」里的逐项步骤（界面见 src/account-ui.js） ----
+  // 界面只负责显示进度，真正干什么由这里决定：登录学校账号、把课表/日程缓存好、
+  // 取回个人资料 —— 用户 2026-09-28 要求"同步的时候就把所有东西都缓存好"。
+  handle('prepare-plan', () => PREPARE_STEPS.map((step) => ({ id: step.id, label: step.label })));
+  handle('prepare-step', async (id) => {
+    const step = PREPARE_STEPS.find((item) => item.id === String(id || ''));
+    if (!step) return { ok: false, detail: '未知步骤' };
+    try {
+      return await step.run();
+    } catch (error) {
+      return { ok: false, detail: String(error?.message || error).slice(0, 60) };
+    }
+  });
   // 服务器换了加密公钥时才该点：清掉本机记住的公钥、重新信任一次。
   handle('trust-key', () => phixSession.trustServerKey());
   handle('devices', async () => ({ devices: await phixSession.devices() }));

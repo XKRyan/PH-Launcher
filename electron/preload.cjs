@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld('ph', {
     sync: (input) => ipcRenderer.invoke('phix:sync', input),
     syncPreview: () => ipcRenderer.invoke('phix:sync-preview'),
     conflicts: () => ipcRenderer.invoke('phix:conflicts'),
+    //: 「我们正在为你准备你的软件」的步骤清单与逐项执行（界面见 src/account-ui.js）
+    preparePlan: () => ipcRenderer.invoke('phix:prepare-plan'),
+    prepareStep: (id) => ipcRenderer.invoke('phix:prepare-step', id),
     trustKey: () => ipcRenderer.invoke('phix:trust-key'),
     devices: () => ipcRenderer.invoke('phix:devices'),
     // P3：会话列表（一次登录 = 一台设备）与注销某台 / 注销除本机外全部

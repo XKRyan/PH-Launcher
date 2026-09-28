@@ -748,7 +748,12 @@ class PhixSession {
       objects: options.objects || config.objects || cloudsync.DEFAULT_OBJECTS,
       siblingApp: 'pll',
     });
-    const report = await engine.sync({ dryRun: Boolean(options.dryRun), force: Boolean(options.force) });
+    const report = await engine.sync({
+      dryRun: Boolean(options.dryRun),
+      force: Boolean(options.force),
+      // 用户在「准备你的软件」里选的方向：local = 本地覆盖云端，remote = 云端覆盖本地
+      prefer: options.prefer,
+    });
     this.lastReport = report;
     if (report.ok) {
       saveConfig({ last_sync_at: cloudsync.nowIso() });

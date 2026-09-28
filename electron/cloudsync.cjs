@@ -1018,6 +1018,40 @@ function isBlank(value) {
   return false;
 }
 
+/**
+ * 按用户在登录时选的方向改写合并结果（与 PLL 的 `applyPreference` 逐条对应）。
+ *
+ * `prefer === 'local'` → 整份用本地；`'remote'` → 整份用云端。
+ * 两边只要有一边是空的就**原样退回合并结果**：空的一边没有"覆盖"的资格，
+ * 否则会把另一边的数据抹掉（历史上课表被清成 0 就是这么来的）。
+ */
+function applyPreference(name, prefer, local, remote, merged, conflicts) {
+  if (prefer !== 'local' && prefer !== 'remote') return [merged, conflicts];
+  const winner = prefer === 'local' ? local : remote;
+  const loser = prefer === 'local' ? remote : local;
+  if (isBlank(winner) || isBlank(loser)) return [merged, conflicts];
+  const note = prefer === 'local'
+    ? '按你在登录时选的：用本地数据覆盖 phix 账号'
+    : '按你在登录时选的：用 phix 账号的数据覆盖本地';
+  return [winner, [{
+    path: name,
+    local: briefDocument(local),
+    remote: briefDocument(remote),
+    note,
+  }]];
+}
+
+/** 冲突里给用户看的一句话摘要（与 PLL 的 `_brief_doc` 对齐）。 */
+function briefDocument(doc) {
+  try {
+    if (isBlank(doc)) return '（空）';
+    const text = JSON.stringify(doc);
+    return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+  } catch {
+    return '（无法显示）';
+  }
+}
+
 /** 标量/整体替换型值的三方合并。 */
 function mergeScalar(base, local, remote, at, conflicts) {
   if (sameValue(local, remote)) return local;
@@ -1998,10 +2032,14 @@ class SyncEngine {
   async sync(options = {}) {
     const dryRun = Boolean(options.dryRun);
     const force = Boolean(options.force);
+    // 用户在「准备你的软件」里选的方向：'local' = 本地覆盖云端，'remote' = 云端覆盖本地，
+    // 其余（含缺省）走三方合并。与 PLL 的 `prefer` 完全对应。
+    const prefer = ['local', 'remote'].includes(String(options.prefer || ''))
+      ? String(options.prefer) : 'merge';
     const report = {
       ok: true, server: this.client.server, username: this.username,
       started_at: nowIso(), objects: {}, conflicts: [],
-      skipped: null, pulled: [], pushed: [], errors: [],
+      skipped: null, pulled: [], pushed: [], errors: [], prefer,
     };
 
     // 并发护栏:对方程序在跑就别抢着写（协议规范 §6 的保守方案）
@@ -2036,7 +2074,7 @@ class SyncEngine {
       }
       let entry;
       try {
-        entry = await this._syncOne(name, remoteMap.get(name) || null, stateObjects[name] || null, dryRun);
+        entry = await this._syncOne(name, remoteMap.get(name) || null, stateObjects[name] || null, dryRun, prefer);
       } catch (error) {
         entry = { action: 'error', error: error?.message || String(error), code: error?.code || '' };
         report.errors.push(`${name}：${error?.message || String(error)}`);
@@ -2069,7 +2107,7 @@ class SyncEngine {
   }
 
   // -- 单个对象 --
-  async _syncOne(name, remoteEntry, stateEntry, dryRun) {
+  async _syncOne(name, remoteEntry, stateEntry, dryRun, prefer = 'merge') {
     const out = { action: 'noop', conflicts: [] };
     const local = this.collect(name);
     const base = this.loadSnapshot(name);
@@ -2162,6 +2200,9 @@ class SyncEngine {
     // 其余情况**一律走三方合并**。合并才是安全操作:曾经给"只有远端变了"做过直接 apply
     // 的快捷路径,结果绕过了课表"空的一周不许清空"这类护栏,实测把本地 71 张课卡清成了 0。
     let [merged, conflicts] = this.merge(name, base, local, remote);
+    // 用户在登录时选了"用本地覆盖云端 / 用云端覆盖本地"：整份取被选中的那一边
+    // （缺一边、或一边是空的会自动退回合并结果，避免把数据抹掉）。
+    [merged, conflicts] = applyPreference(name, prefer, local, remote, merged, conflicts);
     out.conflicts = conflicts;
     let mergedHash = hashDocument(merged);
     const remoteHash = hashDocument(remote);
@@ -2225,6 +2266,7 @@ class SyncEngine {
         } catch { break; }
         let more = [];
         [merged, more] = this.merge(name, base, merged, freshDoc);
+        [merged, more] = applyPreference(name, prefer, local, remote, merged, more);
         conflicts.push(...more);
         out.conflicts = conflicts;
         if (hashDocument(merged) !== appliedHash) {
