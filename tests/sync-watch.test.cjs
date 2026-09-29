@@ -78,6 +78,21 @@ test('服务端名额满了（retry_after）要等一下再挂，不能热循环
     'retry_after 是秒，要换成毫秒，并给自己留个上限');
 });
 
+test('同一时刻只跑一轮同步（定时器和长轮询会撞上）', () => {
+  // 一秒一次的本地定时器（#tick）和长轮询环路（#watchLoop）都会调 sync()，
+  // 两者会撞上（你正在改文件 + 另一台设备同时也在改）。撞上时若各跑一轮，
+  // 就有两个 SyncEngine 抢着写同一批文件和同一份 state.json —— 轻则白跑一轮，
+  // 重则把同步状态写成过期快照，下一轮于是误判"本地变了"。
+  assert.match(sessionSrc, /async #syncOnce\(options = \{\}\) \{/,
+    '真正干活的那一段要被单独拆出来，才好在外面加护栏');
+  assert.match(sessionSrc, /if \(this\.syncInFlight\) return this\.syncInFlight;/,
+    '撞上时要复用正在进行的那一轮，而不是再起一轮');
+  assert.match(sessionSrc, /this\.syncInFlight = this\.#syncOnce\(options\);/);
+  assert.match(sessionSrc, /this\.syncInFlight = null;\s*\n\s*\}/,
+    '跑完（哪怕抛了）必须放手，否则护栏会把之后所有同步都堵死');
+  assert.match(sessionSrc, /this\.syncInFlight = null;/, '构造里要初始化，别留 undefined');
+});
+
 test('状态里能看出走的是长轮询（排障用）', () => {
   assert.match(sessionSrc, /watching: !this\.stopped/);
   assert.match(sessionSrc, /watch_cursor: this\.watchCursor \|\| ''/);

@@ -328,6 +328,8 @@ class PhixSession {
     //: 长轮询的光标，与"最近一次被云端叫醒"的时间（状态页排障用）
     this.watchCursor = '';
     this.lastWatchHitAt = 0;
+    //: 正在进行的那一轮同步（单飞护栏，见 `sync()`）
+    this.syncInFlight = null;
     this.log = typeof options.log === 'function' ? options.log : () => {};
     /**
      * 同步**真正落盘之后**的回调（`dryRun` 不触发）。
@@ -753,7 +755,29 @@ class PhixSession {
   }
 
   // ---------------- 同步 ----------------
+  /**
+   * 跑一轮同步（同一时刻只有一轮）。
+   *
+   * **单飞护栏**：现在有两处会主动调它 —— 一秒一次的本地定时器（`#tick`，只在
+   * 本地文件真的变了时才同步）和长轮询环路（`#watchLoop`，云端一变就叫）。
+   * 两者**会撞上**（比如你正在改文件、另一台设备同时也在改）。撞上时若各跑一轮，
+   * 就会建出两个 `SyncEngine` 抢着写同一批文件和同一份 `state.json` —— 轻则白跑
+   * 一轮，重则把同步状态写成**过期的快照**，下一轮于是误判"本地变了"。
+   * 所以撞上时**复用**正在进行的那一轮，而不是排队 —— 排队等于把延迟叠起来，
+   * 而秒级延迟正是这条链路存在的理由。
+   */
   async sync(options = {}) {
+    this.#requireUnlocked();
+    if (this.syncInFlight) return this.syncInFlight;
+    this.syncInFlight = this.#syncOnce(options);
+    try {
+      return await this.syncInFlight;
+    } finally {
+      this.syncInFlight = null;
+    }
+  }
+
+  async #syncOnce(options = {}) {
     this.#requireUnlocked();
     const config = this.#config();
     const engine = new cloudsync.SyncEngine(this.client, this.dek, this.userId, this.username, {
