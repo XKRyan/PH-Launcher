@@ -62,6 +62,22 @@ test('长轮询失败会退避重试，不会被异常带崩', () => {
   assert.doesNotMatch(body.slice(body.indexOf('catch')), /throw /, 'catch 里不许再抛');
 });
 
+test('服务端名额满了（retry_after）要等一下再挂，不能热循环', () => {
+  // 服务端同时挂起的个数有上限（挂起占一个 waitress 线程，见 api/syncwatch.py
+  // 的 WATCH_SLOTS）。名额满了它会**立刻**回一个 changed=false + retry_after。
+  // 这个回包和"正常挂满 25 秒超时"长得一模一样，但含义相反：
+  //   超时  → 立刻再挂上（长轮询接力，这是正常节奏）
+  //   被打回 → 必须先等一会儿（否则就是拿热循环打服务器，比不挂还糟）
+  // 所以循环里必须**认 retry_after 这个信号**，光看 changed 是不够的。
+  const loop = sessionSrc.slice(sessionSrc.indexOf('async #watchLoop()'));
+  const body = loop.slice(0, loop.indexOf('\n  }') + 4);
+  assert.match(body, /retry_after/, '必须读服务端的 retry_after');
+  assert.match(body, /Number\.isFinite\(retryAfter\)/, '要挡住脏值，别把 NaN 当延时');
+  assert.match(body, /await sleep\(/, '被打回时要真的等');
+  assert.match(body, /Math\.min\(retryAfter \* 1000, SYNC_WATCH_RETRY_MS\)/,
+    'retry_after 是秒，要换成毫秒，并给自己留个上限');
+});
+
 test('状态里能看出走的是长轮询（排障用）', () => {
   assert.match(sessionSrc, /watching: !this\.stopped/);
   assert.match(sessionSrc, /watch_cursor: this\.watchCursor \|\| ''/);

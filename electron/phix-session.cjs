@@ -859,12 +859,13 @@ class PhixSession {
    * 但 `pollOnce` 那条路仍然在跑，所以功能不会因为长轮询挂了而停摆。
    */
   async #watchLoop() {
+    const sleep = (ms) => new Promise((resolve) => {
+      const t = setTimeout(resolve, ms);
+      if (typeof t.unref === 'function') t.unref();
+    });
     while (!this.stopped) {
       if (!this.client || this.dek === null) {
-        await new Promise((resolve) => {
-          const t = setTimeout(resolve, SYNC_WATCH_RETRY_MS);
-          if (typeof t.unref === 'function') t.unref();
-        });
+        await sleep(SYNC_WATCH_RETRY_MS);
         continue;
       }
       try {
@@ -876,14 +877,21 @@ class PhixSession {
           this.localSignature = this.#localSignature();
           try { this.manifestSignature = await this.#manifestSignature(); } catch { /* 下轮再说 */ }
           this.lastFullSyncAt = Date.now();
+          continue;
+        }
+        // 服务端同时挂起的个数是有上限的（挂起要占一个 waitress 线程），名额满了它
+        // 会**立刻**打回并附一个 retry_after。这种回包和"正常挂满 25 秒超时"长得
+        // 一模一样（都是 changed=false），意思却相反：超时应当**立刻**再挂上（这就是
+        // 长轮询接力），被打回则必须先等一会儿 —— 否则就是拿热循环打服务器，
+        // 比不挂还糟。所以这里只认 retry_after 这个明确信号。
+        const retryAfter = Number(result?.retry_after);
+        if (Number.isFinite(retryAfter) && retryAfter > 0) {
+          await sleep(Math.min(retryAfter * 1000, SYNC_WATCH_RETRY_MS));
         }
       } catch (error) {
         // 静默重试：离线、令牌过期、服务端重启都会走到这里
         this.log(`phix 长轮询失败（${SYNC_WATCH_RETRY_MS / 1000}s 后重试）：${error?.message || error}`);
-        await new Promise((resolve) => {
-          const t = setTimeout(resolve, SYNC_WATCH_RETRY_MS);
-          if (typeof t.unref === 'function') t.unref();
-        });
+        await sleep(SYNC_WATCH_RETRY_MS);
       }
     }
   }
