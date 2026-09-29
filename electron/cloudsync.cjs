@@ -57,6 +57,15 @@ const ACCOUNT_FALLBACK = 'default';
 const ACCOUNT_MAX_LENGTH = 60;
 const DEFAULT_TIMEOUT = 30_000;   // 毫秒（Python 侧 requests 的 timeout=30 是**秒**，移植时别照抄数字）
 const MAX_PAYLOAD = 8 * 1024 * 1024;
+/**
+ * 长轮询的两个时间常数（与服务端 api/syncwatch.py 对齐）。
+ *
+ * 服务端最多挂 25 秒就回一个 changed=false；客户端超时给 35 秒 —— 必须**比服务端长**，
+ * 否则会在服务端刚要返回时被本地掐断，变成一连串无意义的失败重连。
+ * 断线后退避 3 秒再挂下一次。
+ */
+const SYNC_WATCH_TIMEOUT_MS = 35_000;
+const SYNC_WATCH_RETRY_MS = 3_000;
 const STATE_KIND = 'phix-sync-state';
 
 /** 这些前缀/名字**永远不上云**（硬编码,不依赖配置）。 */
@@ -970,6 +979,20 @@ class PhixClient {
 
   // -- 同步 --
   manifest(token = DEFAULT_TOKEN) { return this._request('GET', '/sync/manifest', null, token); }
+
+  /**
+   * 长轮询：挂着等云端变化。
+   *
+   * `cursor` 是上一次拿到的光标（第一次传空串，服务端会立刻返回当前光标）。
+   * 服务端最多挂 `SYNC_WATCH_HOLD_MS`，之后返回 `{changed:false}`，客户端再挂一次。
+   * `changed:true` 时会顺带把清单带上，所以醒来就只差"下载真正变了的对象"。
+   */
+  watch(cursor = '', token = DEFAULT_TOKEN) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    // 超时给得比服务端挂起时间长，别让本地先掐断
+    return this._request('GET', `/sync/watch${query}`, null, token,
+                         { timeoutMs: SYNC_WATCH_TIMEOUT_MS });
+  }
 
   getObject(name, token = DEFAULT_TOKEN) { return this._request('GET', PhixClient.objectRoute(name), null, token); }
 
@@ -2348,6 +2371,8 @@ function readRunningMarker(dataDir, kind) {
 }
 
 module.exports = {
+  SYNC_WATCH_RETRY_MS,
+  SYNC_WATCH_TIMEOUT_MS,
   // 常量
   ACCOUNTS_SUBDIR,
   ACCOUNT_FALLBACK,

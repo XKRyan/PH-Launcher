@@ -37,8 +37,15 @@ const cloudsync = require('./cloudsync.cjs');
 const phixCrypto = require('./phix-crypto.cjs');
 const sharedSettings = require('./settings-yaml.cjs');
 
-/** 变更探测的轮询间隔（用户 2026-09-19：一秒一次）。 */
+/** 变更探测的轮询间隔（用户 2026-09-19：一秒一次）。
+ *
+ *  注意：这个一秒一次的定时器**只看本地文件指纹**，不打服务端 ——
+ *  云端的改动由 `#watchLoop` 的长轮询负责（用户 2026-09-28：要秒级延迟）。
+ *  以前它每秒都会请求一次 /sync/manifest，那是纯粹的浪费。 */
 const AUTO_POLL_MS = 1000;
+
+/** 长轮询断线后的重试间隔（与 cloudsync 的那个常数同一个来源）。 */
+const SYNC_WATCH_RETRY_MS = cloudsync.SYNC_WATCH_RETRY_MS || 3000;
 
 /** 老式长期令牌（兼容期）。**不是**业务请求该优先用的那串。 */
 const TOKEN_KEY = 'phix:token';
@@ -318,6 +325,9 @@ class PhixSession {
     this.lastReport = null;
     this.timer = null;
     this.stopped = true;
+    //: 长轮询的光标，与"最近一次被云端叫醒"的时间（状态页排障用）
+    this.watchCursor = '';
+    this.lastWatchHitAt = 0;
     this.log = typeof options.log === 'function' ? options.log : () => {};
     /**
      * 同步**真正落盘之后**的回调（`dryRun` 不触发）。
@@ -349,6 +359,10 @@ class PhixSession {
       // 轮询有没有在跑、最近一轮是什么时候、最近一轮完整同步是什么时候。
       auto_poll_ms: AUTO_POLL_MS,
       polling: !this.stopped && Boolean(this.timer),
+      // 长轮询：显式区分"等着被叫醒"和"每秒去问一次"（排障时一眼能看出走的哪条路）
+      watching: !this.stopped && Boolean(this.client) && this.dek !== null,
+      watch_cursor: this.watchCursor || '',
+      last_watch_hit_at: this.lastWatchHitAt ? new Date(this.lastWatchHitAt).toISOString() : '',
       last_poll_at: this.lastPollAt ? new Date(this.lastPollAt).toISOString() : '',
       last_full_sync_at: this.lastFullSyncAt ? new Date(this.lastFullSyncAt).toISOString() : '',
       sync_interval_minutes: config.sync_interval_minutes,
@@ -819,8 +833,12 @@ class PhixSession {
     this.stopped = false;
     this.localSignature = this.#localSignature();
     this.manifestSignature = '';
+    this.watchCursor = '';
     this.lastFullSyncAt = 0;
+    // 本地改动仍然靠这个一秒一次的定时器（它只看本地文件指纹，不打服务端）；
+    // 云端改动交给 #watchLoop 的长轮询（用户 2026-09-28：要秒级）。
     this.#schedule(AUTO_POLL_MS);
+    void this.#watchLoop();
   }
 
   stopAutoSync() {
@@ -828,6 +846,45 @@ class PhixSession {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+  }
+
+  /**
+   * 长轮询循环：挂着等云端变化，一变就立刻同步。
+   *
+   * 为什么不用一秒一次去问服务端：那是**每个客户端每秒一次请求**，
+   * 而且延迟最坏还是一秒。挂在这里之后，别的设备一改，这边一个 RTT 就知道。
+   *
+   * 失败不打扰用户：退避 SYNC_WATCH_RETRY_MS 再挂；离线时它会一直重试，
+   * 但 `pollOnce` 那条路仍然在跑，所以功能不会因为长轮询挂了而停摆。
+   */
+  async #watchLoop() {
+    while (!this.stopped) {
+      if (!this.client || this.dek === null) {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, SYNC_WATCH_RETRY_MS);
+          if (typeof t.unref === 'function') t.unref();
+        });
+        continue;
+      }
+      try {
+        const result = await this.client.watch(this.watchCursor);
+        this.watchCursor = String(result?.cursor || this.watchCursor || '');
+        if (result?.changed) {
+          this.lastWatchHitAt = Date.now();
+          await this.sync();
+          this.localSignature = this.#localSignature();
+          try { this.manifestSignature = await this.#manifestSignature(); } catch { /* 下轮再说 */ }
+          this.lastFullSyncAt = Date.now();
+        }
+      } catch (error) {
+        // 静默重试：离线、令牌过期、服务端重启都会走到这里
+        this.log(`phix 长轮询失败（${SYNC_WATCH_RETRY_MS / 1000}s 后重试）：${error?.message || error}`);
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, SYNC_WATCH_RETRY_MS);
+          if (typeof t.unref === 'function') t.unref();
+        });
+      }
     }
   }
 
@@ -864,7 +921,8 @@ class PhixSession {
   async #tick() {
     if (this.stopped) return;
     try {
-      await this.pollOnce();
+      // 只查本地文件指纹 + 到点兜底；云端变化交给长轮询（见 #watchLoop）。
+      await this.pollOnce({ skipRemote: true });
     } catch (error) {
       // 静默：轮询失败不打扰用户（离线、令牌过期都会走到这里），下一轮自然重试。
       this.log(`phix 自动同步失败：${error?.message || error}`);
@@ -880,7 +938,7 @@ class PhixSession {
    *   都没变 → 什么都不做（只花一次清单请求）。
    * 返回做了什么，方便测试与排障：`'local' | 'remote' | 'due' | 'none' | 'idle'`。
    */
-  async pollOnce() {
+  async pollOnce({ skipRemote = false } = {}) {
     if (!this.client || this.dek === null) return 'idle';
     this.lastPollAt = Date.now();
     const config = this.#config();
@@ -889,8 +947,9 @@ class PhixSession {
     const local = this.#localSignature();
     const localChanged = Boolean(this.localSignature) && local !== this.localSignature;
     let remoteChanged = false;
-    if (!localChanged && !due) {
-      // 一秒一次的就是这一下：只取清单，不下载任何对象。
+    if (!localChanged && !due && !skipRemote) {
+      // 兜底路径（长轮询不可用时）：取一次清单看云端有没有变。
+      // 正常运行时走不到这里 —— 云端变化由长轮询叫醒。
       const signature = await this.#manifestSignature();
       remoteChanged = Boolean(this.manifestSignature) && Boolean(signature) && signature !== this.manifestSignature;
       if (!this.manifestSignature) this.manifestSignature = signature;
