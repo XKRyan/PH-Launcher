@@ -10,6 +10,7 @@ const AI_LAUNCHER_READ_TOOLS = [
   { type: 'function', function: { name: 'read_launcher_data', description: '读取 PH Launcher 本地学习资料。按领域分页；笔记、日程或阅读的长正文可按已列出的 id 和 offset 分段查看。不会读取密码、Cookie、令牌、API Key 或完整设置。', parameters: { type: 'object', properties: { domain: { type: 'string', enum: ['overview', 'calendar', 'notes', 'tasks', 'schedule', 'focus', 'ib', 'vocabulary', 'readings', 'appearance'] }, id: { type: 'string', maxLength: 120 }, cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20 }, offset: { type: 'integer', minimum: 0, maximum: 10000000 } }, required: ['domain'], additionalProperties: false } } },
   { type: 'function', function: { name: 'read_school_cache', description: '读取当前账号已同步的 ManageBac 或 EduPage 缓存。不会登录、刷新或读取其他账号；未同步时会明确说明。', parameters: { type: 'object', properties: { source: { type: 'string', enum: ['managebac', 'edupage'] }, section: { type: 'string', enum: ['overview', 'courses', 'grades', 'tasks', 'timetable'] }, view: { type: 'string', enum: ['personal', 'class'] }, cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['source', 'section'], additionalProperties: false } } },
   { type: 'function', function: { name: 'read_school_detail', description: '读取已同步 ManageBac 课程、作业、讨论或 CAS/EE 的详情。课程和作业 id 必须先出现在当前缓存或本次讨论列表中；不会登录或访问任意网址。', parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['course', 'task', 'discussions', 'discussion', 'cas', 'ee'] }, courseId: { type: 'string', maxLength: 32 }, taskId: { type: 'string', maxLength: 32 }, discussionId: { type: 'string', maxLength: 32 } }, required: ['kind'], additionalProperties: false } } },
+  { type: 'function', function: { name: 'list_deadlines', description: '按时间顺序列出已同步 ManageBac 作业中未来数天内的 DDL（默认 14 天，最多 60 天），并标出是否已经提交。用于回答“最近有什么要交”。', parameters: { type: 'object', properties: { days: { type: 'integer', minimum: 1, maximum: 60 } }, additionalProperties: false } } },
 ];
 
 function trimUtf8(value, limit) {
@@ -87,6 +88,10 @@ function detailArgs(input) {
   if (!['course', 'task', 'discussions', 'discussion', 'cas', 'ee'].includes(args.kind)) throw new Error('学校详情类型无效');
   return { kind: args.kind, courseId: cleanId(args.courseId), taskId: cleanId(args.taskId), discussionId: cleanId(args.discussionId) };
 }
+function deadlineArgs(input) {
+  const args = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return { days: Math.max(1, Math.min(60, int(args.days, 14, 60))) };
+}
 
 function projectTask(item) { return { id: clean(item?.id, 120), title: clean(item?.title, 160), subject: clean(item?.subject || item?.course, 120), dueAt: clean(item?.dueAt, 64), dueText: clean(item?.dueText, 160), status: clean(item?.status, 80), done: item?.done === true, priority: clean(item?.priority, 20), notes: text(item?.notes, 600) }; }
 function projectLesson(item) { return { id: clean(item?.id, 120), course: clean(item?.course, 120), teacher: clean(item?.teacher || item?.teacherName, 120), date: clean(item?.date, 20), dayOfWeek: int(item?.dayOfWeek, 0, 6), start: clean(item?.start, 12), end: clean(item?.end, 12), room: clean(item?.room, 80), group: clean(item?.groupName || item?.group || item?.groupKey, 120), cancelled: item?.cancelled === true, source: clean(item?.source, 30) }; }
@@ -158,6 +163,38 @@ function createAiLauncherReader({ getData, getSchoolSnapshot, readSchoolDetail, 
     }
     return wrap({ source: 'edupage', fetchedAt: clean(cached.fetchedAt, 64), weekStart: clean(cached.weekStart, 20), view: args.view, ...paged(lessons, args, projectLesson) });
   }
+  function deadlines(snapshot, args) {
+    const cached = snapshot?.managebac;
+    if (!cached) return unavailable('ManageBac 尚未同步；请由用户先在学校页面同步后再查看 DDL。');
+    const now = Date.now();
+    const until = now + args.days * 86_400_000;
+    const items = (cached.tasks || [])
+      .map((item) => ({
+        id: clean(item?.id, 120),
+        courseId: clean(item?.courseId, 32),
+        course: clean(item?.course, 160),
+        title: clean(item?.title, 200),
+        dueAt: clean(item?.dueAt, 64),
+        dueText: clean(item?.dueText, 160),
+        status: clean(item?.status, 80),
+        score: clean(item?.score, 80),
+      }))
+      .filter((item) => {
+        const due = Date.parse(item.dueAt);
+        // Keep one day of slack for deadlines that passed in another timezone,
+        // and never invent a due date for an unparsed one.
+        return Number.isFinite(due) && due >= now - 86_400_000 && due <= until;
+      })
+      .sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
+    const submitted = (item) => /submit|graded|complete|已提交|已评/i.test(item.status || '');
+    const page = items.slice(0, 60);
+    return wrap({
+      source: 'managebac', fetchedAt: clean(cached.fetchedAt, 64), days: args.days, today: new Date(now).toISOString().slice(0, 10),
+      total: items.length, pending: items.filter((item) => !submitted(item)).length,
+      truncated: items.length > page.length,
+      items: page.map((item) => ({ ...item, submitted: submitted(item) })),
+    });
+  }
   async function detail(snapshot, args) {
     const cached = snapshot?.managebac;
     if (!cached) return unavailable('ManageBac 尚未同步；请由用户先同步后再读取详情。');
@@ -191,7 +228,7 @@ function createAiLauncherReader({ getData, getSchoolSnapshot, readSchoolDetail, 
     const sections = capped(response?.sections, (item) => text(item, 3_000), 4);
     return wrap({ fetchedAt: clean(cached.fetchedAt, 64), overview: { kind: args.kind, title: clean(response?.title, 160), sections: sections.items, sectionsTotal: sections.total, truncated: sections.truncated } });
   }
-  return { async execute(name, input) { return guarded(async () => { if (name === 'read_launcher_data') return launcher(getData(), launcherArgs(input)); if (name === 'read_school_cache') return school(getSchoolSnapshot(), schoolArgs(input)); if (name === 'read_school_detail') return detail(getSchoolSnapshot(), detailArgs(input)); throw new Error('AI 请求了未授权的启动器读取操作'); }); } };
+  return { async execute(name, input) { return guarded(async () => { if (name === 'read_launcher_data') return launcher(getData(), launcherArgs(input)); if (name === 'read_school_cache') return school(getSchoolSnapshot(), schoolArgs(input)); if (name === 'list_deadlines') return deadlines(getSchoolSnapshot(), deadlineArgs(input)); if (name === 'read_school_detail') return detail(getSchoolSnapshot(), detailArgs(input)); throw new Error('AI 请求了未授权的启动器读取操作'); }); } };
 }
 
 module.exports = { AI_LAUNCHER_READ_TOOLS, createAiLauncherReader, MAX_PAGE, MAX_OUTPUT, NOTICE };

@@ -22,6 +22,7 @@ assets/dictionary/ecdict-building-*.db
 .env
 .env.*
 !.env.example
+.phix-local.json
 ph-launcher.secure
 ph-launcher.credentials*
 ph-launcher.ai-history*

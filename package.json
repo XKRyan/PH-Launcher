@@ -1,6 +1,6 @@
 {
   "name": "ph-launcher",
-  "version": "1.0.10",
+  "version": "1.0.12",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",
@@ -17,7 +17,7 @@
     "dictionary": "node scripts/build-dictionary.cjs",
     "dictionary:prepare": "npm run dictionary:fetch && npm run dictionary",
     "test": "node -e \"require('electron')\" && node --test tests/*.test.cjs",
-    "dist": "electron-builder --win portable --x64",
+    "dist": "electron-builder --win nsis --x64",
     "dist:installer": "electron-builder --win nsis --x64",
     "dist:mac": "electron-builder --mac dmg zip pkg --universal --publish never",
     "dist:mac:preview": "electron-builder --config build/mac-preview-builder.cjs --mac dmg zip --universal --publish never",
@@ -28,7 +28,8 @@
   "devDependencies": {
     "csv-parse": "^7.0.2",
     "electron": "44.2.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "jszip": "^3.10.1"
   },
   "build": {
     "appId": "cn.phlauncher.desktop",
@@ -62,7 +63,7 @@
         }
       ],
       "target": [
-        "portable"
+        "nsis"
       ]
     },
     "mac": {
@@ -108,9 +109,6 @@
         }
       ]
     },
-    "portable": {
-      "artifactName": "PH-Launcher-${version}-Portable.${ext}"
-    },
     "pkg": {
       "installLocation": "/Applications",
       "allowAnywhere": false,
@@ -123,13 +121,23 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PH Launcher"
+      "shortcutName": "PH Launcher",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PH-Launcher-${version}-Setup.${ext}",
+      "include": "build/installer.nsh"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://phix.ing/updates/phl"
     }
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "imapflow": "1.7.7",
     "linkedom": "0.18.13",
     "mailparser": "3.9.20",
