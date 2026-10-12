@@ -240,6 +240,9 @@ contextBridge.exposeInMainWorld('ph', {
   updateChoice: (choice) => ipcRenderer.invoke('app:update-choice', choice),
   //: 启动时拉一次"还没处理的更新" —— 检查比监听注册更早时靠它补弹卡片。
   updatePending: () => ipcRenderer.invoke('app:update-pending'),
+  //: 设置 →「关于」→「检查更新」按钮：手动检查一次，**必定回一个结果**
+  //: （已是最新 / 发现新版本 / 检查失败），由界面据此显示。
+  updateCheck: () => ipcRenderer.invoke('app:update-check'),
   //: 更新进度（下载中/替换中/失败原因），供卡片显示状态。
   onUpdateProgress: (callback) => on('app:update-progress', callback),
 });

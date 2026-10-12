@@ -4459,6 +4459,12 @@ function registerIpc() {
     assertMainRenderer(event);
     return autoUpdater.getPendingUpdate();
   });
+  // 设置 →「关于」→「检查更新」按钮：手动触发一次检查。
+  // 复用启动时那套检查逻辑，但必定回一个结果（已是最新 / 发现新版本 / 检查失败）。
+  ipcMain.handle('app:update-check', (event) => {
+    assertMainRenderer(event);
+    return autoUpdater.manualCheck();
+  });
   ipcMain.handle('system:splash-state', (event) => { assertMainRenderer(event); return splashState(); });
   ipcMain.handle('system:hardware', () => getHardwareProfile());
   ipcMain.handle('system:open-url', (_event, rawUrl) => {

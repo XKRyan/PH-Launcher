@@ -899,6 +899,15 @@ body.loaded .app-shell { opacity: 1; }
 .about-card strong { font-size: 1.125rem; }
 .about-card span { color: var(--green-700); font-size: 0.8125rem; font-weight: 700; }
 .about-card p { margin: 7px 0 0; color: var(--ink-2); font-size: 0.875rem; }
+/* 「关于软件」：手动检查更新的结果行（成功/失败/进行中各一派样色） */
+.about-update-result { min-height: 1.2em; margin: 10px 0 0; color: var(--green-700); font-size: 0.875rem; }
+.about-update-result.is-error { color: var(--wine-700); }
+.about-update-result.is-checking { color: var(--ink-3); }
+/* 「关于软件」：作者信息 */
+.about-author p { margin: 6px 0 0; color: var(--ink-2); font-size: 0.9rem; line-height: 1.5; }
+.about-author a { color: var(--green-700); text-decoration: none; font-weight: 600; }
+.about-author a:hover { text-decoration: underline; }
+.about-author p:first-of-type { margin-top: 10px; }
 .disclaimer { margin-top: 17px; padding: 14px; border-left: 3px solid var(--gold-500); color: var(--ink-2); background: var(--gold-100); border-radius: 0 10px 10px 0; font-size: 0.8125rem; line-height: 1.6; }
 
 .modal, .command-palette {

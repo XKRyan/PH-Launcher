@@ -158,3 +158,56 @@ test('发布配置与 macOS 构建产出 zip（自动替换的前提）', () => 
   assert.match(buildScript, /electron-builder --mac dmg zip/);
   assert.match(buildScript, /for name in dmgs \+ zips:/);
 });
+
+// ---- 「关于软件」· 手动检查更新（设置 → 关于 →「检查更新」按钮） ----
+
+test('设置里有「关于」条目，且面板包含四个必备块', () => {
+  // 导航里有「关于」按钮，且有对应的 data-settings-panel="about" 面板。
+  assert.match(htmlSrc, /data-settings-section="about"/, '设置导航要有「关于」入口');
+  assert.match(htmlSrc, /data-settings-panel="about"/, '要有对应的设置面板');
+  const at = htmlSrc.indexOf('data-settings-panel="about"');
+  const panel = htmlSrc.slice(at);
+  // 当前版本（不硬编码，由主进程 app.getVersion() 填）
+  assert.match(panel, /id="aboutCurrentVersion"/);
+  // 手动「检查更新」按钮
+  assert.match(panel, /id="checkUpdateButton"[\s\S]{0,80}?检查更新/);
+  // 作者信息（与官网页脚一致）
+  assert.match(panel, /上海民办平和学校 · 维修社 · 用代码装点校园生活/);
+  assert.match(panel, /norine\.liu@icloud\.com \/ huaziqian40@gmail\.com/);
+  assert.match(panel, /18901712280 \/ 13675821816/);
+  assert.match(panel, /微信：Norine2010 \/ int_32_2147483647/);
+  assert.match(panel, /id="aboutBilibili"/);
+  assert.match(panel, /© 2026 phix/);
+  // 「访问官网」按钮
+  assert.match(panel, /id="visitOfficialSite"/);
+});
+
+test('手动检查必定回一个结果：失败≠已是最新版本（离线/服务器挂了要分开报）', () => {
+  assert.match(source, /async function manualCheck\(\)/, '要有手动检查函数');
+  assert.match(source, /status: 'up-to-date'/, '已是最新版本是一种明确结果');
+  assert.match(source, /status: 'failed'/, '检查失败是另一种明确结果，绝不能与已是最新混在一起');
+  // Windows / macOS 两套手动检查都必须把「服务器没回」判成 failed 而不是 up-to-date
+  assert.match(source, /manualCheckWindows\([\s\S]{0,1200}?检查失败，请稍后再试/);
+  assert.match(source, /manualCheckMac\([\s\S]{0,1200}?检查失败，请稍后再试/);
+  assert.match(source, /return \{ ok: false, status: 'failed', error: '检查失败，请稍后再试' \};/);
+  assert.match(appSrc, /检查失败，请稍后再试/, '界面上失败文案');
+  assert.match(appSrc, /已是最新版本/, '界面要有「已是最新版本」的文案');
+});
+
+test('按钮处理绝不能把失败抛出（兜底 catch + finally 恢复可点）', () => {
+  assert.match(appSrc, /async function manualUpdateCheck\(\)/);
+  const fn = appSrc.slice(appSrc.indexOf('async function manualUpdateCheck'));
+  assert.match(fn, /catch \(error\) \{/, '要有兜底 catch');
+  assert.match(fn, /finally \{[\s\S]{0,120}?button\.disabled = false/, 'finally 里必须恢复按钮可点');
+  assert.match(preloadSrc, /updateCheck: \(\) => ipcRenderer\.invoke\('app:update-check'\)/, 'preload 要暴露手动检查');
+  assert.match(mainSrc, /ipcMain\.handle\('app:update-check'/, '主进程要接住手动检查');
+});
+
+test('「关于」里的当前版本来自单一事实源（app.getVersion），不硬编码', () => {
+  // 版本号由主进程 system:version → app.getVersion() 提供；界面只是回显。
+  assert.match(mainSrc, /ipcMain\.handle\('system:version', \(\) => app\.getVersion\(\)\)/);
+  assert.match(appSrc, /state\.appVersion = appVersion;/, '界面把版本存进 state');
+  assert.match(appSrc, /\$\('#aboutCurrentVersion'\)[\s\S]{0,80}?v\$\{appVersion\}/, '当前版本显示来自 state.appVersion');
+  // 手动检查默认不动重启检查；两套检查共用同一套“跳过本版本”判定（不重置跳过记录）
+  assert.match(source, /manualCheckWindows\([\s\S]{0,900}?hooks\.getSkippedVersion/);
+});

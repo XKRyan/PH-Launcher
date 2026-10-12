@@ -72,6 +72,7 @@ const state = {
   mailUnread: 0,
   hardware: null,
   hardwareLoading: false,
+  appVersion: '',
   aiDeployment: null,
   aiEditing: false,
   aiEditConfig: null,
@@ -295,6 +296,52 @@ function handleUpdateProgress(progress) {
     hint.textContent = progress?.message || '更新已就绪。';
   }
   if (dialog && !dialog.open && stage !== 'done') dialog.showModal();
+}
+
+/**
+ * 「关于软件」→「检查更新」按钮。
+ *
+ * 复用主进程那套检查（auto-updater.cjs 的 manualCheck），它**必定回一个结果**：
+ *   · ok + status:'up-to-date' → 已是最新版本
+ *   · ok + status:'new'        → 发现新版本 vX，同时照常弹更新卡片
+ *   · ok:false / status:'failed' → 检查失败（离线、服务器挂了）—— 这是「检查失败」，
+ *                                  绝不能误报成「已是最新版本」
+ * 按钮在检查期间进忙态，完了必定恢复可点；任何失败都在这里兜住，不外抛。
+ */
+async function manualUpdateCheck() {
+  const button = $('#checkUpdateButton');
+  const resultEl = $('#aboutUpdateResult');
+  if (!button || !resultEl) return;
+  if (button.disabled) return;               // 已在检查中
+  button.disabled = true;
+  resultEl.classList.remove('is-error', 'is-checking');
+  resultEl.classList.add('is-checking');
+  resultEl.textContent = '正在检查更新…';
+  try {
+    const result = await window.ph.updateCheck?.();
+    if (!result) throw new Error('未收到检查结果');
+    if (!result.ok || result.status === 'failed') {
+      // 离线 / 服务器不可达：报「检查失败」，和「已是最新」严格分开。
+      resultEl.classList.remove('is-checking');
+      resultEl.classList.add('is-error');
+      resultEl.textContent = result.error || '检查失败，请稍后再试';
+      return;
+    }
+    if (result.status === 'new' && result.version) {
+      resultEl.classList.remove('is-checking', 'is-error');
+      resultEl.textContent = `发现新版本 v${result.version}，请在弹出的卡片中选择`;
+      showUpdateCard({ version: result.version, current: result.current || '', notes: result.notes || '' });
+      return;
+    }
+    resultEl.classList.remove('is-checking', 'is-error');
+    resultEl.textContent = '已是最新版本';
+  } catch (error) {
+    resultEl.classList.remove('is-checking');
+    resultEl.classList.add('is-error');
+    resultEl.textContent = '检查失败，请稍后再试';
+  } finally {
+    button.disabled = false;                 // 永远可以再来一次
+  }
 }
 
 
@@ -3715,6 +3762,18 @@ function bindEvents() {
       if (result?.ok) toast(`已恢复本应用自己的数据目录；重启后生效`);
     } catch (error) { toast(`无法恢复数据目录：${error.message}`, 'error'); }
   });
+  // 「关于软件」→「检查更新」：手动触发一次。绝不让检查失败从按钮里抛出；
+  // 无论成功失败都把结果写回界面，并让按钮可再次点击。
+  $('#checkUpdateButton').addEventListener('click', manualUpdateCheck);
+  $('#visitOfficialSite').addEventListener('click', () => {
+    try { void window.ph.system.openUrl('https://phix.ing/download/'); }
+    catch (error) { toast(`无法打开官网：${error.message}`, 'error'); }
+  });
+  $('#aboutBilibili').addEventListener('click', (event) => {
+    event.preventDefault();
+    try { void window.ph.system.openUrl('https://space.bilibili.com/1121702307'); }
+    catch (error) { toast(`无法打开 B站主页：${error.message}`, 'error'); }
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
@@ -3776,6 +3835,11 @@ async function init() {
     state.ibCommandCatalog = ibCommandCatalog;
     state.credentialStatus = credentialStatus;
     $('#appVersion').textContent = `Version ${appVersion}`;
+    // 「关于软件」里的当前版本：同样来自主进程 app.getVersion()（package.json），
+    // 不在这里硬编码，避免发版漏改。
+    state.appVersion = appVersion;
+    const aboutVersionEl = $('#aboutCurrentVersion');
+    if (aboutVersionEl) aboutVersionEl.textContent = `v${appVersion}`;
     const platform = state.data.meta?.platform || 'win32';
     document.body.classList.add(`platform-${platform}`);
     if (platform === 'darwin') {

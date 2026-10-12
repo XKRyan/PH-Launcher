@@ -45,6 +45,8 @@ let skipAutoCheck = false;
 let pendingUpdate = null;
 /** 'idle' | 'checking' | 'waiting-user' | 'downloading' | 'applying' | 'error' */
 let phase = 'idle';
+/** 同一个 autoUpdater 事件处理器只挂一次（启动检查与手动检查共用，避免重复监听）。 */
+let windowsArmed = false;
 
 function userAgent() {
   try {
@@ -134,9 +136,14 @@ async function fetchCheck(url) {
   }
 }
 
-async function checkWindows() {
-  phase = 'checking';
-  // 关掉自动下载与自动安装：一切等用户在卡片上点「更新」。
+/**
+ * 给 electron-updater 挂一组建模事件处理器（下载进度 / 下载完成 / 出错）。
+ * 只挂一次：启动检查与「关于」里的手动检查都要跑同一套检查，重复 `on` 会叠加监听。
+ * 关掉自动下载与自动安装：一切等用户在卡片上点「更新」。
+ */
+function armWindowsUpdater() {
+  if (windowsArmed) return;
+  windowsArmed = true;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
@@ -155,6 +162,11 @@ async function checkWindows() {
     console.error('[auto-updater]', err);
     progress('error', { message: String(err?.message || err) });
   });
+}
+
+async function checkWindows() {
+  phase = 'checking';
+  armWindowsUpdater();
 
   let info = null;
   try {
@@ -198,6 +210,88 @@ async function checkMac() {
   }
   pendingUpdate = { version: latest, macEntry: data };
   askUser(latest, shortNotes(data.release_notes));
+}
+
+// ---------------- 手动检查（设置 →「关于」→「检查更新」按钮） ----------------
+
+/**
+ * 手动点一次「检查更新」。与启动时那次自动检查走完全相同的一套检查逻辑，
+ * 但**必定给界面一个结果**，三种情况分明：
+ *   · { ok:true, status:'up-to-date' }        已是最新版本（含用户跳过过的那版）
+ *   · { ok:true, status:'new', version/notes } 发现新版本，同时照常弹卡片
+ *   · { ok:false, status:'failed', error }    检查失败（离线/服务器挂了）——绝不能
+ *                                              当成「已是最新版本」报给用户
+ *
+ * 不会重置「跳过本版本」：被跳过的版本照旧静默，界面按「已是最新」显示。
+ */
+async function manualCheck() {
+  // 已有检查在跑（启动那次还没结束，或正在下载）：别叠着再起一个。
+  if (phase === 'checking') return { ok: false, status: 'failed', error: '正在检查，请稍候…' };
+  phase = 'checking';
+  try {
+    return process.platform === 'win32'
+      ? await manualCheckWindows()
+      : await manualCheckMac();
+  } catch {
+    // 绝不让检查失败从按钮处理器里抛出：任何意外都折算成一个用户可读的失败。
+    phase = 'idle';
+    return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
+  }
+}
+
+async function manualCheckWindows() {
+  armWindowsUpdater();
+  let info = null;
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    info = result?.updateInfo || null;
+  } catch {
+    // 网络不通 / 清单拿不到 —— 这是「检查失败」，不是「没有新版本」。
+    phase = 'idle';
+    return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
+  }
+  if (!info?.version || info.version === app.getVersion()) {
+    phase = 'idle';
+    return { ok: true, status: 'up-to-date', current: app.getVersion() };
+  }
+  // 用户点过「跳过本版本」：照旧静默，不重复弹、也不清掉跳过记录。
+  if (String(hooks.getSkippedVersion() || '') === String(info.version)) {
+    phase = 'idle';
+    return { ok: true, status: 'up-to-date', current: app.getVersion() };
+  }
+  const data = await fetchCheck(WIN_CHECK_URL);
+  const notes = shortNotes(data?.release_notes);
+  pendingUpdate = { version: info.version, macEntry: null, notes };
+  askUser(info.version, notes);
+  return {
+    ok: true, status: 'new', version: info.version,
+    current: app.getVersion(), notes,
+  };
+}
+
+async function manualCheckMac() {
+  const data = await fetchCheck(MAC_CHECK_URL);
+  if (!data) {
+    // 服务器没回（离线/挂了）→ 检查失败，绝不能当成「已是最新版本」。
+    phase = 'idle';
+    return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
+  }
+  const latest = String(data.latest_version || '');
+  if (!latest || latest === app.getVersion()) {
+    phase = 'idle';
+    return { ok: true, status: 'up-to-date', current: app.getVersion() };
+  }
+  if (String(hooks.getSkippedVersion() || '') === latest) {
+    phase = 'idle';
+    return { ok: true, status: 'up-to-date', current: app.getVersion() };
+  }
+  const notes = shortNotes(data.release_notes);
+  pendingUpdate = { version: latest, macEntry: data };
+  askUser(latest, notes);
+  return {
+    ok: true, status: 'new', version: latest,
+    current: app.getVersion(), notes,
+  };
 }
 
 // ---------------- 用户在卡片上的选择 ----------------
@@ -447,5 +541,6 @@ module.exports = {
   disableAutoUpdater,
   handleUserChoice,
   getPendingUpdate,
+  manualCheck,
   getStatus: () => phase,
 };
