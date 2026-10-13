@@ -37,7 +37,18 @@ function readMarker(dataDir, kind) {
     const parsed = JSON.parse(fs.readFileSync(markerPath(dataDir, kind), 'utf8'));
     const pid = Number(parsed?.pid);
     if (!Number.isInteger(pid) || pid <= 0) return null;
-    return { pid, startedAt: String(parsed.startedAt || ''), updatedAt: String(parsed.updatedAt || parsed.startedAt || ''), kind: parsed.kind === 'pll' ? 'pll' : 'phl' };
+    // 时间戳**两种拼法都要认**：本应用写 camelCase（startedAt/updatedAt），
+    // Pinghe Launcher Lite 写 snake_case（started_at/updated_at）。
+    // 只认自己那一种的后果是**跨程序的心跳过期判定等于关掉** —— 读不到对方的时间戳，
+    // markerFresh 就按"当作仍然有效"处理，冲突只剩"PID 还活着吗"一条判据；
+    // 而 PID 一旦被系统回收给别人，就会误判成"对方正在运行"、程序打不开，
+    // 用户只能手动去删标记文件。这正是 markerFresh 注释里说要防的那件事
+    // （2026-10-12 实测确认过：两边互相读不到时间戳）。
+    const updated = parsed.updatedAt || parsed.updated_at
+      || parsed.startedAt || parsed.started_at || '';
+    const started = parsed.startedAt || parsed.started_at || '';
+    return { pid, startedAt: String(started), updatedAt: String(updated),
+             kind: parsed.kind === 'pll' ? 'pll' : 'phl' };
   } catch {
     return null;
   }
@@ -60,7 +71,14 @@ function markerFresh(marker, now = Date.now()) {
 function writeMarker(dataDir, kind, now) {
   const temporary = `${markerPath(dataDir, kind)}.tmp`;
   const stamp = now().toISOString();
-  fs.writeFileSync(temporary, `${JSON.stringify({ kind, pid: process.pid, startedAt: stamp, updatedAt: stamp })}\n`, 'utf8');
+  // **两种拼法都写**（camelCase + snake_case）：对方是 Python 那份实现，历史上只读
+  // snake_case；而已经装在用户机器上的旧版本也只会读自己那一种。两种都写上，
+  // 新旧版本互相都读得到心跳（见 readMarker 的注释）。
+  fs.writeFileSync(temporary, `${JSON.stringify({
+    kind, pid: process.pid,
+    startedAt: stamp, updatedAt: stamp,
+    started_at: stamp, updated_at: stamp,
+  })}\n`, 'utf8');
   fs.renameSync(temporary, markerPath(dataDir, kind));
 }
 

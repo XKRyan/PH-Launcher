@@ -108,6 +108,43 @@ test('touch 刷新自己的标记，不覆盖别人的标记', () => {
   assert.equal(readMarker(dir, 'phl').pid, 999998, '别人的标记保持原样');
 });
 
+test('认得 PHL Lite 写的 snake_case 标记（跨程序心跳不能失效）', () => {
+  // 两个程序写的 JSON 键名不一样：本应用 camelCase，PHL Lite（Python）snake_case。
+  // 只认自己那一种的后果是**跨程序的心跳过期判定等于关掉** —— 读不到对方的时间戳，
+  // 冲突只剩"PID 还活着吗"；而 PID 一旦被系统回收给别人，就会误判成"对方正在运行"
+  // 而打不开程序。2026-10-12 实测确认过这个失效，这里守住读法。
+  const dir = freshDir();
+  const child = liveForeignMarker(dir, 'pll');
+  // 1) 新心跳 → 按"对方在运行"处理
+  fs.writeFileSync(path.join(dir, '.pll-running'), `${JSON.stringify({
+    kind: 'pll', pid: child.pid,
+    started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  })}\n`);
+  assert.equal(readMarker(dir, 'pll').updatedAt.length > 0, true, 'snake_case 的时间戳要读得到');
+  assert.equal(acquire({ dataDir: dir, kind: 'phl' }).ok, false);
+
+  // 2) 旧心跳（对方其实早没了、PID 被回收）→ 必须放行，不能挡住启动
+  const other = freshDir();
+  const stale = liveForeignMarker(other, 'pll');
+  fs.writeFileSync(path.join(other, '.pll-running'), `${JSON.stringify({
+    kind: 'pll', pid: stale.pid,
+    started_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    updated_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  })}\n`);
+  assert.deepEqual(acquire({ dataDir: other, kind: 'phl' }), { ok: true },
+    'snake_case 的过期心跳要认出来，否则用户会被一个不存在的"对方"挡住');
+});
+
+test('自己写的标记两种拼法都带上（老版本 / 对方都读得到）', () => {
+  const dir = freshDir();
+  assert.deepEqual(acquire({ dataDir: dir, kind: 'phl' }), { ok: true });
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, '.phl-running'), 'utf8'));
+  for (const key of ['startedAt', 'updatedAt', 'started_at', 'updated_at']) {
+    assert.equal(typeof raw[key], 'string', `标记里要有 ${key}`);
+    assert.equal(raw[key].length > 0, true, `${key} 不能为空`);
+  }
+});
+
 test.after(() => {
   for (const child of children) { try { child.kill(); } catch { /* no-op */ } }
   try { fs.rmSync(temp, { recursive: true, force: true }); } catch { /* no-op */ }
