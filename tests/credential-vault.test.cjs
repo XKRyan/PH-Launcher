@@ -112,6 +112,36 @@ test('explicitly disabled autofill still allows manual fill and password-preserv
   assert.deepEqual(new CredentialVault(config).getForFill('mail', { allowDisabled: true }), { username: 'new-account', password: first.password, authcode: '' });
 });
 
+test('a freshly entered web password must not be shadowed by a stale saved auth code', (t) => {
+  // 连接时用的是 `authcode || password`（mail-client._readCredential）。
+  // 所以只要旧授权码被保留下来，它就会**压过**用户刚填的密码：
+  // 界面显示"已保存"，认证却一直拿那个已经失效的旧授权码去试 ——
+  // 学生看到的就是"设置都没问题，但就是收不到邮件"。
+  const { vault } = fixture(t);
+  const base = { siteId: 'mail', username: 'student@example.test', password: '', autoFill: true };
+
+  vault.saveCredential({ ...base, authcode: 'expired-authcode' });
+  assert.equal(vault.getForFill('mail').authcode, 'expired-authcode');
+
+  // 只填网页密码 → 旧授权码必须让位
+  vault.saveCredential({ ...base, password: 'typed-web-password' });
+  const byPassword = vault.getForFill('mail');
+  assert.equal(byPassword.password, 'typed-web-password');
+  assert.equal(byPassword.authcode, '', '旧授权码不能把新密码压掉');
+
+  // 只填新授权码 → 原密码保留（连接时授权码优先，不影响）
+  vault.saveCredential({ ...base, authcode: 'rotated-authcode' });
+  const byAuthcode = vault.getForFill('mail');
+  assert.equal(byAuthcode.authcode, 'rotated-authcode');
+  assert.equal(byAuthcode.password, 'typed-web-password');
+
+  // 两样都不填（例如只改自动填充开关）→ 两样都原样保留
+  vault.saveCredential({ ...base });
+  const untouched = vault.getForFill('mail');
+  assert.equal(untouched.authcode, 'rotated-authcode');
+  assert.equal(untouched.password, 'typed-web-password');
+});
+
 test('deleting one credential leaves other sites intact and survives reopening', (t) => {
   const { vault, config } = fixture(t);
   vault.saveCredential(first);

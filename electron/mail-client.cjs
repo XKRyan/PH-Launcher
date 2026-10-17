@@ -49,6 +49,19 @@ function classifyImapConnectionError(error) {
     .filter((value) => typeof value === 'string' || typeof value === 'number')
     .map((value) => String(value).slice(0, 2048))
     .join(' ');
+  // 服务器明确说「认证没过」就先说认证，别扯网络和设置。
+  // 网易企业邮（imap.qiye.163.com）在密码/授权码不对时返回的就是 **ERR.LOGIN.PASSERR**；
+  // 2026-10-17 拿假账号实测确认过。之前只认 Coremail 的 REQCODE / ILLEGAL.EMAIL 两个码，
+  // 于是这种情况会掉进兜底文案「请检查网络、客户端授权码及 IMAP 服务设置」——
+  // 学生照着去检查设置，设置却完全正常，等于把人引到一条查不出问题的路上。
+  if (/ERR\.LOGIN\.PASSERR/i.test(signal)) {
+    const failure = new MailClientError(
+      'AUTH_REJECTED',
+      '学校邮箱不接受这组账号和客户端授权码。最常见的原因是授权码已经失效——在网页邮箱改过密码、重新生成过授权码，或管理员重置过密码，都会让旧授权码立刻作废。请到网页邮箱“设置 → 客户端设置”重新生成一个再填入。',
+    );
+    failure.serverCode = 'ERR.LOGIN.PASSERR';
+    return failure;
+  }
   if (/ERR\.LOGIN\.REQCODE/i.test(signal)) {
     return new MailClientError(
       'AUTH_CODE_REQUIRED',
@@ -61,7 +74,34 @@ function classifyImapConnectionError(error) {
       '该邮箱账号尚未开通 IMAP 客户端服务。请在学校邮箱网页版“设置 → 客户端设置”中开启；若没有此选项，请联系学校管理员。',
     );
   }
-  return new MailClientError('IMAP_CONNECTION_FAILED', '邮箱连接失败，请检查网络、客户端授权码及 IMAP 服务设置');
+  // 连不上 / 证书不过，都**不是账号设置的问题**。以前这里也一律说“检查设置”，
+  // 把网络问题和凭据问题混成一句，学生根本没法判断该改哪一头。
+  if (/SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|DEPTH_ZERO_SELF_SIGNED_CERT|ERR_TLS_CERT_ALTNAME_INVALID|ERR_SSL_|HOSTNAME_MISMATCH/i.test(signal)) {
+    const failure = new MailClientError(
+      'TLS_FAILED',
+      '与邮箱服务器建立加密连接时校验没通过。多半是这台电脑的系统时间不对，或者网络上有个代理/防火墙在解密流量；请先把系统时间校准、关掉代理或 VPN 再试。',
+    );
+    failure.serverCode = 'TLS';
+    return failure;
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(signal)) {
+    const failure = new MailClientError(
+      'NETWORK_DNS_FAILED',
+      '找不到邮箱服务器的地址——这说明这台电脑现在连不上网，或 DNS 有问题，不是邮箱设置的问题。先确认能正常打开别的网站再试。',
+    );
+    failure.serverCode = 'DNS';
+    return failure;
+  }
+  if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EPIPE|timed?\s?out|Connection (?:closed|not available|terminated)/i.test(signal)) {
+    const failure = new MailClientError(
+      'NETWORK_UNREACHABLE',
+      '连不上邮箱服务器，是网络没通，不是账号设置的问题。请检查 Wi-Fi / 校园网，或关掉代理、VPN 再试。',
+    );
+    failure.serverCode = 'NET';
+    return failure;
+  }
+  // 实在认不出来：不猜原因，也不把责任推给“设置”。
+  return new MailClientError('IMAP_CONNECTION_FAILED', '邮箱连接失败，请稍后再试；若反复失败，请联系管理员。');
 }
 
 function utf8Size(value) {

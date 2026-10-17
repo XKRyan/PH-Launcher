@@ -2386,11 +2386,14 @@ async function saveCredentialFromDialog(event) {
   const saveButton = $('#saveCredentialButton');
   const isMailSubmit = $('#credentialSiteId')?.value === 'mail';
   if ($('#credentialSiteId')?.value === 'xinlv') return saveXinlvLoginFromDialog();
+  // 粘贴进来的授权码/密码经常带尾随空格或换行（从网页复制尤其常见），
+  // 原样存下去就会在 IMAP 认证时被判成密码错误，而用户看着输入框又“没问题”。
+  // 统一在入口 trim 一次，比在连接层偷偷改密码更可预期。
   const credential = {
     siteId: $('#credentialSiteId').value,
-    username: $('#credentialUsername').value,
-    password: $('#credentialPassword').value,
-    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '') : '',
+    username: $('#credentialUsername').value.trim(),
+    password: $('#credentialPassword').value.trim(),
+    authcode: isMailSubmit ? ($('#credentialAuthcode')?.value || '').trim() : '',
     autoFill: $('#credentialAutoFill').checked,
     autoLogin: $('#credentialSiteId').value !== 'mail' && $('#credentialAutoLogin').checked,
   };

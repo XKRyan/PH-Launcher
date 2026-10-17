@@ -553,6 +553,53 @@ test('known Coremail authorization errors are actionable without exposing server
   });
 });
 
+test('NetEase rejects a bad auth code as AUTH_REJECTED, not as a "check your settings" error', async () => {
+  // 网易企业邮（imap.qiye.163.com）密码/授权码不对时返回的正是 ERR.LOGIN.PASSERR
+  // （2026-10-17 用假账号实测确认）。以前这个码没被识别，会掉进兜底文案
+  // “请检查网络、客户端授权码及 IMAP 服务设置” —— 学生照着检查设置，设置却是对的。
+  const harness = createHarness();
+  const rejected = new Error('Command failed');
+  rejected.responseStatus = 'NO';
+  rejected.responseText = 'ERR.LOGIN.PASSERR';
+  harness.state.connectError = rejected;
+  await assert.rejects(() => harness.client.list(), (error) => {
+    assert.equal(error.code, 'AUTH_REJECTED');
+    assert.match(error.message, /授权码/);
+    assert.match(error.message, /失效|作废/);
+    // 真实原因既然知道了，就不要再把责任推给网络或设置
+    assert.doesNotMatch(error.message, /检查网络|检查.*设置/);
+    // 不泄露账号/授权码，也不把服务器原文抛给界面
+    assert.doesNotMatch(error.message, /student@|client-auth-code|ERR\.LOGIN/);
+    assert.equal(error.serverCode, 'ERR.LOGIN.PASSERR');
+    return true;
+  });
+});
+
+test('network and certificate failures never tell the user to check their mail settings', async () => {
+  const cases = [
+    ['ENOTFOUND', 'NETWORK_DNS_FAILED'],
+    ['ETIMEDOUT', 'NETWORK_UNREACHABLE'],
+    ['ECONNREFUSED', 'NETWORK_UNREACHABLE'],
+    ['SELF_SIGNED_CERT_IN_CHAIN', 'TLS_FAILED'],
+    ['CERT_HAS_EXPIRED', 'TLS_FAILED'],
+  ];
+  for (const [rawCode, expected] of cases) {
+    const harness = createHarness();
+    const networkError = new Error(`connect ${rawCode} imap.qiye.163.com`);
+    networkError.code = rawCode;
+    harness.state.connectError = networkError;
+    await assert.rejects(() => harness.client.list(), (error) => {
+      assert.equal(error.code, expected, rawCode);
+      // 这条是本次修复的核心：网络/证书问题不能叫用户去“检查设置”
+      assert.doesNotMatch(error.message, /检查.*设置/, rawCode);
+      assert.doesNotMatch(error.message, /student@|client-auth-code/, rawCode);
+      // 但要把真实方向说清楚
+      assert.match(error.message, /网络|代理|系统时间|上网/, rawCode);
+      return true;
+    });
+  }
+});
+
 test('harvestContacts scans INBOX and sent folders, dedupes and filters addresses', async () => {
   const { client, state } = createHarness({
     state: {

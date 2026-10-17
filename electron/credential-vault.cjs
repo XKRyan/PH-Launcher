@@ -260,7 +260,14 @@ class CredentialVault {
     const suppliedPassword = normalizePassword(input?.password, { required: false });
     const suppliedAuthcode = isMail ? normalizePassword(input?.authcode, { required: false }) : '';
     const password = suppliedPassword || (existing ? existing.password : '');
-    const authcode = suppliedAuthcode || (existing ? existing.authcode : '') || '';
+    // **用户这次只填了密码、没填授权码时，旧授权码必须让位。**
+    // 连接时是 `authcode || password`（mail-client._readCredential），旧授权码一旦被
+    // 保留下来就会压过刚填的密码：界面上显示"已保存"，认证却一直拿那个已经失效的
+    // 旧授权码去试 → 学生看到的现象就是"设置都没问题，但就是收不到邮件"。
+    // 语义上也很简单：**这次填了什么就用什么**。
+    const authcode = suppliedAuthcode
+      || (isMail && !suppliedPassword && existing ? existing.authcode : '')
+      || '';
     if (!password && !authcode) {
       throw new Error(isMail ? '请填写客户端授权码（推荐）或网页密码' : '密码不能为空');
     }
