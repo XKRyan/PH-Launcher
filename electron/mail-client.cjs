@@ -49,6 +49,19 @@ function classifyImapConnectionError(error) {
     .filter((value) => typeof value === 'string' || typeof value === 'number')
     .map((value) => String(value).slice(0, 2048))
     .join(' ');
+  // 服务器明确说「认证没过」就先说认证，别扯网络和设置。
+  // 网易企业邮（imap.qiye.163.com）在密码/授权码不对时返回的就是 **ERR.LOGIN.PASSERR**；
+  // 2026-10-17 拿假账号实测确认过。之前只认 Coremail 的 REQCODE / ILLEGAL.EMAIL 两个码，
+  // 于是这种情况会掉进兜底文案「请检查网络、客户端授权码及 IMAP 服务设置」——
+  // 学生照着去检查设置，设置却完全正常，等于把人引到一条查不出问题的路上。
+  if (/ERR\.LOGIN\.PASSERR/i.test(signal)) {
+    const failure = new MailClientError(
+      'AUTH_REJECTED',
+      '学校邮箱不接受这组账号和客户端授权码。最常见的原因是授权码已经失效——在网页邮箱改过密码、重新生成过授权码，或管理员重置过密码，都会让旧授权码立刻作废。请到网页邮箱“设置 → 客户端设置”重新生成一个再填入。',
+    );
+    failure.serverCode = 'ERR.LOGIN.PASSERR';
+    return failure;
+  }
   if (/ERR\.LOGIN\.REQCODE/i.test(signal)) {
     return new MailClientError(
       'AUTH_CODE_REQUIRED',
@@ -61,7 +74,34 @@ function classifyImapConnectionError(error) {
       '该邮箱账号尚未开通 IMAP 客户端服务。请在学校邮箱网页版“设置 → 客户端设置”中开启；若没有此选项，请联系学校管理员。',
     );
   }
-  return new MailClientError('IMAP_CONNECTION_FAILED', '邮箱连接失败，请检查网络、客户端授权码及 IMAP 服务设置');
+  // 连不上 / 证书不过，都**不是账号设置的问题**。以前这里也一律说“检查设置”，
+  // 把网络问题和凭据问题混成一句，学生根本没法判断该改哪一头。
+  if (/SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|DEPTH_ZERO_SELF_SIGNED_CERT|ERR_TLS_CERT_ALTNAME_INVALID|ERR_SSL_|HOSTNAME_MISMATCH/i.test(signal)) {
+    const failure = new MailClientError(
+      'TLS_FAILED',
+      '与邮箱服务器建立加密连接时校验没通过。多半是这台电脑的系统时间不对，或者网络上有个代理/防火墙在解密流量；请先把系统时间校准、关掉代理或 VPN 再试。',
+    );
+    failure.serverCode = 'TLS';
+    return failure;
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(signal)) {
+    const failure = new MailClientError(
+      'NETWORK_DNS_FAILED',
+      '找不到邮箱服务器的地址——这说明这台电脑现在连不上网，或 DNS 有问题，不是邮箱设置的问题。先确认能正常打开别的网站再试。',
+    );
+    failure.serverCode = 'DNS';
+    return failure;
+  }
+  if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EPIPE|timed?\s?out|Connection (?:closed|not available|terminated)/i.test(signal)) {
+    const failure = new MailClientError(
+      'NETWORK_UNREACHABLE',
+      '连不上邮箱服务器，是网络没通，不是账号设置的问题。请检查 Wi-Fi / 校园网，或关掉代理、VPN 再试。',
+    );
+    failure.serverCode = 'NET';
+    return failure;
+  }
+  // 实在认不出来：不猜原因，也不把责任推给“设置”。
+  return new MailClientError('IMAP_CONNECTION_FAILED', '邮箱连接失败，请稍后再试；若反复失败，请联系管理员。');
 }
 
 function utf8Size(value) {
@@ -209,10 +249,16 @@ function messageAttachments(uid, parsed) {
   return (Array.isArray(parsed.attachments) ? parsed.attachments : []).map((attachment, index) => {
     const content = Buffer.isBuffer(attachment.content) ? attachment.content : Buffer.from(attachment.content || []);
     const size = Number.isSafeInteger(attachment.size) && attachment.size >= 0 ? attachment.size : content.length;
+    const disposition = String(attachment.contentDisposition || attachment.disposition || '').toLowerCase();
     return {
       id: attachmentId(uid, index, { ...attachment, size }),
       name: cleanFilename(attachment.filename, `附件-${index + 1}`),
       size,
+      contentType: String(attachment.contentType || 'application/octet-stream').slice(0, 120),
+      // 内嵌图片靠 `cid:` 引用：把 Content-ID 一并交给渲染进程，
+      // 它才能把 `<img src="cid:…">` 换成能取到字节的自定义协议地址。
+      contentId: cleanInline(attachment.cid || '', 200).replace(/^<|>$/g, ''),
+      inline: disposition === 'inline',
       _content: content,
     };
   });
@@ -318,12 +364,16 @@ class SchoolMailClient {
       fail('CREDENTIAL_UNAVAILABLE', '无法读取邮箱凭据');
     }
     const username = typeof value?.username === 'string' ? value.username.trim().toLowerCase() : '';
+    const authcode = typeof value?.authcode === 'string' ? value.authcode.trim() : '';
     const password = typeof value?.password === 'string' ? value.password : '';
-    if (!isValidEmail(username) || !password || /[\r\n\u0000]/.test(username)) {
+    // NetEase Coremail IMAP/SMTP requires the client authcode (客户端授权码);
+    // the web password is only a fallback for tenants that still allow it.
+    const secret = authcode || password;
+    if (!isValidEmail(username) || !secret || /[\r\n\u0000]/.test(username)) {
       fail('LOGIN_REQUIRED', '请先配置有效的学校邮箱和客户端授权码');
     }
-    const key = createHash('sha256').update(username).update('\0').update(password).digest('hex');
-    return { username, password, key };
+    const key = createHash('sha256').update(username).update('\0').update(secret).digest('hex');
+    return { username, password: secret, authcode, key };
   }
 
   _closeClient(client) {
@@ -432,11 +482,11 @@ class SchoolMailClient {
     this._closeClient(client);
   }
 
-  async _withInbox(work) {
+  async _withInbox(work, { readOnly = true } = {}) {
     const context = await this._imapSession();
     let lock;
     try {
-      lock = await context.client.getMailboxLock('INBOX', { readOnly: true, description: 'PH Launcher native mail' });
+      lock = await context.client.getMailboxLock('INBOX', { readOnly, description: 'PH Launcher native mail' });
       this._assertCurrent(context);
       const result = await work(context.client, context);
       this._assertCurrent(context);
@@ -510,12 +560,15 @@ class SchoolMailClient {
     });
   }
 
-  async _parsedMessage(uid) {
+  async _parsedMessage(uid, { markSeen = false } = {}) {
     const normalizedUid = String(uid ?? '');
     if (!/^[1-9]\d{0,9}$/.test(normalizedUid)) fail('INVALID_ARGUMENT', '邮件 id 不合法');
     return this._withInbox(async (client, context) => {
       const message = await client.fetchOne(normalizedUid, {
         size: true,
+        // FLAGS must be requested explicitly; relying on unsolicited data left
+        // message.flags undefined, which skipped the server-side \Seen write.
+        flags: true,
         source: { start: 0, maxLength: MAX_RAW_MESSAGE_BYTES + 1 },
       }, { uid: true });
       if (!message || !message.source) fail('NOT_FOUND', '邮件不存在或已被移动');
@@ -531,12 +584,31 @@ class SchoolMailClient {
         fail('PARSE_FAILED', '邮件内容无法解析');
       }
       this._assertCurrent(context);
-      return { parsed: parsed || {}, context, uid: normalizedUid };
-    });
+      let markedSeen = false;
+      let markSeenError = '';
+      if (markSeen) {
+        const alreadySeen = message.flags instanceof Set && message.flags.has('\\Seen');
+        if (alreadySeen) markedSeen = true;
+        else {
+          // STORE +FLAGS is idempotent, so a failure here is reported instead of
+          // being swallowed: a silent miss is exactly why mail stayed unread on
+          // the server and in the web client.
+          try {
+            const stored = await client.messageFlagsAdd(normalizedUid, ['\\Seen'], { uid: true });
+            // ImapFlow also returns false on STORE rejection; it need not throw.
+            if (stored !== true) throw new Error('服务器未确认已读状态，请重新打开这封邮件重试');
+            markedSeen = true;
+          } catch (error) {
+            markSeenError = String(error?.message || '无法在服务器标记为已读');
+          }
+        }
+      }
+      return { parsed: parsed || {}, context, uid: normalizedUid, markedSeen, markSeenError };
+    }, { readOnly: !markSeen });
   }
 
   async read(uid) {
-    const { parsed, context, uid: normalizedUid } = await this._parsedMessage(uid);
+    const { parsed, context, uid: normalizedUid, markedSeen, markSeenError } = await this._parsedMessage(uid, { markSeen: true });
     const from = uniqueAddresses(parsed.from);
     const to = uniqueAddresses(parsed.to);
     const cc = uniqueAddresses(parsed.cc);
@@ -544,6 +616,19 @@ class SchoolMailClient {
     let text = parsed.text ? cleanBody(parsed.text) : htmlToPlainText(parsed.html);
     if (utf8Size(text) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     text = text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n');
+    // Keep the original HTML part so the renderer can show formatted mail
+    // in a sandboxed iframe; text remains the universal fallback. Strip
+    // scripts and event handlers here as defense in depth — the iframe is
+    // sandboxed anyway, but sanitized data must never carry live code.
+    let html = parsed.html ? cleanBody(parsed.html) : '';
+    if (html) {
+      html = html
+        .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+        .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/javascript\s*:/gi, '');
+    }
+    if (html && utf8Size(html) > MAX_BODY_BYTES) fail('MESSAGE_TOO_LARGE', '邮件正文超过 10 MiB 限制');
     const links = extractMailLinks(normalizedUid, parsed);
     const attachments = messageAttachments(normalizedUid, parsed);
     const contactCandidates = uniqueAddresses([from, to, cc]).filter((entry) => entry.address !== context.username);
@@ -555,9 +640,13 @@ class SchoolMailClient {
       date: safeDate(parsed.date),
       subject: cleanInline(parsed.subject || '(无主题)', 500) || '(无主题)',
       text,
+      html,
       links: links.map(({ id, label, host }) => ({ id, label, host })),
-      attachments: attachments.map(({ id, name, size }) => ({ id, name, size })),
+      attachments: attachments.map(({ id, name, size, contentType, contentId, inline }) =>
+        ({ id, name, size, contentType, contentId, inline })),
       contactCandidates,
+      markedSeen,
+      markSeenError,
     };
   }
 
@@ -595,6 +684,66 @@ class SchoolMailClient {
       .map((entry) => ({ name: entry.name, address: entry.address }));
   }
 
+  // Proactive contact harvest: scan INBOX + sent folders (message headers
+  // only, never bodies) and feed every message into the same _harvest
+  // bookkeeping the passive read-time collection uses, so deduplication,
+  // own-address and system-address filtering stay in one place.
+  async harvestContacts({ perFolder = 400, maxFolders = 4 } = {}) {
+    if (!Number.isInteger(perFolder) || perFolder < 1 || perFolder > 1000) fail('INVALID_ARGUMENT', '每文件夹收割数量无效');
+    if (!Number.isInteger(maxFolders) || maxFolders < 1 || maxFolders > 6) fail('INVALID_ARGUMENT', '收割文件夹数量无效');
+    const context = await this._imapSession();
+    this._assertCurrent(context);
+    const client = context.client;
+    // INBOX plus sent folders; Coremail names sent folders in modified UTF-7
+    // (e.g. &XfJT0ZAB- = 已发送) which imapflow decodes for us.
+    const folders = [];
+    for await (const info of client.list()) {
+      if (!info?.path) continue;
+      const specialUse = String(info.specialUse || (Array.isArray(info.specialUse) ? info.specialUse.join(' ') : ''));
+      const decodedName = String(info.name || '');
+      const isSent = specialUse.includes('Sent') || /sent|已发送/i.test(decodedName);
+      if (info.path === 'INBOX' || isSent) folders.push(info.path);
+      if (folders.length >= maxFolders) break;
+    }
+    const scanned = [];
+    for (const mailboxPath of folders) {
+      let lock;
+      try {
+        lock = await client.getMailboxLock(mailboxPath, { readOnly: true });
+        this._assertCurrent(context);
+        const uids = (await client.search({ all: true }, { uid: true })) || [];
+        const recent = uids.slice(-perFolder);
+        for (const uid of recent) {
+          const message = await client.fetchOne(uid, { envelope: true }, { uid: true });
+          const envelope = message?.envelope;
+          if (!envelope) continue;
+          const fields = [];
+          for (const key of ['from', 'to', 'cc']) {
+            const list = Array.isArray(envelope[key]) ? envelope[key] : [];
+            for (const entry of list) {
+              if (entry?.address) fields.push({ name: entry.name || '', address: entry.address });
+            }
+          }
+          this._harvest(`${mailboxPath}:${uid}`, fields, context);
+        }
+        scanned.push({ mailbox: mailboxPath, messages: recent.length });
+      } catch (error) {
+        if (error instanceof MailClientError) throw error;
+        scanned.push({ mailbox: mailboxPath, error: String(error.message || error).slice(0, 100) });
+      } finally {
+        try { lock?.release(); } catch { /* no-op */ }
+      }
+    }
+    return {
+      scanned,
+      folders: folders.length,
+      contacts: [...this._contacts.values()]
+        .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address))
+        .slice(0, 300)
+        .map((entry) => ({ name: entry.name, address: entry.address, count: entry.count })),
+    };
+  }
+
   _normalizeDraft(draft) {
     if (!draft || typeof draft !== 'object' || Array.isArray(draft)) fail('INVALID_DRAFT', '邮件草稿格式不正确');
     const recipients = dedupeRecipientFields({
@@ -621,9 +770,12 @@ class SchoolMailClient {
       if (!attachment || typeof attachment !== 'object' || attachment.path || attachment.href || attachment.url) {
         fail('INVALID_DRAFT', '附件只能使用本地已读取的字节，不能传入路径或网址');
       }
-      const original = attachment.bytes ?? attachment.content;
-      if (!Buffer.isBuffer(original) && !(original instanceof Uint8Array)) fail('INVALID_DRAFT', '附件内容必须是 Buffer 或 Uint8Array');
-      const content = Buffer.from(original);
+      const original = attachment.bytes ?? attachment.content ?? attachment.data;
+      if (!Buffer.isBuffer(original) && !(original instanceof Uint8Array) && !(original instanceof ArrayBuffer)) {
+        fail('INVALID_DRAFT', '附件内容必须是 Buffer 或 Uint8Array');
+      }
+      const content = Buffer.isBuffer(original) ? original
+        : original instanceof Uint8Array ? Buffer.from(original) : Buffer.from(new Uint8Array(original));
       totalBytes += content.length;
       if (content.length > MAX_ATTACHMENT_BYTES || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
         fail('INVALID_DRAFT', '附件总大小不能超过 20 MiB');

@@ -88,7 +88,7 @@ for (const [sourceText, expected] of [
   ['例如：Physics', 'For example: Physics']
 ]) assert.equal(translate(sourceText), expected, `missing transient translation: ${sourceText}`);
 for (const key of [
-  '密码会使用当前系统用户密钥单独加密，只会发送到对应学校以登录并读取课表或课程；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。',
+  '密码以明文保存在本机共享数据目录（当前版本未启用加密），只会发送到对应学校以登录并读取课表或课程；不会交给 AI 或写入学校数据。更换账号会清除该网站旧会话。',
   '搜索课程、教学组或老师', '输入邮箱地址', '搜索单词、释义或原句',
   '从感兴趣的内容开始。你挑选的词会保留所在原句。', '明确兴趣领域与初步选题'
 ]) assert.ok(catalog.exact[key], `missing complete-surface translation: ${key}`);

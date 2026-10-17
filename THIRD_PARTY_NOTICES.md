@@ -32,6 +32,8 @@ No Python runtime, wheel, or Python dependency from either project is bundled in
 - mailparser 3.9.20, MIT — mail parser. [Upstream](https://github.com/nodemailer/mailparser).
 - nodemailer 10.0.0, MIT-0 — SMTP client. [Upstream](https://github.com/nodemailer/nodemailer).
 - [ECDICT](https://github.com/skywind3000/ECDICT), commit `bc015ed2e24a7abef49fc6dbbb7fe32c1dadaf8b`, MIT. Its notice is in `assets/dictionary/LICENSE-ECDICT.txt`.
+- [marked](https://github.com/markedjs/marked), 12.0.2, MIT — renders AI replies (Markdown → HTML). Vendored unmodified at `src/vendor/marked.min.js`, so the app works offline. Copyright (c) 2011-2024, Christopher Jeffrey.
+- [DOMPurify](https://github.com/cure53/DOMPurify), 3.1.6, MIT or Apache-2.0 — sanitizes that HTML before it reaches `innerHTML`. Vendored unmodified at `src/vendor/purify.min.js`. Copyright Cure53 and other contributors.
 - Electron and other npm dependencies retain their own upstream terms; their resolved versions are listed in `package-lock.json`.
 
 Ollama and Qwen models are optional external downloads and are not redistributed by this repository or application package. Their own terms apply.

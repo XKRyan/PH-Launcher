@@ -1,0 +1,50 @@
+/* phix 统一账号 · 云同步面板（设置页「云同步」一节）。
+   风格与设置页其它卡片一致：米白底、绿色主色、圆角 12–16px。
+   结构由 src/phix-ui.js 生成，这里只管样式。 */
+
+#phixSettings { max-width: 780px; }
+#phixSettings .phix-box { display: flex; flex-direction: column; gap: 12px; }
+#phixSettings .phix-intro { margin: 0; color: var(--ink-3); font-size: 0.8125rem; line-height: 1.6; }
+#phixSettings .phix-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#phixSettings .phix-inline { gap: 10px; }
+#phixSettings .phix-grow { flex: 1 1 220px; min-width: 160px; }
+#phixSettings .phix-interval { width: 78px; }
+#phixSettings .phix-dim { color: var(--ink-3); font-size: 0.8125rem; }
+
+#phixSettings .phix-status-line { margin: 0; padding: 11px 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--ivory-50); font-size: 0.9375rem; }
+#phixSettings .phix-lock { color: var(--wine-700); font-size: 0.8125rem; }
+
+#phixSettings .phix-message { margin: 0; min-height: 1.2em; font-size: 0.8125rem; color: var(--green-800); }
+#phixSettings .phix-message.error { color: var(--wine-700); }
+
+#phixSettings .phix-objects { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--ivory-50); }
+#phixSettings .phix-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.8125rem; cursor: pointer; }
+
+#phixSettings .phix-warning { padding: 12px 13px; border: 1px solid rgba(139, 52, 69, 0.28); border-radius: 12px; background: var(--wine-100); font-size: 0.875rem; }
+#phixSettings .phix-recovery { padding: 12px 13px; border: 1px solid var(--gold-500); border-radius: 12px; background: var(--gold-100); font-size: 0.875rem; }
+#phixSettings .phix-code { margin: 9px 0; padding: 11px 12px; border-radius: 10px; background: #fff; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 1rem; letter-spacing: 0.06em; word-break: break-all; user-select: all; }
+
+#phixSettings .phix-more { padding: 12px 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--ivory-50); }
+#phixSettings .phix-more > summary { cursor: pointer; font-weight: 600; font-size: 0.9375rem; }
+#phixSettings .phix-more > *:not(summary) { margin-top: 10px; }
+
+#phixSettings .phix-subhead { margin: 0 0 6px; font-weight: 600; font-size: 0.875rem; }
+#phixSettings .phix-conflict, #phixSettings .phix-device { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 0.8125rem; }
+#phixSettings .phix-conflict > span:first-child { font-weight: 600; }
+
+/* 未连接时输入框等宽排布；已连接时状态行更醒目一点。 */
+#phixSettings.phix-connected .phix-status-line { border-color: rgba(31, 90, 70, 0.24); background: var(--green-50); }
+
+@media (max-width: 1180px) {
+  #phixSettings .phix-row { align-items: stretch; }
+  #phixSettings .phix-grow { flex: 1 1 100%; }
+}
+
+/* 顶栏头像 */
+.topbar-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 2px solid var(--border, #ddd); background-size: cover; background-position: center;
+  background-color: var(--ivory-100, #f5f5f5); cursor: pointer; flex-shrink: 0;
+  transition: border-color .15s;
+}
+.topbar-avatar:hover { border-color: var(--green-600, #16a34a); }

@@ -15,6 +15,10 @@ async function checkDialogs(win, outputRoot) {
   const mailFixture = `navigate('mail'); await window.mailUI.open(); const fixture={ph:{mail:{status:async()=>({saved:true}),list:async()=>({items:[]}),contacts:async()=>[]}}}; ((window)=>{${mailCode}\n})(fixture); await fixture.mailUI.open(); document.querySelector('[data-mail-compose]').click();`;
   const cases = [
     ['task', "navigate('plan'); openTaskDialog();", '#taskDialog', '.modal-head h3', '.modal-head > button', '.modal-actions button:last-child'],
+    // 更新卡片（卡片确认制）：只弹提示，用户在三个按钮里选；这里只验几何与文案。
+    // 没有 ✕ 关闭按钮 —— 出口是「取消」或按 Esc，所以 closeSelector 传 null。
+    // 排在前面：后面 vocabulary 的用例依赖计时，偶发不稳，别把这条拖下水。
+    ['update-card', "showUpdateCard({version:'1.0.11',current:'1.0.9',notes:'更新方式改为卡片确认：进入软件时弹卡片显示版本号与更新内容，可选「取消 / 跳过本版本 / 更新」——只有点「更新」才会下载安装。\\n\\n· 修复 AI 会话里思考内容有时不显示\\n· 修复工具调用线的格式'});", '#updateDialog', '.modal-head h3', null, '.modal-actions button:last-child'],
     ['focus', "navigate('plan'); openFocusSettings();", '#focusSettingsDialog', '.modal-head h3', '.modal-head > button', '.modal-actions button:last-child'],
     ['lesson', "navigate('plan'); openLessonDialog();", '#lessonDialog', '.modal-head h3', '.modal-head > button', '.modal-actions button:last-child'],
     ['website', "await openCustomSiteDialog();", '#customSiteDialog', '.modal-head h3', '.modal-head > button', '.modal-actions button:last-child'],
@@ -61,7 +65,7 @@ async function checkDialogs(win, outputRoot) {
         return {footerBottom:b?r.bottom-b.bottom:0,footerRight:b?r.right-b.right:0,footerVisible:Boolean(b&&b.top>=r.top&&b.bottom<=r.bottom)};
       })()`);
       const passed = top.font===fontSize+'px' && top.inside && top.closeSquare && top.noHorizontalOverflow
-        && (name==='command' || top.titleLeft>=19 && top.titleTop>=19 && top.closeRight>=19 && top.closeTop>=19)
+        && (['command','update-card'].includes(name) || top.titleLeft>=19 && top.titleTop>=19 && top.closeRight>=19 && top.closeTop>=19)
         && bottom.footerVisible && bottom.footerBottom>=12 && bottom.footerRight>=19;
       const report = {size,name,...top,...bottom,passed}; reports.push(report);
       if (!passed) fs.writeFileSync(path.join(output, `${size}-${name}-bottom.png`), (await win.webContents.capturePage()).toPNG());

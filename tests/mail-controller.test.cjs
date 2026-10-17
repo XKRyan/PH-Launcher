@@ -119,6 +119,27 @@ function harness(options = {}) {
   };
 }
 
+// HarvestContacts tests use a separate harness because the base mock
+// does not include the harvest method.
+
+function harvestHarness(options = {}) {
+  const calls = [];
+  const client = {
+    async harvestContacts(opts) { calls.push(opts); return options.harvestResult || { scanned: [], folders: 0, contacts: [] }; },
+    async contacts(opts) { calls.push({ _method: 'contacts', ...opts }); return options.contactsResult || []; },
+    list: async () => ({ items: [] }),
+  };
+  const controller = createMailController({
+    getClient: () => client,
+    status: () => ({ saved: true }),
+    revision: () => 'rev',
+    dialog: { showMessageBox: async () => ({ response: 0 }) },
+    getWindow: () => ({}),
+    openExternal: async () => {},
+  });
+  return { controller, calls };
+}
+
 const draft = {
   to: 'teacher@example.test',
   cc: 'helper@example.test',
@@ -302,4 +323,24 @@ test('link opening failures are sanitized and successful opening receives only t
   assert.deepEqual(success.calls.external, ['https://example.com/course']);
   assert.match(success.calls.messageDialogs[0].config.detail, /^Destination website: https:\/\/example\.com\n/);
   assert.match(success.calls.messageDialogs[0].config.detail, /does not mean the website is trustworthy/);
+});
+
+test('mail controller harvestContacts dispatches options to client', async () => {
+  const h = harvestHarness();
+  const result = await h.controller.harvestContacts({ perFolder: 200, maxFolders: 3 });
+  assert.deepEqual(result, { scanned: [], folders: 0, contacts: [] });
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.calls[0], { perFolder: 200, maxFolders: 3 });
+});
+
+test('mail controller harvestContacts defaults to empty options when none provided', async () => {
+  const h = harvestHarness();
+  await h.controller.harvestContacts();
+  assert.deepEqual(h.calls[0], {});
+});
+
+test('mail controller contacts passes limit 300', async () => {
+  const h = harvestHarness();
+  await h.controller.contacts();
+  assert.deepEqual(h.calls[0], { _method: 'contacts', limit: 300 });
 });

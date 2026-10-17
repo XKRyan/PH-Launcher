@@ -1,0 +1,140 @@
+'use strict';
+// 共用选课：settings.yaml 的 lessons 段（科目 + 教学组 + 老师）↔ 某个课表快照里的教学组标识。
+//
+// 为什么需要这一层：两个程序共用同一份"我选了哪些课"，但各自抓到的课表给教学组的
+// 标识不一样（PH Launcher 用它自己算的组标识，Pinghe Launcher Lite 写进共用文件的
+// 课表用 digest('shared:科目|组|老师')）。所以共用选课不能存成某一方的组标识，
+// 只能存"科目 + 教学组 + 老师"这种两边都认得的说法，用的时候对着当前这份课表重新解析。
+const LESSON_FIELD = /^\s+([a-z_]+):\s*(.*)$/;
+const LESSON_ITEM = /^\s*-\s*(.*)$/;
+const LESSON_SUBJECT = /^subject:\s*(.+)$/;
+
+const text = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const { parseYamlScalar } = require('./settings-yaml.cjs');
+const unquote = (value) => String(parseYamlScalar(String(value || '')) ?? '').trim();
+
+/**
+ * 解析 settings.yaml 里的 lessons 段（容错读取，坏行直接跳过）。
+ *
+ * **不能假定键的顺序**：Pinghe Launcher Lite 自己写出来的是
+ * `- subject: … / teacher: … / group: …`，而 phix 云同步落盘时是按字母序写的
+ * `- group: … / subject: … / teacher: …`。以前的实现只在遇到 `- subject:` 时才新建
+ * 一条记录，于是同步下来的那份**一条都读不出来** —— 个人课表就会显示
+ * "先选择你的教学组"，哪怕用户明明选过（2026-09-18 实测）。
+ * 现在：以 `-` 开一条新记录，键名认全，顺序随便。
+ */
+function parseEntries(source) {
+  const entries = [];
+  if (typeof source !== 'string' || !source) return entries;
+  let inside = false;
+  let pending = null;   // 当前 `-` 列表项里已经读到的键（可能还没读到 subject）
+  const flush = () => {
+    if (pending && pending.subject) entries.push(pending);
+    pending = null;
+  };
+  // CRLF 也要认：`split('\n')` 会把行尾的 `\r` 留在字符串里，
+  // 于是 `- group:` 的正则匹配不上、整段读成空的（真机上就是这么踩到的）。
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.replace(/\r$/, '');
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    if (!inside) {
+      // 只认顶层 lessons: 段，避免读到别的段落里的同名键。
+      if (/^lessons:\s*$/.test(line.trimEnd())) inside = true;
+      continue;
+    }
+    // 段落结束：缩进回到 0 的顶层键。
+    if (line.trim() && !/^\s/.test(line) && !/^\s*-/.test(line)) break;
+    const item = line.match(LESSON_ITEM);
+    if (item) {
+      flush();
+      pending = {};
+      // `- group: 'P'` 这种"列表项本身带一个键"的写法：把它也读进来。
+      // （PLL 写的是 `- subject: …`，phix 云同步写的是字母序 `- group: …`，
+      //   两种都得认。）
+      const inline = item[1].match(/^([a-z_]+):\s*(.*)$/);
+      if (inline && ['teacher', 'group', 'subject'].includes(inline[1])) {
+        pending[inline[1]] = unquote(inline[2]);
+      }
+      continue;
+    }
+    const field = line.match(LESSON_FIELD);
+    if (!field) continue;
+    const [, key, rawValue] = field;
+    if (key !== 'teacher' && key !== 'group' && key !== 'subject') continue;
+    if (!pending) pending = {};
+    pending[key] = unquote(rawValue);
+  }
+  flush();
+  return entries;
+}
+
+/**
+ * 共用选课 → 某一门课表 options 里的教学组标识。
+ * 老师优先消歧：同名科目有多个组时用老师定人；老师对不上，再退回"科目 + 组号"。
+ * group 允许写成 "A/B"（同一门课多个组）——任一命中即可。
+ */
+function resolveGroupKeys(entries, options) {
+  const list = Array.isArray(options) ? options : [];
+  const keys = new Set();
+  for (const entry of entries || []) {
+    const subject = text(entry?.subject);
+    if (!subject) continue;
+    const wanted = text(entry?.group).split(/[/,]/).map((value) => value.trim()).filter(Boolean);
+    const teacher = text(entry?.teacher);
+    const candidates = list.filter((option) => text(option.course) === subject
+      && (!wanted.length || (option.groups || []).map(text).some((value) => wanted.includes(value))));
+    const exact = teacher ? candidates.filter((option) => text(option.teacher) === teacher) : [];
+    for (const option of exact.length ? exact : candidates) keys.add(option.key);
+  }
+  return [...keys];
+}
+
+// 班会 / 国家课程 / 理科轮换课这类"全班都要上"的课：Edupage 有时给它们打组
+// （例如国家理科的 G3），有时不打。两个程序都把它们当作默认必选，
+// 否则同一个人的两份个人课表节数对不上。正则与 PHL 教学组对话框的默认勾选一致。
+const AUTO_DEFAULT = /(?:^|[^a-z])native|班会|homeroom|class\s*meeting/i;
+
+/**
+ * "没有教学组的课 + 默认必选课" —— 班会、国家课程、体育、国家理科一类。
+ * Pinghe Launcher Lite 一直按"全班必修"显示；PH Launcher 必须显示同样的课，
+ * 否则同一个人的两份个人课表节数对不上。
+ */
+function mandatoryKeys(options) {
+  const keys = [];
+  for (const option of Array.isArray(options) ? options : []) {
+    if (!option?.key) continue;
+    const groups = (option.groups || []).map((value) => String(value ?? '').trim()).filter(Boolean);
+    const label = `${option.course || ''} ${(option.groups || []).join(' ')} ${option.label || ''}`;
+    if (!groups.length || AUTO_DEFAULT.test(label)) keys.push(option.key);
+  }
+  return keys;
+}
+
+/** Missing/broken input is not a deletion; an explicit empty list is. */
+function readSelection(source) {
+  if (typeof source !== 'string') return null;
+  const header = /^lessons:[ \t]*([^\r\n]*)/m.exec(source);
+  if (!header) return null;
+  const inline = header[1].trim();
+  if (/^\[\s*\](?:\s*#.*)?$/.test(inline)) return [];
+  if (inline && !inline.startsWith('#')) return null;
+  const tail = source.slice(header.index + header[0].length);
+  const section = tail.split(/\r?\n/);
+  const body = [];
+  for (const line of section) {
+    if (line.trim() && !/^\s|^-|^#/.test(line)) break;
+    if (line.trim() && !/^\s*#/.test(line)) body.push(line);
+  }
+  // A bare lessons: is YAML null, not an intentional deletion.
+  if (!body.length) return null;
+  const entries = parseEntries(`lessons:\n${body.join('\n')}`);
+  const items = body.filter((line) => /^\s*-\s/.test(line)).length;
+  return entries.length && entries.length === items ? entries : null;
+}
+
+function selectionKeys(source, options) {
+  const entries = readSelection(source);
+  return entries === null ? null : resolveGroupKeys(entries, options);
+}
+
+module.exports = { mandatoryKeys, parseEntries, resolveGroupKeys, readSelection, selectionKeys };

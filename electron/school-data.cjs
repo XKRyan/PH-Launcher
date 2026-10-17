@@ -6,12 +6,15 @@
 // See docs/school-integration.md for sources and integration changes.
 const { parseHTML } = require('linkedom');
 const { createHash } = require('node:crypto');
+const { buildMultipart, formEncode } = require('./multipart.cjs');
 
 const ORIGINS = Object.freeze({
   managebac: 'https://shph.managebac.cn',
   edupage: 'https://pingheschool.edupage.org',
 });
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
+const MAX_SUBMIT_BYTES = 24 * 1024 * 1024;
+const MAX_REPLY_BYTES = 12_000;
 const clean = (value, max = 200) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const digest = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 20);
 const validDate = (value) => { const time = Date.parse(`${value}T12:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value; };
@@ -23,15 +26,50 @@ class SchoolDataError extends Error {
   constructor(code, message) { super(message); this.name = 'SchoolDataError'; this.code = code; }
 }
 function fail(code, message) { throw new SchoolDataError(code, message); }
+
+// Every write body is checked here, not only at the call site: a redirected or
+// rebuilt request still has to look like exactly one supported submission.
+const REPLY_FIELDS = ['reply[body]', 'reply[notify_via_email]', 'reply[private]', 'commit'];
+function assertWriteBody(site, url, body, contentType) {
+  const type = String(contentType || '').toLowerCase();
+  if (site === 'edupage') return; // request() keeps its own strict key/value check
+  if (url.endsWith('/replies')) {
+    if (typeof body !== 'string' || !type.startsWith('application/x-www-form-urlencoded')) fail('WRITE_NOT_ALLOWED', '讨论回复只能使用表单编码提交');
+    const form = new URLSearchParams(body);
+    if ([...form.keys()].length !== REPLY_FIELDS.length || REPLY_FIELDS.some((key) => form.getAll(key).length !== 1)) fail('WRITE_NOT_ALLOWED', '讨论回复只允许提交正文与提交动作');
+    if (form.get('commit') !== 'Comment' || !['0', '1'].includes(form.get('reply[private]')) || form.get('reply[notify_via_email]') !== '0') fail('WRITE_NOT_ALLOWED', '讨论回复的提交动作无效');
+    const reply = form.get('reply[body]');
+    if (!reply || Buffer.byteLength(reply, 'utf8') > MAX_REPLY_BYTES) fail('WRITE_NOT_ALLOWED', '讨论回复的正文长度无效');
+    return;
+  }
+  if (!Buffer.isBuffer(body) || !type.startsWith('multipart/form-data; boundary=')) fail('WRITE_NOT_ALLOWED', '作业上传必须使用 multipart 表单');
+}
+function escapeHtmlText(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 function readUrl(site, raw, method = 'GET') {
   let url;
   try { url = new URL(raw, ORIGINS[site]); } catch { fail('URL_NOT_ALLOWED', '学校数据地址无效'); }
   if (!ORIGINS[site] || url.origin !== ORIGINS[site] || url.username || url.password || url.hash) fail('URL_NOT_ALLOWED', '只允许读取学校官方网站');
   const path = url.pathname;
   const params = url.searchParams;
+  // Two writes are supported and nothing else: uploading a file to a task's
+  // dropbox, and posting a reply inside one discussion. Both are anchored to the
+  // numeric class id, so a page cannot redirect a submission to another class.
+  if (site === 'managebac' && method === 'POST') {
+    if (/^\/student\/classes\/\d+\/(?:core_tasks\/\d+\/)?dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
+    if (/^\/student\/classes\/\d+\/discussions\/\d+\/replies$/.test(path) && !url.search) return url.href;
+  }
   if (site === 'managebac' && method === 'GET') {
+    if (path === '/student' || path === '/student/') return url.href;
+    if (path === '/student/notifications' && !url.search) return url.href;
     if (path === '/student/classes/my' && [...params.keys()].every((key) => key === 'page') && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page')))) return url.href;
+    // 不带参数＝页面默认视图（通知/待办卡片读的就是它）；带参数只允许三个视图。
+    if (path === '/student/tasks_and_deadlines'
+      && ([...params.keys()].length === 0
+        || ([...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
+    if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
     if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
     if (['/student/ib/activity/cas', '/student/ib/pbl/778'].includes(path) && !url.search) return url.href;
@@ -67,6 +105,163 @@ function htmlDocument(html) {
   // The parser is inert: no network, scripts, styles or event handlers execute.
   for (const node of document.querySelectorAll('script,style,noscript,template')) node.remove();
   return document;
+}
+function parseCsrfToken(html) {
+  const doc = htmlDocument(html);
+  const meta = doc.querySelector('meta[name="csrf-token"]');
+  const fromMeta = clean(meta?.getAttribute('content'), 400);
+  if (fromMeta) return fromMeta;
+  return clean(doc.querySelector('input[name="authenticity_token"]')?.getAttribute('value'), 400);
+}
+// Rails dropbox uploads must reproduce the page's own form: routing only accepts
+// PATCH (hidden _method), and the file field name is server-generated.
+function parseDropboxUploadForm(html) {
+  const doc = htmlDocument(html);
+  for (const form of doc.querySelectorAll('form')) {
+    const action = clean(form.getAttribute('action'), 400);
+    if (String(form.getAttribute('method') || 'get').toLowerCase() !== 'post' || !/dropbox/i.test(action)) continue;
+    const input = form.querySelector('input[type="file"]');
+    const field = clean(input?.getAttribute('name'), 200);
+    if (!field) continue;
+    const fields = {};
+    for (const hidden of form.querySelectorAll('input[type="hidden"]')) {
+      const name = clean(hidden.getAttribute('name'), 200);
+      if (name && !Object.hasOwn(fields, name)) fields[name] = clean(hidden.getAttribute('value'), 2000);
+    }
+    const submit = form.querySelector('input[type="submit"], button[name]');
+    const submitName = clean(submit?.getAttribute('name'), 200);
+    if (submitName && !Object.hasOwn(fields, submitName)) fields[submitName] = clean(submit.getAttribute('value'), 2000);
+    const token = fields.authenticity_token || parseCsrfToken(html);
+    if (token) fields.authenticity_token = token;
+    return { field, action, fields, token };
+  }
+  return null;
+}
+// ---------------------------------------------------------------- 通知 / 待办
+// 与网页端（webapp_mb_stream.py 的 fetch_notifications / parse_deadline_rows）
+// **同一套口径**：ManageBac 的「通知」正文由独立服务（mnn-hub）下发，页面里只有
+// 一个带 `data-count` 的触发器 —— 所以：
+//   * `unread_count` 从 `/student` 上那个触发器**如实读**（读不到就是 null，不编）；
+//   * `notifications` 用 `/student/tasks_and_deadlines` 上真实的 `.f-task-tile` 待办；
+//   * 通知中心给一个直达链接，不假装读过正文。
+const MB_MONTHS_LOWER = Object.fromEntries(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+  .map((name, index) => [name, index + 1]));
+
+/** `Sep 20, 11:55 PM` → `2026-09-20 23:55`；解析不出来回空串（界面显示原文）。 */
+function parseDueText(value, reference = new Date()) {
+  const raw = clean(String(value || ''), 80);
+  if (!raw) return '';
+  const match = raw.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?(?:\s*,?\s*(\d{1,2}):(\d{2})\s*(AM|PM)?)?/i);
+  if (!match) return '';
+  const month = MB_MONTHS_LOWER[match[1].slice(0, 3).toLowerCase()];
+  const day = Number(match[2]);
+  if (!month || !day) return '';
+  let hour = match[4] ? Number(match[4]) % 12 : 23;
+  const minute = match[5] ? Number(match[5]) : 59;
+  if (match[6] && match[6].toUpperCase() === 'PM') hour += 12;
+  const year = match[3] ? Number(match[3]) : reference.getFullYear();
+  let date = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (Number.isNaN(date.getTime())) return '';
+  // 页面不给年份：算出来已经过去 180 天以上就当明年（学期截止日期总在前方）。
+  if (!match[3] && (reference.getTime() - date.getTime()) > 180 * 86400000) {
+    date = new Date(year + 1, month - 1, day, hour, minute, 0, 0);
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** `/student` 上那个通知触发器：未读数（权威）、hub、命名空间、通知中心链接。 */
+function parseNotificationMeta(html) {
+  const doc = htmlDocument(html);
+  const el = doc.querySelector('.js-messages-and-notifications-trigger')
+    || doc.querySelector('[data-mnn-hub-endpoint]') || doc.querySelector('[data-count]');
+  const out = { unreadCount: null, hub: '', namespace: '', url: `${ORIGINS.managebac}/student/notifications` };
+  if (el) {
+    const count = Number(String(el.getAttribute('data-count') || '').trim());
+    out.unreadCount = Number.isInteger(count) && count >= 0 ? count : null;
+    out.hub = clean(el.getAttribute('data-mnn-hub-endpoint'), 200);
+    out.namespace = clean(el.getAttribute('data-namespace'), 40);
+  }
+  const anchor = doc.querySelector('a[href*="/student/notifications"]');
+  const href = anchor ? clean(anchor.getAttribute('href'), 400) : '';
+  if (href) {
+    try {
+      const url = new URL(href, ORIGINS.managebac);
+      if (url.origin === ORIGINS.managebac) out.url = url.href;
+    } catch { /* 用默认链接 */ }
+  }
+  return out;
+}
+
+/** `/student/tasks_and_deadlines` 上的待办条目（照真实 `.f-task-tile` 结构解析）。 */
+function parseDeadlineTiles(html, { reference = new Date() } = {}) {
+  const doc = htmlDocument(html);
+  const tiles = doc.querySelectorAll('.f-task-tile').length
+    ? doc.querySelectorAll('.f-task-tile') : doc.querySelectorAll('.js-tasks .f-tile');
+  const rows = [];
+  for (const tile of tiles) {
+    const titleEl = tile.querySelector('.f-tile__title-link') || tile.querySelector('.f-tile__title');
+    const title = clean(titleEl?.textContent, 200);
+    if (!title) continue;
+    const href = clean(titleEl?.getAttribute('href'), 400);
+    let link = '';
+    let classId = '';
+    try {
+      const url = new URL(href, ORIGINS.managebac);
+      if (url.origin === ORIGINS.managebac && !url.username && !url.password) {
+        link = url.href;
+        classId = (url.pathname.match(/\/classes\/(\d+)/) || [])[1] || '';
+      }
+    } catch { /* 没有链接也能显示 */ }
+    const desc = tile.querySelector('.f-tile__description');
+    let course = '';
+    if (desc) {
+      for (const anchor of desc.querySelectorAll('a[href*="/classes/"]')) {
+        if (/\/classes\/\d+\/?$/.test(String(anchor.getAttribute('href') || ''))) {
+          course = clean(anchor.textContent, 200);
+          if (!classId) classId = (String(anchor.getAttribute('href')).match(/\/classes\/(\d+)/) || [])[1] || '';
+          break;
+        }
+      }
+    }
+    const dueText = desc ? clean(desc.querySelector('span')?.textContent, 80) : '';
+    const labels = [...tile.querySelectorAll('.badge .badge-label')].map((badge) => clean(badge.textContent, 60)).filter(Boolean);
+    const statusEl = tile.querySelector('.badge[data-bs-title]');
+    const status = clean(statusEl?.textContent, 60) || labels[labels.length - 1] || '';
+    const due = parseDueText(dueText, reference);
+    rows.push({
+      id: createHash('sha256').update(`${title}|${link}|${dueText}`).digest('hex').slice(0, 20),
+      type: 'assignment',
+      title,
+      content: labels.join(' · '),
+      course,
+      classId,
+      date: due || dueText,
+      due: due || dueText,
+      dueText,
+      status,
+      score: '',
+      link,
+      read: null,
+      author: '',
+    });
+  }
+  return rows;
+}
+
+function parseDropboxLinks(html, courseId, taskId) {  const doc = htmlDocument(html);
+  const found = [];
+  for (const link of doc.querySelectorAll('a[href]')) {
+    const href = String(link.getAttribute('href') || '');
+    if (!href.includes(String(taskId)) || !/dropbox/i.test(href)) continue;
+    let url;
+    try { url = new URL(href, ORIGINS.managebac); } catch { continue; }
+    if (url.origin !== ORIGINS.managebac || url.username || url.password || url.search || url.hash) continue;
+    if (!new RegExp(`^/student/classes/${courseId}/`).test(url.pathname)) continue;
+    if (!/^\/student\/classes\/\d+\/(?:core_tasks\/\d+\/)?dropbox(?:\/[a-z_]+)*$/.test(url.pathname)) continue;
+    if (!found.includes(url.pathname)) found.push(url.pathname);
+  }
+  return found.slice(0, 3);
 }
 
 function parseManageBacCourses(html) {
@@ -113,10 +308,39 @@ function exactDueDate(node) {
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return '';
 }
-function parseManageBacTasks(html, course = {}) {
+function parseManageBacTasks(html, course = {}, { reference = new Date() } = {}) {
   const doc = htmlDocument(html);
   const tasks = new Map();
   const cards = doc.querySelectorAll('.fusion-card-item.short-assignment, [data-task-id]');
+  // Hello! Pinghe mechanism: the date badge gives month/day, the due-date
+  // line gives the time, and the past-due badge picks the year direction.
+  // This resolves a concrete date for nearly every card, which is what the
+  // 14-day filter needs to actually work.
+  const inferDue = (card, pastDue, dueText) => {
+    const exact = exactDueDate(card);
+    if (exact) return exact;
+    const monthTxt = text(card, '.date-badge .month', 12) || text(card, '.date-badge', 12);
+    const dayTxt = text(card, '.date-badge .day', 4) || '';
+    const month = MB_MONTHS[String(monthTxt).slice(0, 3).toUpperCase()];
+    const day = /^\d+$/.test(String(dayTxt)) ? parseInt(dayTxt, 10) : NaN;
+    if (!month || !Number.isInteger(day)) return '';
+    const timeMatch = String(dueText || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    let hour = timeMatch ? parseInt(timeMatch[1], 10) % 12 : 23;
+    const minute = timeMatch ? parseInt(timeMatch[2], 10) : 59;
+    if (timeMatch && timeMatch[3].toUpperCase() === 'PM') hour += 12;
+    const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+    const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+      .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+      .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+    if (!candidates.length) return '';
+    const sorted = candidates.sort((a, b) => a - b);
+    if (pastDue) {
+      const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+      return (older.length ? older[older.length - 1] : sorted[sorted.length - 1]).toISOString();
+    }
+    const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+    return (newer.length ? newer[0] : sorted[sorted.length - 1]).toISOString();
+  };
   for (const card of cards) {
     const link = card.querySelector('.title a[href], h3 a[href], h4 a[href], a[href*="/core_tasks/"]');
     const url = safeSourceUrl('managebac', link?.getAttribute('href'));
@@ -125,12 +349,14 @@ function parseManageBacTasks(html, course = {}) {
     const title = text(link, null, 200);
     if (!title) continue;
     const id = `managebac:${ids[1]}:${ids[2]}`;
+    const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160);
+    const pastDue = Boolean(card.querySelector('.past-due'));
     tasks.set(id, {
       id, title, courseId: ids[1], course: clean(course.name, 160), url,
-      dueText: text(card, '.due-date', 160) || text(card, '.date-badge', 160),
-      dueAt: exactDueDate(card), status: text(card, '.badge-label', 80),
+      dueText,
+      dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge-label', 80),
       score: text(card, '.assessment.task-score', 80),
-      pastDue: Boolean(card.querySelector('.past-due')),
+      pastDue,
     });
   }
   return { tasks: [...tasks.values()].slice(0, 500), recognized: cards.length > 0 || /No (?:tasks|assignments|records)|暂无作业/i.test(doc.documentElement?.textContent || '') };
@@ -177,6 +403,77 @@ function discussionAttachments(node, courseId, discussionId, limit = 8) {
   }
   return [...items.values()].slice(0, limit);
 }
+// Tasks & Deadlines page is a plain-text flow: each due line ("Sep 12, 11:59 PM")
+// follows its title, and the following lines carry the course name and status.
+// The page has no year information; the year is inferred from the reference date
+// (upcoming: earliest year >= today; other views: latest year <= today) and the
+// raw due text is always preserved so users can verify against the site.
+const MB_MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+const DDL_DUE_LINE = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2}),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
+const DDL_STATUS_LINE = /^(Pending|Submitted|Late|Missing|Overdue|Not Submitted|Not Assessed Yet|Complete|Completed|Returned|Excused)$/i;
+const DDL_PSEUDO_TITLE = /^(?:Upcoming|Past|Overdue|Show More|Guides|Privacy)\b|^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),/i;
+
+function parseDueLineValue(line, reference, category) {
+  const match = String(line).trim().match(DDL_DUE_LINE);
+  if (!match) return null;
+  const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+  const day = parseInt(match[2], 10);
+  let hour = parseInt(match[3], 10) % 12;
+  const minute = parseInt(match[4], 10);
+  if (match[5].toUpperCase() === 'PM') hour += 12;
+  const year = reference.getFullYear();
+  let dt = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (dt.getDate() !== day || dt.getMonth() !== month - 1) return null;
+  const refStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+  const dtStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime();
+  if (category === 'upcoming' && dtStart < refStart && month < reference.getMonth() + 1) dt = new Date(year + 1, month - 1, day, hour, minute, 0, 0);
+  else if (category !== 'upcoming' && dt.getTime() > reference.getTime() + 45 * 86400000) dt = new Date(year - 1, month - 1, day, hour, minute, 0, 0);
+  return dt;
+}
+
+// Each text node becomes one line - the equivalent of BeautifulSoup's
+// get_text('\n') used by the upstream implementation.
+function collectTextLines(node, out) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      const value = child.nodeValue.replace(/\u00a0/g, ' ').trim();
+      if (value) out.push(value);
+    } else if (child.nodeType === 1) {
+      if (String(child.localName || '').toLowerCase() === 'br') { out.push(''); continue; }
+      collectTextLines(child, out);
+    }
+  }
+}
+
+function parseManageBacDeadlines(html, { category = 'upcoming', sourceUrl = '', reference = new Date() } = {}) {
+  const doc = htmlDocument(html);
+  const lines = [];
+  collectTextLines(doc.body || doc.documentElement, lines);
+  const dueDates = lines.map((line) => parseDueLineValue(line, reference, category));
+  const dueIndexes = dueDates.map((dt, index) => (dt ? index : -1)).filter((index) => index >= 0);
+  const items = [];
+  for (const [position, dueIndex] of dueIndexes.entries()) {
+    const title = dueIndex >= 1 ? lines[dueIndex - 1] : '';
+    const dueAt = dueDates[dueIndex];
+    if (!title || !dueAt) continue;
+    if (DDL_PSEUDO_TITLE.test(title)) continue;
+    const nextDue = position + 1 < dueIndexes.length ? dueIndexes[position + 1] : lines.length;
+    const block = lines.slice(dueIndex + 1, nextDue);
+    const course = block.length && !DDL_STATUS_LINE.test(block[0]) ? block[0] : '';
+    const status = block.find((line) => DDL_STATUS_LINE.test(line)) || '';
+    items.push({
+      title: title.slice(0, 200),
+      course: course.slice(0, 120),
+      dueAt: dueAt.toISOString(),
+      dueText: lines[dueIndex],
+      status,
+      category,
+      sourceUrl,
+    });
+  }
+  return { items, recognized: dueIndexes.length > 0 };
+}
+
 function parseManageBacDiscussions(html, courseId) {
   const cid = validatedId(courseId);
   const doc = htmlDocument(html); const discussions = [];
@@ -328,7 +625,14 @@ function eduRows(dates, identity, requestedDates) {
       const cancelled = Boolean(item.removed) || ['absent', ''].includes(item.type);
       const id = `edupage:${digest(`${identity.accountKey}|${date}|${start}|${end}|${groupKey}|${room}`)}`;
       lessons.push({ id, date, start, end, course, teacher, room, groups, groupKey, cancelled, period: /^\d+$/.test(String(item.uniperiod)) ? Number(item.uniperiod) : null });
-      options.set(groupKey, { key: groupKey, course, teacher, groups, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · ') });
+      const timeLabel = `${date.slice(5)} ${start}–${end}`;
+      const existingOption = options.get(groupKey);
+      if (!existingOption) {
+        options.set(groupKey, { key: groupKey, course, teacher, groups, label: [course, groups.join(' / '), teacher].filter(Boolean).join(' · '), rooms: room ? [room] : [], times: [timeLabel] });
+      } else {
+        if (room && !existingOption.rooms.includes(room)) existingOption.rooms.push(room);
+        if (!existingOption.times.includes(timeLabel)) { existingOption.times.push(timeLabel); existingOption.times.sort(); }
+      }
     }
   }
   return { lessons: [...new Map(lessons.map((item) => [item.id, item])).values()].sort((a, b) => `${a.date}${a.start}${a.course}`.localeCompare(`${b.date}${b.start}${b.course}`)), options: [...options.values()], skipped };
@@ -339,27 +643,34 @@ class SchoolDataClient {
     if (typeof fetch !== 'function') throw new TypeError('SchoolDataClient requires an injected session fetch');
     this.fetch = fetch; this.now = now; this.timeoutMs = timeoutMs; this.pause = pause;
   }
-  async request(site, raw, { method = 'GET', body } = {}) {
+  async request(site, raw, { method = 'GET', body, contentType, headers } = {}) {
     let url = readUrl(site, raw, method);
     if (method === 'POST') {
-      const form = new URLSearchParams(body);
-      const keys = ['gpid', 'gsh', 'action', 'user', 'changes', 'date', 'dateto', '_LJSL'];
-      if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || ![0, 1, 2].some((days) => form.get('dateto') === addDays(form.get('date'), days))) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
+      if (site === 'edupage') {
+        const form = new URLSearchParams(body);
+        const keys = ['gpid', 'gsh', 'action', 'user', 'changes', 'date', 'dateto', '_LJSL'];
+        if ([...form.keys()].length !== keys.length || keys.some((key) => form.getAll(key).length !== 1) || form.get('action') !== 'loadData' || form.get('changes') !== '{}' || form.get('_LJSL') !== '4096' || !validDate(form.get('date')) || ![0, 1, 2].some((days) => form.get('dateto') === addDays(form.get('date'), days))) fail('WRITE_NOT_ALLOWED', '只允许读取课表，不允许修改学校数据');
+      } else assertWriteBody(site, url, body, contentType);
     }
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), this.timeoutMs);
     try {
       for (let redirect = 0; redirect < 4; redirect += 1) {
-        const response = await this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) } });
+        const response = await this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': contentType || 'application/x-www-form-urlencoded' } : {}), ...(headers || {}) } });
         if (response.status === 401 || response.status === 403) fail('LOGIN_REQUIRED', '登录已过期或没有读取权限，请在内置网页重新登录');
         if (response.status >= 300 && response.status < 400) {
           const destination = new URL(response.headers.get('location') || '', url);
           if (/login|session|auth/i.test(destination.pathname)) fail('LOGIN_REQUIRED', '登录已过期，请在内置网页重新登录');
-          if (method !== 'GET') fail('PAGE_CHANGED', 'EduPage 课表请求需要重新登录');
+          // Rails answers a successful upload or reply with a redirect back to the
+          // material itself; there is nothing further to read from it.
+          if (method !== 'GET') {
+            if (site === 'managebac') return '';
+            fail('PAGE_CHANGED', 'EduPage 课表请求需要重新登录');
+          }
           url = readUrl(site, destination.href); continue;
         }
         if (!response.ok) fail('NETWORK_ERROR', '学校网站暂时没有响应，请稍后刷新');
-        if (response.url && response.url !== url) readUrl(site, response.url, method);
+        if (response.url && response.url !== url && method === 'GET') readUrl(site, response.url);
         const length = Number(response.headers.get('content-length') || 0);
         if (length > MAX_HTML_BYTES) fail('PAGE_TOO_LARGE', '学校页面过大');
         let result;
@@ -406,7 +717,46 @@ class SchoolDataClient {
       }
       await this.pause(120);
     }
-    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: [...tasks.values()].slice(0, 1000), warnings: warnings.slice(0, 30) };
+    // Filter tasks: show only 14 days ago to 1 year ahead. Task cards carry
+    // month/day text without a year, so when dueAt is absent we resolve the
+    // date from dueText (handles "Due Sep 12, 11:59 PM", "Sep 12" and
+    // date-badge forms) using the card's past-due badge for year direction.
+    const reference = this.now();
+    const cutoff = reference.getTime() - 14 * 86400000;
+    const futureLimit = reference.getTime() + 365 * 86400000;
+    const resolveTaskDue = (task) => {
+      if (task.dueAt) {
+        const ts = Date.parse(task.dueAt);
+        return Number.isFinite(ts) ? new Date(ts) : null;
+      }
+      const raw = String(task.dueText || '').replace(/^due\s*[:\-]?\s*/i, '').trim();
+      const match = raw.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:,?\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i);
+      if (!match) return null;
+      const month = MB_MONTHS[match[1].slice(0, 3).toUpperCase()];
+      const day = parseInt(match[2], 10);
+      let hour = match[3] ? parseInt(match[3], 10) % 12 : 23;
+      const minute = match[4] ? parseInt(match[4], 10) : 59;
+      if (match[5] && match[5].toUpperCase() === 'PM') hour += 12;
+      const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+      const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
+        .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
+        .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+      if (!candidates.length) return null;
+      const sorted = candidates.sort((a, b) => a - b);
+      if (task.pastDue) {
+        const older = sorted.filter((dt) => dt.getTime() <= dayStart + 86400000);
+        return older.length ? older[older.length - 1] : sorted[sorted.length - 1];
+      }
+      const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
+      return newer.length ? newer[0] : sorted[0];
+    };
+    const filteredTasks = [...tasks.values()].filter((task) => {
+      const resolved = resolveTaskDue(task);
+      if (!resolved) return true; // unparseable: keep, never silently drop work
+      const ts = resolved.getTime();
+      return ts >= cutoff && ts <= futureLimit;
+    });
+    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), warnings: warnings.slice(0, 30) };
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
@@ -451,10 +801,156 @@ class SchoolDataClient {
     const path = `/student/classes/${cid}/discussions/${did}`;
     return { courseId: cid, discussionId: did, url: `${ORIGINS.managebac}${path}`, ...parseDiscussionDetail(await this.request('managebac', path), cid, did), fetchedAt: this.now().toISOString() };
   }
+  // ---------------------------------------------------------------- writes
+  // Submission locates the task's own upload form instead of guessing a URL:
+  // only the page we already parsed can name the file field and hidden fields.
+  async submissionEntry(courseId, taskId) {
+    const base = `/student/classes/${courseId}/core_tasks/${taskId}`;
+    for (const path of [base, `${base}/dropbox`]) {
+      let html;
+      try { html = await this.request('managebac', path); } catch (error) {
+        if (error.code === 'LOGIN_REQUIRED') throw error;
+        continue;
+      }
+      const entry = parseDropboxUploadForm(html);
+      if (entry?.action) return entry;
+      for (const linked of parseDropboxLinks(html, courseId, taskId)) {
+        let target;
+        try { target = await this.request('managebac', linked); } catch (error) {
+          if (error.code === 'LOGIN_REQUIRED') throw error;
+          continue;
+        }
+        const linkedEntry = parseDropboxUploadForm(target);
+        if (linkedEntry?.action) return linkedEntry;
+      }
+      await this.pause(120);
+    }
+    return null;
+  }
+  async submitTaskFile(courseId, taskId, { bytes, filename } = {}) {
+    const cid = validatedId(courseId); const tid = validatedId(taskId);
+    const content = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+    if (!content.length) fail('INVALID_FILE', '要提交的文件是空的');
+    if (content.length > MAX_SUBMIT_BYTES) fail('FILE_TOO_LARGE', '提交的文件超过 24 MB 限制');
+    const entry = await this.submissionEntry(cid, tid);
+    if (!entry) fail('NO_SUBMISSION', '这个任务没有可用的网上提交入口，可能已截止或需要老师开放；请到 ManageBac 网页确认');
+    const { body, contentType } = buildMultipart({ fields: entry.fields, file: { field: entry.field, filename: clean(filename, 180) || 'file', bytes: content } });
+    const headers = entry.token ? { 'X-CSRF-Token': entry.token, 'X-Requested-With': 'XMLHttpRequest' } : {};
+    await this.request('managebac', entry.action, { method: 'POST', body, contentType, headers });
+    return { courseId: cid, taskId: tid, bytes: content.length, url: `${ORIGINS.managebac}/student/classes/${cid}/core_tasks/${tid}`, submittedAt: this.now().toISOString() };
+  }
+  async replyToDiscussion(courseId, discussionId, text, { private: isPrivate = false } = {}) {
+    const cid = validatedId(courseId); const did = validatedId(discussionId);
+    const value = String(text ?? '').trim();
+    if (!value) fail('INVALID_BODY', '回复内容不能为空');
+    if (Buffer.byteLength(value, 'utf8') > MAX_REPLY_BYTES) fail('INVALID_BODY', '回复内容过长，请精简后再提交');
+    const path = `/student/classes/${cid}/discussions/${did}`;
+    const token = parseCsrfToken(await this.request('managebac', path));
+    if (!token) fail('PAGE_CHANGED', '没有找到页面安全令牌，请在 ManageBac 网页回复');
+    // The site expects HTML in this field, so escape first and only then turn
+    // newlines into line breaks; otherwise the reply could carry markup.
+    const body = formEncode({
+      'reply[body]': escapeHtmlText(value).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>'),
+      'reply[notify_via_email]': '0',
+      'reply[private]': isPrivate ? '1' : '0',
+      commit: 'Comment',
+    });
+    await this.request('managebac', `${path}/replies`, {
+      method: 'POST', body, contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
+      headers: { 'X-CSRF-Token': token, 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/javascript, application/javascript, */*; q=0.01' },
+    });
+    return { courseId: cid, discussionId: did, private: isPrivate, url: `${ORIGINS.managebac}${path}`, repliedAt: this.now().toISOString() };
+  }
   async getCoreOverview(kind) {
     if (!['cas', 'ee'].includes(kind)) fail('INVALID_ID', '请选择 CAS 或 EE');
     const path = kind === 'cas' ? '/student/ib/activity/cas' : '/student/ib/pbl/778';
     return { kind, ...parseCoreOverview(await this.request('managebac', path), kind), url: `${ORIGINS.managebac}${path}`, fetchedAt: this.now().toISOString() };
+  }
+  /**
+   * 通知 + 待办（与网页端 `fetch_notifications` 同一口径，但**多抓两个视图**）。
+   *
+   * 真实结构：ManageBac 的「通知」正文由独立服务（mnn-hub）+ JWT 下发，
+   * `/student` 页面上只有一个触发器元素带 `data-count`。所以：
+   *   * 未读数从那个元素如实读；
+   *   * 待办从 `/student/tasks_and_deadlines` 的 `.f-task-tile` 读
+   *     （默认视图 + `?view=overdue`：默认视图只列即将截止的，
+   *     已经过期还没交的在 overdue 视图里，只读默认视图会漏掉它们）；
+   *   * 通知中心给直达链接。
+   * 三处任一失败都不影响其他几处（分别记 warnings）。
+   */
+  async getNotifications() {
+    const warnings = [];
+    let meta = { unreadCount: null, hub: '', namespace: '', url: `${ORIGINS.managebac}/student/notifications` };
+    try {
+      meta = parseNotificationMeta(await this.request('managebac', '/student'));
+    } catch (error) {
+      if (error.code === 'LOGIN_REQUIRED') throw error;
+      warnings.push('未读到 ManageBac 通知未读数');
+    }
+    const items = [];
+    const seen = new Set();
+    let readAny = false;
+    for (const path of ['/student/tasks_and_deadlines', '/student/tasks_and_deadlines?view=overdue']) {
+      try {
+        const rows = parseDeadlineTiles(await this.request('managebac', path), { reference: new Date(this.now()) });
+        readAny = true;
+        for (const row of rows) {
+          const key = row.id || `${row.title}|${row.course}|${row.dueText}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          items.push(row);
+        }
+        await this.pause(120);
+      } catch (error) {
+        if (error.code === 'LOGIN_REQUIRED') throw error;
+      }
+    }
+    if (!readAny) warnings.push('未读到待办与截止日期');
+    // 排序和「作业与截止」那一栏一个口径：还没到期的在前（越近越靠前），
+    // 已经过期的在后 —— 过期那些**最近的排最前**（刚错过的比几个月前的老账更该看），
+    // 否则 overdue 视图里几个月前的老作业会顶在最上面。
+    const now = this.now().getTime();
+    const dueTs = (row) => (row.due && Number.isFinite(Date.parse(row.due)) ? Date.parse(row.due) : Infinity);
+    items.sort((a, b) => {
+      const tsA = dueTs(a); const tsB = dueTs(b);
+      const pastA = tsA < now ? 1 : 0; const pastB = tsB < now ? 1 : 0;
+      if (pastA !== pastB) return pastA - pastB;
+      return (pastA ? tsB - tsA : tsA - tsB) || String(a.title).localeCompare(String(b.title), 'zh-CN');
+    });
+    return {
+      items: items.slice(0, 100),
+      unreadCount: meta.unreadCount,
+      notificationsUrl: meta.url,
+      hub: meta.hub,
+      namespace: meta.namespace,
+      warnings,
+      fetchedAt: this.now().toISOString(),
+    };
+  }
+  async getDeadlines({ views = ['upcoming', 'overdue'], daysBefore = 14, daysAhead = 365 } = {}) {
+    const items = []; const seen = new Set(); const warnings = [];
+    for (const view of views) {
+      const path = `/student/tasks_and_deadlines?view=${view}`;
+      const html = await this.request('managebac', path);
+      const parsed = parseManageBacDeadlines(html, { category: view, sourceUrl: `${ORIGINS.managebac}${path}`, reference: this.now() });
+      if (!parsed.recognized) warnings.push(`未从 ${view} 栏目识别到截止日期，请在原网页核对`);
+      for (const item of parsed.items) {
+        const key = `${item.title.toLowerCase()}|${item.course}|${item.dueText}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(item);
+      }
+      await this.pause(120);
+    }
+    items.sort((a, b) => (a.dueAt ? Date.parse(a.dueAt) : Infinity) - (b.dueAt ? Date.parse(b.dueAt) : Infinity));
+    const ageCutoff = Date.now() - daysBefore * 86400000;
+    const futureLimit = Date.now() + daysAhead * 86400000;
+    const filtered = items.filter((item) => {
+      if (!item.dueAt) return true;
+      const ts = Date.parse(item.dueAt);
+      return ts >= ageCutoff && ts <= futureLimit;
+    });
+    return { items: filtered.slice(0, 60), warnings, fetchedAt: this.now().toISOString() };
   }
   async syncEduPage({ weekStart } = {}) {
     if (!validDate(weekStart)) fail('INVALID_DATE', '请选择正确的课表日期');
@@ -491,4 +987,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows, parseNotificationMeta, parseDeadlineTiles, parseDueText };
