@@ -4467,6 +4467,11 @@ function registerIpc() {
   });
   ipcMain.handle('system:splash-state', (event) => { assertMainRenderer(event); return splashState(); });
   ipcMain.handle('system:hardware', () => getHardwareProfile());
+  const vlmReaderLauncher = require('./vlmreader-launcher.cjs').createVlmReaderLauncher({ openPath: file => shell.openPath(file) });
+  ipcMain.handle('system:vlmreader-open', (event) => {
+    assertMainRenderer(event);
+    return vlmReaderLauncher.open();
+  });
   ipcMain.handle('system:open-url', (_event, rawUrl) => {
     const parsed = safeHttpUrl(rawUrl, true);
     if (!parsed) throw new Error('不支持的链接');

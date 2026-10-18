@@ -1007,3 +1007,9 @@ body.loaded .app-shell { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+/* Companion reader entry: compact download page, no embedded review queue. */
+.vlm-reader-card { max-width: 680px; margin: 2rem auto; padding: 2rem; border: 1px solid var(--border); border-radius: 18px; background: var(--white); }
+.vlm-reader-card > svg { width: 40px; height: 40px; fill: none; stroke: currentColor; }
+.vlm-reader-card p { line-height: 1.7; }
+.vlm-download-source { display: grid; gap: .5rem; max-width: 320px; margin: 1.5rem 0; }
+.vlm-download-source select { width: 100%; padding: .65rem; border: 1px solid var(--border); border-radius: 10px; color: inherit; background: transparent; }

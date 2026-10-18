@@ -795,5 +795,18 @@
     '立即同步': 'Sync now',
     '六套配色，或调成你喜欢的样子。字号覆盖侧栏、设置和学习页面；内嵌的心理模块也会同步主题色。': 'Choose from six palettes or customize your own. Font size applies to the sidebar, settings and study pages. Wellbeing follows your theme too.'
   });
+  Object.assign(root.PH_EN.exact, {
+    '阅读、查词、批注与间隔复习，在独立应用中继续学习。': 'Continue reading, dictionary lookups, annotations and spaced review in the companion app.',
+    '正在检测本机安装…': 'Checking for an installed copy…',
+    '已打开 VLMReader。': 'VLMReader is open.', '再次打开': 'Open again',
+    '尚未找到可用的 VLMReader 安装。下载安装后，点击“重新检测安装”即可打开。': 'No working VLMReader installation was found. Download and install it, then check again to open it.',
+    '下载来源': 'Download source', '国内加速（默认）': 'China mirror (default)',
+    'GitHub 官方': 'Official GitHub', '下载 VLMReader': 'Download VLMReader',
+    '重新检测安装': 'Check installation again', 'GitHub 主页': 'GitHub project',
+    '已打开下载链接。安装完成后可重新检测。': 'Download link opened. Check again after installation.',
+    '检测失败，请重新检测安装。': 'Could not check the installation. Please try again.',
+    '链接未能打开，请重试或切换下载来源。': 'Could not open the link. Retry or choose another source.',
+    '打开本机阅读器，或下载安装': 'Open the installed reader, or download it',
+  });
   if (typeof module === 'object' && module.exports) module.exports = root.PH_EN;
 }(typeof window === 'undefined' ? {} : window));

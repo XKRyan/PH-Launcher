@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld('ph', {
     commandCatalog: () => ipcRenderer.invoke('ib:command-catalog'),
   },
   system: {
+    openVlmReader: () => ipcRenderer.invoke('system:vlmreader-open'),
     version: () => ipcRenderer.invoke('system:version'),
     hardware: () => ipcRenderer.invoke('system:hardware'),
     openUrl: (url) => ipcRenderer.invoke('system:open-url', url),

@@ -14,8 +14,11 @@ const badgeSource = appSource.slice(
   appSource.indexOf('\nfunction renderDashboard', appSource.indexOf('function setNavCountBadge')),
 );
 
-function harness(vocabulary = {}) {
+function harness(vocabulary = {}, legacy = true) {
   const { window } = parseHTML(indexSource);
+  // Legacy counters still support the retained internal vocabulary view. The
+  // main sidebar now opens the separate VLMReader application instead.
+  if (legacy) window.document.body.insertAdjacentHTML('beforeend', '<button id="vocabularyNav"><b class="nav-count-badge hidden" id="vocabularyDueCount" aria-hidden="true"></b></button>');
   const context = {
     window: { ph: { vocabulary } },
     document: window.document,
@@ -25,6 +28,15 @@ function harness(vocabulary = {}) {
   vm.runInNewContext(`${badgeSource}\nthis.badges = { setNavCountBadge, updateVocabularyBadge, refreshVocabularyBadge };`, context);
   return { window, badges: context.badges };
 }
+
+test('VLMReader replaces the sidebar vocabulary queue and never requests its old due count', async () => {
+  let calls = 0;
+  const ui = harness({ dueCount: async () => { calls++; return {due: 99}; } }, false);
+  assert.equal(ui.window.document.querySelector('#vlmReaderNav').dataset.route, 'vlmreader');
+  assert.equal(ui.window.document.querySelector('#vocabularyDueCount'), null);
+  await ui.badges.refreshVocabularyBadge();
+  assert.equal(calls, 0);
+});
 
 test('plan and vocabulary use the same centered badge structure', () => {
   const { window } = harness();

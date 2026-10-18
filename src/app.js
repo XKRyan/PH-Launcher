@@ -20,6 +20,7 @@ const ROUTE_META = {
   notes: { title: '笔记', eyebrow: 'LOCAL NOTES' },
   dictionary: { title: '离线词典', eyebrow: 'OFFLINE DICTIONARY' },
   vocabulary: { title: '背单词', eyebrow: 'WORDS IN CONTEXT' },
+  vlmreader: { title: 'VLMReader', eyebrow: 'READ · LEARN · REMEMBER' },
   timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
@@ -421,6 +422,7 @@ function navigate(route) {
     renderFocusStats();
   }
   if (route === 'notes') renderNotes();
+  if (route === 'vlmreader') void window.vlmReaderUI?.open();
   if (route === 'vocabulary') {
     window.vocabularyUI?.refresh();
     refreshVocabularyBadge();
@@ -560,6 +562,7 @@ function updateVocabularyBadge(payload) {
 }
 
 async function refreshVocabularyBadge() {
+  if (!$('#vocabularyDueCount')) return;
   const api = window.ph?.vocabulary;
   if (!api) return;
   const request = ++vocabularyBadgeRequest;
@@ -1173,7 +1176,7 @@ function ensureTimer() {
 }
 
 const FOCUS_ROUTE_TARGETS = [
-  ['vocabulary', '背单词'],
+  ['vocabulary', 'VLMReader'],
   ['notes', '笔记'],
   ['courses', '我的课程'],
   ['timetable', '我的课表'],
@@ -1187,7 +1190,7 @@ function focusTargetInfo(value) {
   if (value.startsWith('route:')) {
     const route = value.slice(6);
     const target = FOCUS_ROUTE_TARGETS.find(([id]) => id === route);
-    return target ? { type: 'route', id: target[0], label: target[1] } : null;
+    return target ? { type: 'route', id: target[0] === 'vocabulary' ? 'vlmreader' : target[0], label: target[1] } : null;
   }
   if (value.startsWith('site:')) {
     const id = value.slice(5);
@@ -2818,6 +2821,7 @@ function commandCatalog() {
       icon: 'i-external',
       shortcut: site.shortcutEnabled ? site.shortcut : '',
     })),
+    { id: 'vlmreader', label: 'VLMReader', description: '打开本机阅读器，或下载安装', icon: 'i-book', shortcut: '' },
     { id: 'new-task', label: '新建任务', description: '快速添加待办', icon: 'i-check', shortcut: 'Ctrl Shift A' },
     { id: 'new-note', label: '新建笔记', description: '创建一条本地笔记', icon: 'i-note', shortcut: 'Ctrl Shift N' },
     { id: 'dictionary', label: '打开离线词典', description: '本机英汉释义、音标与词形', icon: 'i-book', shortcut: 'Ctrl D' },

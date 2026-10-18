@@ -85,7 +85,7 @@
           <button class="nav-item" id="planNav" data-route="plan" aria-label="计划"><svg><use href="#i-check"/></svg><span>计划</span><b class="nav-count-badge hidden" id="navTaskCount" aria-hidden="true"></b></button>
           <button class="nav-item" data-route="notes"><svg><use href="#i-note"/></svg><span>笔记</span></button>
           <button class="nav-item" data-route="dictionary"><svg><use href="#i-book"/></svg><span>离线词典</span></button>
-          <button class="nav-item" id="vocabularyNav" data-route="vocabulary" aria-label="背单词"><svg><use href="#i-book"/></svg><span>背单词</span><b class="nav-count-badge hidden" id="vocabularyDueCount" aria-hidden="true"></b></button>
+          <button class="nav-item" id="vlmReaderNav" data-route="vlmreader" aria-label="VLMReader"><svg><use href="#i-book"/></svg><span>VLMReader</span></button>
           <button class="nav-item" data-route="ib"><svg><use href="#i-flask"/></svg><span>IB 工具</span></button>
           <button class="nav-item ai-nav" data-route="ai"><svg><use href="#i-spark"/></svg><span>AI 学习助手</span><em id="aiNavBadge">可选</em></button>
         </nav>
@@ -215,6 +215,7 @@
         <section class="page" data-page="school" id="schoolPage"></section>
         <section class="page" data-page="calendar" id="calendarPage"></section>
         <section class="page" data-page="vocabulary" id="vocabularyPage"></section>
+        <section class="page" data-page="vlmreader" id="vlmReaderPage"></section>
         <section class="page" data-page="mail" id="mailPage"></section>
         <section class="page" data-page="psychology" id="xinlvPage"></section>
 
@@ -318,6 +319,7 @@
          account-bridge.js 才是本程序自己的适配层。 -->
     <script src="./account-ui.js"></script>
     <script src="./account-bridge.js"></script>
+    <script src="./vlmreader-ui.js"></script>
     <script src="./app.js"></script>
     <dialog class="modal onboarding-dialog" id="onboardingDialog"><form id="onboardingForm"><div class="modal-head"><div><span class="section-kicker">WELCOME</span><h3>欢迎使用 PH Launcher</h3></div><button type="button" id="onboardingClose" aria-label="关闭引导">×</button></div><div id="onboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="onboardingSkip">跳过引导</button><div><button class="secondary-button" type="button" id="onboardingBack">上一步</button><button class="primary-button" type="button" id="onboardingNext">下一步</button></div></div></form></dialog>
     <dialog class="modal onboarding-dialog" id="phixOnboardingDialog"><form id="phixOnboardingForm"><div class="modal-head"><div><span class="section-kicker">PHIX</span><h3>phix 云同步账号</h3></div><button type="button" id="phixOnboardingClose" aria-label="关闭">×</button></div><div id="phixOnboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="phixOnboardingSkip">跳过</button><div id="phixOnboardingActions"></div></div></form></dialog>
