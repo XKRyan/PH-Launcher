@@ -527,17 +527,20 @@ class SecureStore {
       if (requiresMigration) this.save();
     } catch (error) {
       const recoveryPath = `${this.filePath}.unreadable-${Date.now()}`;
-      try {
-        fs.copyFileSync(this.filePath, recoveryPath);
-      } catch {}
+      let preserved = false;
+      try { fs.copyFileSync(this.filePath, recoveryPath); preserved = true; } catch {}
       this.data = createDefaultData();
-      this.save();
-      console.error('Data recovery started:', error.message);
+      // 留档失败时（例如文件正被占用）绝不能拿默认值盖掉用户唯一的那份数据：
+      // 本次运行只在内存里用默认值，保存一律拒绝，下次启动再读原文件。
+      if (preserved) this.save();
+      else this.saveBlocked = true;
+      console.error('Data recovery started:', error.message, preserved ? '' : '(original kept, saving disabled)');
     }
     return this.data;
   }
 
   save() {
+    if (this.saveBlocked) throw new Error('数据文件暂时无法读取，为保护原有数据本次不保存；请重启程序');
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const json = JSON.stringify(this.data);
     const payload = DATA_ENCRYPTION && safeStorage.isEncryptionAvailable()
@@ -1146,11 +1149,12 @@ const SPLASH_BUDGET_MS = 6000;
 function withSplashBudget(work, bar, timeoutLabel) {
   return Promise.race([
     work,
-    new Promise((resolve) => setTimeout(() => {
+    new Promise((resolve) => { timer = setTimeout(() => {
       setSplashProgress(bar, 100, timeoutLabel);
       resolve('budget');
-    }, SPLASH_BUDGET_MS)),
-  ]);
+  let timer = null;
+    }, SPLASH_BUDGET_MS); }),
+  ]).finally(() => clearTimeout(timer)); // 工作先完成时别让 6 秒后的定时器再改写进度文案
 }
 
 async function runSplashPreload() {
@@ -3076,6 +3080,8 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta, onReaso
     const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content
       : (typeof message.reasoning === 'string' ? message.reasoning : '');
     return {
+      // 与其他 AI 请求一致：带着 Bearer Key 不跟随跳转
+      redirect: 'error',
       role: 'assistant',
       content: String(message.content || '').slice(0, 32_000),
       ...(reasoning ? { reasoning: reasoning.slice(0, 32_000) } : {}),
@@ -3368,7 +3374,7 @@ async function avoidWarmupRace(config) {
   ]);
   if (!completed && localAiWarmup.controller) {
     cancelLocalAiWarmup();
-    try { await localAiWarmup.task; } catch {}
+    try { await task; } catch {}
   }
 }
 
@@ -3377,6 +3383,8 @@ async function streamAiChat(event, requestId, messages, options = {}) {
   const id = String(requestId || '');
   if (!id || id.length > 96) throw new Error('无效的 AI 请求');
   cancelAiRequest(event.sender, id, '已由新的请求替换');
+    // cancelLocalAiWarmup() 会把 localAiWarmup 换成空对象，必须先拿住原来的任务再等它退出
+    const task = localAiWarmup.task;
   const controller = new AbortController();
   const key = aiRequestKey(event.sender, id);
   const active = { controller, reason: '' };
@@ -5654,11 +5662,13 @@ app.whenReady().then(() => {
     }),
   });
   try {
-    if (!safeStorage.isEncryptionAvailable()) throw Error('系统加密不可用，AI 历史暂不保存');
     // 明文存储：内容是可读 JSON；遇到旧的系统密钥加密文件时回退解锁并迁移。
     const decryptAiHistory = (buffer) => {
       const text = buffer.toString('utf8');
-      try { JSON.parse(text); return text; } catch { return safeStorage.decryptString(buffer); }
+      try { JSON.parse(text); return text; } catch {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('旧的加密聊天记录需要系统密钥');
+        return safeStorage.decryptString(buffer);
+      }
     };
     const historyFile = ownFile(dataRoot(), 'aiHistory');
     try {
@@ -5684,6 +5694,7 @@ app.whenReady().then(() => {
     downloadDirectory: path.join(app.getPath('userData'), 'ai-downloads'),
     logPath: path.join(dataRoot().logs, 'ai-deployment.jsonl'),
     configureAi: async (config) => {
+    // 写入不再依赖系统加密，所以系统密钥不可用时历史照常保存，只是旧加密文件解不开（走下面的留档）。
       const saved = secureStore.updateAi(config);
       sendToRenderer('data:changed', secureStore.forRenderer());
       return saved;
@@ -5785,7 +5796,7 @@ app.on('quit', () => {
   if (!headlessUserData) return;
   const temporaryRoot = path.resolve(os.tmpdir());
   const target = path.resolve(headlessUserData);
-  if (target.startsWith(`${temporaryRoot}${path.sep}`) && path.basename(target).startsWith('ph-launcher-headless-')) {
+  if (target.startsWith(`${temporaryRoot}${path.sep}`) && /^ph-launcher-(headless|fresh)-/.test(path.basename(target))) {
     try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
   }
 });
