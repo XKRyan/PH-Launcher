@@ -9,8 +9,8 @@ async function main() {
     throw new Error('Source PNG, destination directory and icon sizes are required');
   }
   const sizes = rawSizes.split(',').map(Number);
-  if (sizes.some((size) => !Number.isInteger(size) || size < 16 || size > 256)) {
-    throw new Error('Windows icon sizes must be integers between 16 and 256');
+  if (sizes.some((size) => !Number.isInteger(size) || size < 16 || size > 512)) {
+    throw new Error('Icon frame sizes must be integers between 16 and 512');
   }
 
   await app.whenReady();

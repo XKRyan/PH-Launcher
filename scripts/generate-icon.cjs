@@ -64,21 +64,26 @@ try {
   // directory advertised valid sizes. Resize the known-good 1024 px master in
   // Electron instead, where nativeImage preserves the full canvas and alpha.
   const electronPath = require('electron');
+  // ELECTRON_RUN_AS_NODE would make the helper run as plain Node (no nativeImage).
+  const electronEnv = { ...process.env };
+  delete electronEnv.ELECTRON_RUN_AS_NODE;
   const frameDirectory = path.join(temporaryProfile, 'windows-frames');
   fs.mkdirSync(frameDirectory, { recursive: true });
   execFileSync(electronPath, [
     path.join(__dirname, 'resize-icon-frames.cjs'),
     pngPath,
     frameDirectory,
-    WINDOWS_ICON_SIZES.join(','),
-  ], { windowsHide: true, stdio: 'ignore' });
+    [...WINDOWS_ICON_SIZES, 512].join(','),
+  ], { windowsHide: true, stdio: 'ignore', env: electronEnv });
 
   const windowsImages = WINDOWS_ICON_SIZES.map((size) => {
     const windowsPngPath = path.join(frameDirectory, `icon-${size}.png`);
     return { size, png: fs.readFileSync(windowsPngPath) };
   });
   fs.writeFileSync(path.join(assets, 'icon.ico'), buildIco(windowsImages));
-  console.log(`Generated full-canvas assets/icon.png and ${WINDOWS_ICON_SIZES.length}-size assets/icon.ico`);
+  // The in-app logo (sidebar brand mark, splash) is the same artwork at 512 px.
+  fs.copyFileSync(path.join(frameDirectory, 'icon-512.png'), path.join(__dirname, '..', 'src', 'logo.png'));
+  console.log(`Generated full-canvas assets/icon.png, ${WINDOWS_ICON_SIZES.length}-size assets/icon.ico and src/logo.png`);
 } finally {
   const resolvedTemp = path.resolve(temporaryProfile);
   const resolvedRoot = path.resolve(os.tmpdir());

@@ -1,17 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 512 512">
+  <!-- PH Launcher icon: ivory tile, "PHL" in Sitka Display Bold (converted to paths), gold L.
+       Source of truth for assets/icon.png and icon.ico — regenerate with `node scripts/generate-icon.cjs`. -->
   <defs>
-    <linearGradient id="background" x1="72" y1="52" x2="442" y2="468" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#286c55"/>
-      <stop offset="1" stop-color="#123a30"/>
-    </linearGradient>
-    <linearGradient id="gold" x1="115" y1="132" x2="290" y2="350" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#e0c27d"/>
-      <stop offset="1" stop-color="#b68d43"/>
+    <linearGradient id="tile" x1="140" y1="24" x2="372" y2="488" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fcfaf4"/>
+      <stop offset="1" stop-color="#efe8d6"/>
     </linearGradient>
   </defs>
-  <rect x="24" y="24" width="464" height="464" rx="122" fill="url(#background)"/>
-  <rect x="37" y="37" width="438" height="438" rx="110" fill="none" stroke="#f5f2e9" stroke-opacity=".12" stroke-width="3"/>
-  <path d="M133 363V151H218C271 151 303 179 303 224C303 270 271 297 218 297H133" fill="none" stroke="url(#gold)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M302 151V363M302 257H391M391 151V363" fill="none" stroke="#f5f2e9" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="418" cy="99" r="13" fill="#8b3445"/>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#tile)"/>
+  <rect x="25.5" y="25.5" width="461" height="461" rx="110.5" fill="none" stroke="#173f33" stroke-opacity=".12" stroke-width="3"/>
+  <path fill="#173f33" d="M92.21 313.38V307.98L103.1 304.6Q104.86 304.09 105.85 302.88Q106.84 301.67 106.84 299.85V212.1Q106.84 210.23 105.84 209.03Q104.85 207.83 103.1 207.33L92.21 204.02V198.62H142.86Q154.91 198.62 164.92 201.82Q174.92 205.02 180.91 211.93Q186.9 218.84 186.9 229.96Q186.9 241.74 181.8 250.31Q176.71 258.88 167.99 263.51Q159.26 268.14 148.37 268.14Q144.39 268.14 139.05 266.19Q133.71 264.25 130.25 261.88V255.93Q132.06 256.76 135.84 257.17Q139.63 257.59 142.91 257.59Q148.76 257.59 152.38 254.85Q156.01 252.12 157.93 248.11Q159.84 244.11 160.51 240.17Q161.18 236.23 161.18 233.87Q161.18 227.15 159.26 221.33Q157.33 215.52 152.57 211.95Q147.8 208.38 139.28 208.38H131.01V299.85Q131.01 301.74 132.13 302.96Q133.26 304.19 134.86 304.6L146.97 307.98V313.38Z"/>
+  <path fill="#173f33" d="M198.5 313.38V307.98L209.39 304.6Q210.99 304.11 212.06 302.9Q213.13 301.68 213.13 299.87V212.09Q213.13 210.22 212.05 209.02Q210.97 207.83 209.39 207.33L198.5 204.02V198.62H251.96V204.02L241.15 207.33Q239.54 207.84 238.42 209.06Q237.3 210.28 237.3 212.1V248.69H284.45V212.1Q284.45 210.23 283.35 209.03Q282.26 207.83 280.66 207.33L269.79 204.02V198.62H323.26V204.02L312.4 207.33Q310.8 207.74 309.71 209.04Q308.61 210.35 308.61 212.1V299.86Q308.61 301.74 309.7 302.92Q310.79 304.09 312.4 304.6L323.26 307.98V313.38H269.79V307.98L280.66 304.6Q282.29 304.08 283.37 302.89Q284.45 301.71 284.45 299.85V258.66H237.3V299.86Q237.3 301.74 238.41 302.92Q239.52 304.09 241.15 304.6L251.96 307.98V313.38Z"/>
+  <path fill="#a9813a" d="M335.64 313.38V307.98L346.53 304.6Q348.23 304.12 349.25 302.9Q350.27 301.67 350.27 299.85V212.1Q350.27 210.27 349.19 209.01Q348.11 207.74 346.53 207.33L335.64 204.02V198.62H389.59V204.02L378.28 207.35Q376.62 207.83 375.53 209.07Q374.43 210.31 374.43 212.1V303.37H414.1Q415.67 303.37 416.48 301.91Q417.3 300.44 417.65 299.14L424.41 276.88H430.93V313.38Z"/>
 </svg>
