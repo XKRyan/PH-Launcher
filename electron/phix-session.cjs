@@ -862,7 +862,10 @@ class PhixSession {
     // 本地改动仍然靠这个一秒一次的定时器（它只看本地文件指纹，不打服务端）；
     // 云端改动交给 #watchLoop 的长轮询（用户 2026-09-28：要秒级）。
     this.#schedule(AUTO_POLL_MS);
-    void this.#watchLoop();
+    // 每次重启换一代：上一代还挂在 client.watch() 上，回来后看到代数变了就退出，
+    // 否则 stop→start 会让旧循环接着跑，长轮询一个个叠起来。
+    this.watchGeneration = (this.watchGeneration || 0) + 1;
+    void this.#watchLoop(this.watchGeneration);
   }
 
   stopAutoSync() {
@@ -882,18 +885,19 @@ class PhixSession {
    * 失败不打扰用户：退避 SYNC_WATCH_RETRY_MS 再挂；离线时它会一直重试，
    * 但 `pollOnce` 那条路仍然在跑，所以功能不会因为长轮询挂了而停摆。
    */
-  async #watchLoop() {
+  async #watchLoop(generation) {
     const sleep = (ms) => new Promise((resolve) => {
       const t = setTimeout(resolve, ms);
       if (typeof t.unref === 'function') t.unref();
     });
-    while (!this.stopped) {
+    while (!this.stopped && this.watchGeneration === generation) {
       if (!this.client || this.dek === null) {
         await sleep(SYNC_WATCH_RETRY_MS);
         continue;
       }
       try {
         const result = await this.client.watch(this.watchCursor);
+        if (this.stopped || this.watchGeneration !== generation) break;
         this.watchCursor = String(result?.cursor || this.watchCursor || '');
         if (result?.changed) {
           this.lastWatchHitAt = Date.now();

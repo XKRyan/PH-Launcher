@@ -108,3 +108,24 @@ test('被同步的本地文件就是用户说的那几样：账号/选课/日程
   assert.ok(cloudsync.DEFAULT_OBJECTS.includes('timetable'), '课表');
   assert.ok(cloudsync.DEFAULT_OBJECTS.includes('school'), '学校数据');
 });
+
+test('stop → start 之后只剩一条长轮询：旧一代挂起回来就退出', async () => {
+  const { session } = harness();
+  // 每次 watch 都挂住，由测试手动放行，这样能数清楚同时挂着几条
+  const waiting = [];
+  session.client.watch = () => new Promise((resolve) => waiting.push(resolve));
+  session.startAutoSync();
+  session.startAutoSync();
+  session.startAutoSync();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waiting.length, 3, '三次启动各挂了一次');
+  // 全部放行（没有变化）：只有最新一代应该再挂上
+  waiting.splice(0).forEach((resolve) => resolve({ changed: false, cursor: 'c1' }));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waiting.length, 1, '旧的两代必须退出，不能接着挂');
+  session.stopAutoSync();
+  waiting.splice(0).forEach((resolve) => resolve({ changed: false }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waiting.length, 0, 'stopAutoSync 之后一条都不剩');
+});

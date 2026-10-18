@@ -45,17 +45,20 @@ test('一秒一次的定时器只查本地，不再打服务端', () => {
 });
 
 test('startAutoSync 起长轮询循环；stopAutoSync 能让它停下', () => {
-  assert.match(sessionSrc, /async #watchLoop\(\)/);
-  assert.match(sessionSrc, /void this\.#watchLoop\(\);/);
+  assert.match(sessionSrc, /async #watchLoop\(generation\)/);
+  assert.match(sessionSrc, /void this\.#watchLoop\(this\.watchGeneration\);/);
   assert.match(sessionSrc, /this\.watchCursor = '';/, '启动时要清掉旧光标');
   assert.match(sessionSrc, /const result = await this\.client\.watch\(this\.watchCursor\)/);
   assert.match(sessionSrc, /if \(result\?\.changed\)/, '变了才同步');
-  // 循环条件必须看 stopped，否则 stopAutoSync 停不下来
-  assert.match(sessionSrc, /while \(!this\.stopped\) \{/);
+  // 循环条件必须看 stopped，否则 stopAutoSync 停不下来；还要看代数，
+  // 否则 stop→start 后上一代循环会接着跑，长轮询越叠越多
+  assert.match(sessionSrc, /while \(!this\.stopped && this\.watchGeneration === generation\) \{/);
+  assert.match(sessionSrc, /this\.watchGeneration = \(this\.watchGeneration \|\| 0\) \+ 1;/);
+  assert.match(sessionSrc, /if \(this\.stopped \|\| this\.watchGeneration !== generation\) break;/, '挂起回来后先看自己是不是旧的一代');
 });
 
 test('长轮询失败会退避重试，不会被异常带崩', () => {
-  const loop = sessionSrc.slice(sessionSrc.indexOf('async #watchLoop()'));
+  const loop = sessionSrc.slice(sessionSrc.indexOf('async #watchLoop(generation)'));
   const body = loop.slice(0, loop.indexOf('\n  }') + 4);
   assert.match(body, /catch \(error\)/, '必须自己吞掉异常');
   assert.match(body, /SYNC_WATCH_RETRY_MS/, '退避而不是原地死循环');
@@ -69,7 +72,7 @@ test('服务端名额满了（retry_after）要等一下再挂，不能热循环
   //   超时  → 立刻再挂上（长轮询接力，这是正常节奏）
   //   被打回 → 必须先等一会儿（否则就是拿热循环打服务器，比不挂还糟）
   // 所以循环里必须**认 retry_after 这个信号**，光看 changed 是不够的。
-  const loop = sessionSrc.slice(sessionSrc.indexOf('async #watchLoop()'));
+  const loop = sessionSrc.slice(sessionSrc.indexOf('async #watchLoop(generation)'));
   const body = loop.slice(0, loop.indexOf('\n  }') + 4);
   assert.match(body, /retry_after/, '必须读服务端的 retry_after');
   assert.match(body, /Number\.isFinite\(retryAfter\)/, '要挡住脏值，别把 NaN 当延时');
