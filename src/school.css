@@ -212,5 +212,19 @@
 .school-discussion-post { margin:12px 0; padding:15px; border:1px solid var(--border); border-radius:12px; background:var(--ivory-50); }
 .school-dialog-actions { display:flex; justify-content:flex-end; margin-top:12px; }
 #schoolPage button:disabled,.school-dialog button:disabled { opacity:.5; cursor:default; }
+.school-task-filters { flex-wrap:wrap; }
+.school-task-filters>input { flex:1 1 220px; min-width:160px; }
+.school-task-filters>select { min-width:120px; max-width:100%; }
+.school-task-state { display:inline-block; width:fit-content; border-radius:6px; padding:2px 7px; font-size:.75rem; font-weight:600; line-height:1.5; }
+.school-task-state.is-pending { color:var(--ink-2); background:var(--ivory-100); }
+.school-task-state.is-overdue { color:#9c302a; background:#ffebe6; }
+.school-task-state.is-completed { color:var(--green-700); background:var(--green-50); }
+.school-upload-confirm,.school-upload-notice { margin:16px 0; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--ivory-50); overflow-wrap:anywhere; }
+.school-upload-confirm h4 { margin-top:0; }
+.school-upload-confirm dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 16px; }
+.school-upload-confirm dt { color:var(--ink-3); }
+.school-upload-confirm dd { margin:0; }
+.school-upload-notice { border-left:4px solid var(--gold-600); }
+.school-upload-confirm p,.school-upload-notice p { line-height:1.6; }
 @media(max-width:1050px) { .school-top,.school-section-head,.school-weekbar { align-items:flex-start; flex-direction:column; gap:12px; } .school-course-tabs button { padding:9px 14px; } .school-core-grid { grid-template-columns:1fr; } .school-group-filters { grid-template-columns:1fr; } }
 @media(prefers-reduced-motion:reduce) { .school-loading>span { animation:none; } .school-course-card { transition:none; } }
