@@ -48,10 +48,8 @@ function resolveDataRoot({ userDataDir, execDir, env = process.env, homeDir = os
     } catch { /* 没有记录 */ }
   }
   if (execDir) candidates.push({ root: path.join(execDir, 'data'), source: 'app' });
-  for (const candidate of candidates) {
-    if (candidate.source === 'pointer' || candidate.source === 'env') return { root: candidate.root, source: candidate.source };
-    return { root: candidate.root, source: candidate.source };
-  }
+  // 按顺序取第一个：环境变量 > 记录的目录 > 程序旁边的 data/
+  if (candidates.length) return candidates[0];
   return { root: path.join(userDataDir || os.tmpdir(), 'data'), source: 'app' };
 }
 /** Where a Pinghe Launcher Lite installation keeps its data, if there is one. */

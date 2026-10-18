@@ -1152,12 +1152,12 @@ function finishSplash() {
 const SPLASH_BUDGET_MS = 6000;
 
 function withSplashBudget(work, bar, timeoutLabel) {
+  let timer = null;
   return Promise.race([
     work,
     new Promise((resolve) => { timer = setTimeout(() => {
       setSplashProgress(bar, 100, timeoutLabel);
       resolve('budget');
-  let timer = null;
     }, SPLASH_BUDGET_MS); }),
   ]).finally(() => clearTimeout(timer)); // 工作先完成时别让 6 秒后的定时器再改写进度文案
 }
@@ -3080,6 +3080,8 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta, onReaso
       headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify({ ...payload, messages: openAiMessages(messages, false) }),
       signal: requestSignal,
+      // 与其他 AI 请求一致：带着 Bearer Key 不跟随跳转
+      redirect: 'error',
     });
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 240);
@@ -3090,8 +3092,6 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta, onReaso
     const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content
       : (typeof message.reasoning === 'string' ? message.reasoning : '');
     return {
-      // 与其他 AI 请求一致：带着 Bearer Key 不跟随跳转
-      redirect: 'error',
       role: 'assistant',
       content: String(message.content || '').slice(0, 32_000),
       ...(reasoning ? { reasoning: reasoning.slice(0, 32_000) } : {}),
@@ -3383,6 +3383,8 @@ async function avoidWarmupRace(config) {
     new Promise((resolve) => setTimeout(resolve, 1_500)),
   ]);
   if (!completed && localAiWarmup.controller) {
+    // cancelLocalAiWarmup() 会把 localAiWarmup 换成空对象，必须先拿住原来的任务再等它退出
+    const task = localAiWarmup.task;
     cancelLocalAiWarmup();
     try { await task; } catch {}
   }
@@ -3393,8 +3395,6 @@ async function streamAiChat(event, requestId, messages, options = {}) {
   const id = String(requestId || '');
   if (!id || id.length > 96) throw new Error('无效的 AI 请求');
   cancelAiRequest(event.sender, id, '已由新的请求替换');
-    // cancelLocalAiWarmup() 会把 localAiWarmup 换成空对象，必须先拿住原来的任务再等它退出
-    const task = localAiWarmup.task;
   const controller = new AbortController();
   const key = aiRequestKey(event.sender, id);
   const active = { controller, reason: '' };
@@ -5691,6 +5691,7 @@ app.whenReady().then(() => {
   });
   try {
     // 明文存储：内容是可读 JSON；遇到旧的系统密钥加密文件时回退解锁并迁移。
+    // 写入不再依赖系统加密，所以系统密钥不可用时历史照常保存，只是旧加密文件解不开（走下面的留档）。
     const decryptAiHistory = (buffer) => {
       const text = buffer.toString('utf8');
       try { JSON.parse(text); return text; } catch {
@@ -5722,7 +5723,6 @@ app.whenReady().then(() => {
     downloadDirectory: path.join(app.getPath('userData'), 'ai-downloads'),
     logPath: path.join(dataRoot().logs, 'ai-deployment.jsonl'),
     configureAi: async (config) => {
-    // 写入不再依赖系统加密，所以系统密钥不可用时历史照常保存，只是旧加密文件解不开（走下面的留档）。
       const saved = secureStore.updateAi(config);
       sendToRenderer('data:changed', secureStore.forRenderer());
       return saved;
