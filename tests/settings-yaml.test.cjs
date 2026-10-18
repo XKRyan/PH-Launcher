@@ -101,6 +101,18 @@ test('a missing block is appended once and stays idempotent', () => {
   assert.throws(() => serializeNestedMap('accounts', { edupage: {} }), /没有可写入/);
 });
 
+test('replacing indentless lists consumes every old item and preserves neighboring blocks', () => {
+  for (const newline of ['\n', '\r\n']) {
+    const head = ['version: 1', 'ui:', '  theme: blue', ''].join(newline);
+    const tail = ['accounts:', '  edupage:', '    username: fixture', ''].join(newline);
+    const old = ['lessons:', '- subject: Physics', '  group: A', '# old list comment', '- subject: Chemistry', '  group: B', ''].join(newline);
+    const body = 'lessons:\n- subject: Mathematics\n  group: C\n';
+    const updated = replaceBlock(head + old + tail, 'lessons', body);
+    assert.equal(updated, head + body + tail);
+    assert.equal(replaceBlock(updated, 'lessons', 'lessons: []\n'), head + 'lessons: []\n' + tail);
+  }
+});
+
 test('quoting round-trips values that YAML would otherwise reinterpret', () => {
   for (const value of ['abc: def', '#tag', '2026-09-10', 'D:\\a b', "it's", 'true', '123', ' padded ', '', '中文备注']) {
     const text = replaceBlock('', 'agent', serializeScalarMap('agent', { workspace: value }));

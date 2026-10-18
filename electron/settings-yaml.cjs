@@ -23,14 +23,16 @@ function blockRange(text, blockName) {
   const name = String(blockName || '');
   if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) throw new Error('配置段名称无效');
   const lines = text.split('\n');
-  const start = lines.findIndex((line) => new RegExp(`^${name}\\s*:([ \\t]|$)`).test(line));
+  const start = lines.findIndex((line) => new RegExp(`^${name}\\s*:([ \\t\\r]|$)`).test(line));
   if (start < 0) return null;
   let end = lines.length;
   for (let index = start + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.trim() === '' || /^\s*#/.test(line)) continue;
-    // A line at column 0 that is not a comment starts the next block.
-    if (!/^\s/.test(line)) { end = index; break; }
+    // YAML permits a block sequence at column 0 (lessons:\n- subject: ...).
+    // Those items still belong to this block; leaving them behind resurrects
+    // deselected courses the next time the shared configuration is read.
+    if (!/^\s/.test(line) && !/^-(?:\s|$)/.test(line)) { end = index; break; }
   }
   return { start, end, lines };
 }

@@ -42,6 +42,23 @@ test('clear all persists as explicit [] and re-import clears stale saved groups'
   ctx.applySharedLessonSelection();
   assert.equal(JSON.stringify(store.data.settings.schoolPreferences.groups), '[]');
 });
+
+test('replacing a previous selection removes old YAML rows across saves and reloads', (t) => {
+  const { ctx, file, store } = harness(t);
+  // Begin with the same indentless list written by an earlier automatic choice.
+  ctx.updateSchoolPreferences({ groups: ['a', 'b'] });
+  for (const groups of [['a'], ['b'], [], ['a', 'b'], ['b']]) {
+    ctx.updateSchoolPreferences({ groups });
+    const text = fs.readFileSync(file, 'utf8');
+    assert.equal(sharedLessons.readSelection(text).length, groups.length);
+    assert.match(text, /theme: blue/);
+    // Discard the in-memory choices, as happens on a fresh startup, then load
+    // the actual on-disk file rather than a mocked preference response.
+    store.data.settings.schoolPreferences = { accountKey: 'test', groups: ['a', 'b'] };
+    ctx.applySharedLessonSelection();
+    assert.equal(JSON.stringify(store.data.settings.schoolPreferences.groups), JSON.stringify(groups));
+  }
+});
 test('missing or broken selections never erase saved choices', (t) => {
   const { ctx, file, store } = harness(t);
   for (const text of ['', 'lessons:\n', 'lessons: broken\n', 'lessons:\n- teacher: Missing subject\n']) {

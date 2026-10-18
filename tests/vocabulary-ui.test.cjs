@@ -37,7 +37,8 @@ test('due-review dashboard translates real dynamic state and round trips without
     ...Array.from({ length: 5 }, (_, index) => ({ id: `due-${index}`, word: `review-${index}`, meaning: `用户释义 ${index}`, subject: '用户词本', schedule: { state: 2, reps: 1 } })),
     ...Array.from({ length: 4 }, (_, index) => ({ id: `new-${index}`, word: `new-${index}`, meaning: `用户释义 ${index + 5}`, subject: '用户词本', schedule: { state: 0, reps: 0 } })),
   ];
-  window.ph = { vocabulary: { get: async () => ({
+  const opened = [];
+  window.ph = { system: { openUrl: async url => opened.push(url) }, vocabulary: { get: async () => ({
     cards,
     queueIds: cards.map(card => card.id),
     stats: { total: cards.length, todayReviews: 8, todayWords: 6, days: [], nextDue: null },
@@ -53,6 +54,9 @@ test('due-review dashboard translates real dynamic state and round trips without
   await new Promise(resolve => setImmediate(resolve));
 
   const page = window.document.getElementById('vocabularyPage');
+  page.querySelector('[data-vocab-action="vlmreader"]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(opened, ['https://github.com/XKRyan/VLMReader']);
   assert.match(page.textContent, /6 unique words/);
   assert.match(page.textContent, /Complete today’s due reviews first\./);
   assert.match(page.textContent, /5 due words will appear first; new words will be previewed in groups after the reviews\./);

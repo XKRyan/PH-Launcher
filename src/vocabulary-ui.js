@@ -303,7 +303,7 @@
       <div><span class="section-kicker">WORDS, ONE DAY AT A TIME</span><h2>背单词</h2><p>先完成今天该复习的，再慢慢积累新词。</p></div>
     </header>
     <div class="vocab-toolbar"><nav class="vocab-tabs" aria-label="词汇页面"><button data-vocab-action="today" class="${['today', 'study'].includes(state.view) ? 'selected' : ''}" aria-pressed="${['today', 'study'].includes(state.view)}">今日学习</button><button data-vocab-action="library" class="${state.view === 'library' ? 'selected' : ''}" aria-pressed="${state.view === 'library'}">我的词书 <span>${number(state.snapshot.stats.total)}</span></button><button data-vocab-action="tools" class="${state.view === 'tools' ? 'selected' : ''}" aria-pressed="${state.view === 'tools'}">更多工具</button></nav>
-      <div class="vocab-actions"><button class="secondary-button" data-vocab-action="import">导入词书</button><button class="ghost-button" data-vocab-action="reading">阅读积累</button><button class="ghost-button" data-vocab-action="settings">学习设置</button></div></div>
+      <div class="vocab-actions"><button class="secondary-button" data-vocab-action="vlmreader" title="打开 VLMReader GitHub，下载独立的阅读与背单词应用">VLMReader ↗</button><button class="secondary-button" data-vocab-action="import">导入词书</button><button class="ghost-button" data-vocab-action="reading">阅读积累</button><button class="ghost-button" data-vocab-action="settings">学习设置</button></div></div>
     <div class="vocab-content">${state.view === 'study' ? renderStudy() : state.view === 'library' ? renderLibrary() : state.view === 'reading' ? renderReading() : state.view === 'tools' ? renderTools() : renderToday()}</div>
     <footer class="vocab-footer">语境理解 · 主动回忆 · 间隔复习 <button data-vocab-action="method">怎么学更有效？</button></footer>`;
   }
@@ -841,6 +841,7 @@
     }
     if (action === 'add') return addDialog();
     if (action === 'edit') return editDialog(current);
+    if (action === 'vlmreader') return window.ph.system.openUrl('https://github.com/XKRyan/VLMReader');
     if (action === 'settings') return settingsDialog();
     if (action === 'method') return methodDialog();
     if (action === 'import' || action === 'import-text-tab') return importDialog('text');
