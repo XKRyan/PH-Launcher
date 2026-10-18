@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createMailController, safeAttachmentFilename, UNCERTAIN_SEND } = require('../electron/mail-controller.cjs');
+const { createMailController, safeAttachmentFilename, isPublicImageHost, UNCERTAIN_SEND } = require('../electron/mail-controller.cjs');
 
 function deferred() {
   let resolve;
@@ -343,4 +343,28 @@ test('mail controller contacts passes limit 300', async () => {
   const h = harvestHarness();
   await h.controller.contacts();
   assert.deepEqual(h.calls[0], { _method: 'contacts', limit: 300 });
+});
+
+test('mail images never make the main process reach loopback or LAN hosts', () => {
+  for (const host of ['localhost', 'app.localhost', '127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '[::1]', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', 'router', 'printer.local']) {
+    assert.equal(isPublicImageHost(host), false, host);
+  }
+  for (const host of ['images.example.com', '93.184.216.34', '172.32.0.1', '2606:4700::1111']) {
+    assert.equal(isPublicImageHost(host), true, host);
+  }
+});
+
+test('fetchImage refuses private hosts before any request and rejects non-image bodies', async () => {
+  const requested = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    requested.push(url);
+    return { ok: true, url, headers: new Map([['content-type', 'text/html']]), arrayBuffer: async () => new TextEncoder().encode('<html>').buffer };
+  };
+  try {
+    const controller = createMailController({ getClient: () => ({}), revision: () => 0 });
+    await assert.rejects(controller.fetchImage({ url: 'http://127.0.0.1:11434/api/tags' }), /局域网/);
+    assert.deepEqual(requested, [], 'private hosts are refused without a request');
+    await assert.rejects(controller.fetchImage({ url: 'https://images.example.com/a.png' }), /不是图片/);
+  } finally { global.fetch = originalFetch; }
 });

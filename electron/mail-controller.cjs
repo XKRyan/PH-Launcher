@@ -9,6 +9,20 @@ const LINK_OPEN_ERROR = '无法打开邮件链接，请稍后重试';
 //: 正文里的外部图片：单张上限 3 MB（超过就当取不到，隐藏掉，不要让一封信把内存吃满）。
 const MAX_INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
 
+//: 邮件正文是外部内容：图片地址不许指向本机或局域网（例如 127.0.0.1:11434 上的 Ollama、
+//: 路由器管理页），否则一封信就能让主进程替它去敲内网。只按字面地址判断，不做 DNS 解析。
+function isPublicImageHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || !host.includes('.') && !host.includes(':')) return false;
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224);
+  }
+  if (host.includes(':')) return !(host === '::' || host === '::1' || /^(fc|fd|fe80)/.test(host) || host.startsWith('::ffff:'));
+  return true;
+}
+
 function safeAttachmentFilename(value) {
   let name;
   try { name = String(value || ''); } catch { name = ''; }
@@ -97,6 +111,7 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
       let target;
       try { target = new URL(raw); } catch { throw new Error('图片地址不合法'); }
       if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('只支持 http/https 图片');
+      if (!isPublicImageHost(target.hostname)) throw new Error('不加载本机或局域网地址的图片');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10_000);
       try {
@@ -105,13 +120,17 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
           headers: { accept: 'image/*' },
         });
         if (!response.ok) throw new Error(`图片返回 ${response.status}`);
+        // 跳转之后的落点同样不能是本机/局域网
+        try { if (response.url && !isPublicImageHost(new URL(response.url).hostname)) throw new Error('blocked'); }
+        catch { throw new Error('不加载本机或局域网地址的图片'); }
+        const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+        if (!/^image\//.test(contentType) || contentType === 'image/svg+xml') throw new Error('不是图片');
         const declared = Number(response.headers.get('content-length') || 0);
         if (declared > MAX_INLINE_IMAGE_BYTES) throw new Error('图片太大');
         const buffer = Buffer.from(await response.arrayBuffer());
         if (!buffer.length) throw new Error('图片是空的');
         if (buffer.length > MAX_INLINE_IMAGE_BYTES) throw new Error('图片太大');
-        const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim();
-        return { data: buffer, contentType: /^image\//.test(contentType) ? contentType : 'image/png' };
+        return { data: buffer, contentType };
       } finally {
         clearTimeout(timer);
       }
@@ -195,4 +214,4 @@ function createMailController({ getClient, status, revision, dialog, getWindow, 
     },
   };
 }
-module.exports = { createMailController, safeAttachmentFilename, UNCERTAIN_SEND };
+module.exports = { createMailController, safeAttachmentFilename, isPublicImageHost, UNCERTAIN_SEND };
