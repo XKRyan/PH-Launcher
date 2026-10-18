@@ -567,6 +567,9 @@ class SecureStore {
     // updateXinlvData(); an explicit import may restore mood entries.
     merged.xinlv = mergeXinlvState(previousXinlv, merged.xinlv);
     merged.vocabularyApiConsent = this.data.vocabularyApiConsent || '';
+    // phix 账号密码只经 rememberPhixLogin()/forgetPhixLogin() 改写，导入备份不能带进来。
+    if (this.data.phixLogin) merged.phixLogin = this.data.phixLogin;
+    else delete merged.phixLogin;
     this.data = merged;
     this.save();
     return this.forRenderer();
@@ -795,6 +798,8 @@ class SecureStore {
     delete copy.schoolCache;
     delete copy.vocabularyApiConsent;
     delete copy.calendarEvents;
+    // 明文 phix 密码只在主进程里用来重启后解锁，渲染进程用不到。
+    delete copy.phixLogin;
     const hasApiKey = Boolean(copy.settings.ai.apiKey);
     copy.settings.ai.apiKey = '';
     copy.settings.ai.apiKeySaved = hasApiKey;
@@ -4257,6 +4262,7 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePath) return { ok: false, canceled: true };
     const exportData = structuredClone(secureStore.data);
+    delete exportData.phixLogin;
     exportData.settings.ai.apiKey = '';
     // 多服务商列表里的 Key 同样是明文，导出备份里一律清掉（与 apiKey 同一个理由）。
     if (Array.isArray(exportData.settings.ai.providers)) {
