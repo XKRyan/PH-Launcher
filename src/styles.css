@@ -1007,9 +1007,27 @@ body.loaded .app-shell { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
-/* Companion reader entry: compact download page, no embedded review queue. */
-.vlm-reader-card { max-width: 680px; margin: 2rem auto; padding: 2rem; border: 1px solid var(--border); border-radius: 18px; background: var(--white); }
-.vlm-reader-card > svg { width: 40px; height: 40px; fill: none; stroke: currentColor; }
-.vlm-reader-card p { line-height: 1.7; }
-.vlm-download-source { display: grid; gap: .5rem; max-width: 320px; margin: 1.5rem 0; }
+/* Companion reader entry: same page-intro + card pattern as the other pages. */
+.vlm-reader-card { display: flex; align-items: flex-start; gap: 18px; max-width: 760px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--white); box-shadow: var(--shadow-sm); }
+.vlm-reader-body { flex: 1; min-width: 0; }
+.vlm-reader-body p { margin: 0 0 10px; line-height: 1.7; }
+.vlm-reader-body small { color: var(--ink-2); }
+.vlm-reader-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.vlm-download-source { display: grid; gap: .5rem; max-width: 320px; margin: 18px 0 0; }
 .vlm-download-source select { width: 100%; padding: .65rem; border: 1px solid var(--border); border-radius: 10px; color: inherit; background: transparent; }
+
+/* Short windows (e.g. 1040×700): keep the sidebar timer to two rows so the
+   navigation list keeps room instead of being pushed into a tiny scroll area.
+   `.sidebar` prefix: refinements.css / focus.css load later with equal specificity. */
+@media (max-height: 760px) {
+  .sidebar .nav-item { min-height: 38px; padding-top: 6px; padding-bottom: 6px; }
+  .sidebar .nav-label { margin-top: 8px; }
+  .sidebar .mini-focus { display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 8px; padding: 9px 10px; margin: 6px 2px; }
+  .sidebar .mini-focus-top { display: contents; }
+  .sidebar .mini-focus-top > span { grid-column: 1; grid-row: 1; }
+  .sidebar .mini-focus > strong { grid-column: 2; grid-row: 1; margin: 0; font-size: 1.125rem; text-align: right; }
+  .sidebar .mini-focus-top button { grid-column: 3; grid-row: 1; }
+  .sidebar .mini-focus-target, .sidebar .mini-focus-actions, .sidebar .mini-progress { grid-column: 1 / -1; }
+  .sidebar .mini-focus-target { margin: 6px 0 0; }
+  .sidebar .mini-focus-actions { margin: 2px 0 6px; }
+}

@@ -112,7 +112,9 @@
     const row = document.createElement('div');
     row.className = 'setting-row language-setting';
     row.innerHTML = '<div><strong>界面语言</strong><small>只切换界面，学习材料和个人内容保持原文。</small></div><select id="interfaceLanguage" aria-label="界面语言" translate="no"><option value="zh-CN">简体中文</option><option value="en">English</option></select>';
-    host.prepend(row);
+    // 放在「通用」标题下面，而不是标题上面
+    const heading = host.querySelector(':scope > h3');
+    if (heading) heading.after(row); else host.prepend(row);
     const select = row.querySelector('select');
     select.value = language;
     select.addEventListener('change', async () => {
