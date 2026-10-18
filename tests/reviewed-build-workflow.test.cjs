@@ -8,12 +8,15 @@ function workflow(name) {
   return yaml.load(fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', name), 'utf8'), { schema: yaml.JSON_SCHEMA });
 }
 
-test('legacy macOS builder cannot run on main pushes or package v2 via an obsolete pipeline', () => {
-  const legacy = workflow('build-macos.yml');
-  assert.deepEqual(Object.keys(legacy.on), ['workflow_dispatch']);
-  const steps = legacy.jobs['build-universal'].steps;
-  const guard = steps.findIndex(step => step.run?.includes("version.startsWith('1.')"));
-  assert.ok(guard >= 0 && guard < steps.findIndex(step => step.run === 'npm ci'));
+test('former macOS entry stages verified drafts without auto-building on main pushes', () => {
+  const stage = workflow('build-macos.yml');
+  assert.deepEqual(Object.keys(stage.on), ['workflow_dispatch']);
+  const commands = stage.jobs.stage.steps.map(s => s.run || '').join('\n');
+  assert.match(commands, /run\.conclusion, 'success'/);
+  assert.match(commands, /release\.isDraft, true/);
+  assert.match(commands, /sha256\(file\), asset\.sha256/);
+  assert.match(commands, /Never replace already staged assets/);
+  assert.doesNotMatch(commands, /--clobber|--draft=false/);
 });
 
 test('registered manual entry invokes the reviewed build from the same commit without duplicate preview jobs', () => {

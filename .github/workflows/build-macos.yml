@@ -1,45 +1,114 @@
-name: Build legacy v1 unsigned macOS packages
-
+name: Stage verified v2 release assets
 on:
   workflow_dispatch:
-
+    inputs:
+      build_run_id:
+        description: Successful reviewed dual-platform build run
+        required: true
+        type: string
+      source_sha:
+        description: Exact tested source commit
+        required: true
+        type: string
+      version:
+        required: true
+        default: '2.0.0'
+        type: string
 permissions:
-  contents: read
-
+  actions: read
+  contents: write
+concurrency:
+  group: stage-release-${{ inputs.version }}
+  cancel-in-progress: false
 jobs:
-  build-universal:
-    runs-on: macos-15
-    timeout-minutes: 60
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN: ${{ inputs.build_run_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      VERSION: ${{ inputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate successful reviewed build and empty matching draft
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const {execFileSync} = require('node:child_process');
+          const gh = (...args) => JSON.parse(execFileSync('gh', args, {encoding:'utf8'}));
+          assert.match(process.env.BUILD_RUN, /^\d+$/);
+          assert.match(process.env.SOURCE_SHA, /^[a-f0-9]{40}$/);
+          assert.match(process.env.VERSION, /^\d+\.\d+\.\d+$/);
+          const run = gh('api', `repos/${process.env.GH_REPO}/actions/runs/${process.env.BUILD_RUN}`);
+          assert.equal(run.head_sha, process.env.SOURCE_SHA);
+          assert.equal(run.status, 'completed');
+          assert.equal(run.conclusion, 'success');
+          assert.equal(run.event, 'workflow_dispatch');
+          assert.equal(run.path, '.github/workflows/build-collaboration.yml');
+          assert.equal(run.repository.full_name, process.env.GH_REPO);
+          const release = gh('release', 'view', `v${process.env.VERSION}`, '--json', 'isDraft,targetCommitish,tagName,assets');
+          assert.equal(release.isDraft, true, 'Never modify a public release');
+          assert.equal(release.targetCommitish, process.env.SOURCE_SHA);
+          assert.equal(release.tagName, `v${process.env.VERSION}`);
+          assert.equal(release.assets.length, 0, 'Never replace already staged assets');
+          NODE
+      - name: Download reviewed artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          persist-credentials: false
-      - name: Use Node.js 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-          cache: npm
-      - name: Reject newer releases in the legacy pipeline
-        run: node -e "if (!require('./package.json').version.startsWith('1.')) { console.error('Use build-v2.yml for v2+ reviewed packages.'); process.exit(1); }"
-      - name: Install dependencies
-        run: npm ci
-      - name: Prepare pinned offline dictionary
-        run: npm run dictionary:prepare
-      - name: Run unit tests
-        run: npm test
-      - name: Build unsigned Universal test packages
-        run: npm run dist:mac
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: PH-Launcher-macOS-unsigned-test
-          path: |
-            release/*.dmg
-            release/*.zip
-            release/*.pkg
-            release/*.yml
-            release/*.blockmap
-          if-no-files-found: error
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          pattern: PH-Launcher-${{ inputs.version }}-*
+          path: packages
+      - name: Verify hashes and upload to draft only
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const {createHash} = require('node:crypto');
+          const {execFileSync} = require('node:child_process');
+          const version = process.env.VERSION;
+          const sha256 = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const upload = [], verified = [];
+          for (const platform of ['Windows-x64', 'macOS-universal-unsigned']) {
+            const root = path.join('packages', `PH-Launcher-${version}-${platform}`);
+            const evidenceFile = path.join(root, `${platform}-build-evidence.json`);
+            const evidence = JSON.parse(fs.readFileSync(evidenceFile));
+            assert.equal(evidence.sourceCommit, process.env.SOURCE_SHA);
+            assert.equal(evidence.version, version);
+            assert.equal(evidence.platform, platform);
+            assert.equal(evidence.runUrl, `https://github.com/${process.env.GH_REPO}/actions/runs/${process.env.BUILD_RUN}`);
+            for (const key of ['unitTests','sourceSelfTest','packagedSelfTest']) assert.equal(evidence[key], 'passed');
+            const required = platform === 'Windows-x64'
+              ? [`PH-Launcher-${version}-Setup.exe`]
+              : [`PH-Launcher-${version}-macOS-universal.dmg`, `PH-Launcher-${version}-macOS-universal.zip`];
+            for (const name of required) assert.ok(evidence.assets.some(a => a.name === name));
+            for (const asset of evidence.assets) {
+              assert.equal(path.basename(asset.name), asset.name);
+              assert.ok(required.includes(asset.name) || /^latest(?:-mac)?\.yml$/.test(asset.name) || asset.name.endsWith('.blockmap'));
+              const file = path.join(root, asset.name), stat = fs.lstatSync(file);
+              assert.ok(stat.isFile() && !stat.isSymbolicLink());
+              assert.equal(stat.size, asset.bytes);
+              assert.equal(sha256(file), asset.sha256);
+              upload.push(file);
+              verified.push({name:asset.name, bytes:asset.bytes, sha256:asset.sha256});
+            }
+            upload.push(evidenceFile);
+            const sums = path.join(root, `${platform}-SHA256SUMS.txt`);
+            fs.writeFileSync(sums, evidence.assets.map(a => `${a.sha256}  ${a.name}`).join('\n')+'\n');
+            upload.push(sums);
+            if (platform.startsWith('macOS')) upload.push(path.join(root, `PH-Launcher-${version}-macOS-UNSIGNED-TEST-zh-CN.md`));
+          }
+          assert.equal(new Set(upload.map(f => path.basename(f))).size, upload.length);
+          execFileSync('gh', ['release','upload',`v${version}`,...upload], {stdio:'inherit'});
+          const release = JSON.parse(execFileSync('gh', ['release','view',`v${version}`,'--json','isDraft,assets,targetCommitish'], {encoding:'utf8'}));
+          assert.equal(release.isDraft, true);
+          assert.equal(release.targetCommitish, process.env.SOURCE_SHA);
+          for (const asset of verified) {
+            const actual = release.assets.find(a => a.name === asset.name);
+            assert.ok(actual, `Missing uploaded asset ${asset.name}`);
+            assert.equal(actual.size, asset.bytes);
+          }
+          console.log(JSON.stringify({sourceCommit:process.env.SOURCE_SHA,draft:true,verifiedAssets:verified},null,2));
+          NODE
