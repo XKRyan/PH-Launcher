@@ -1460,7 +1460,7 @@ async function startupSchoolSync({ onlySources = null, force = false } = {}) {
       // 全新安装时还没有任何已同步的一周，用"上海时间的本周一"兜底，
       // 否则 schoolState.key 会因为 weekStart 为空直接抛 INVALID_DATE。
       const result = await loginSchoolAccount(source, { weekStart: schoolState.week || currentSchoolWeek(), force });
-      if (result?.ok) { synced.push(source); rememberSyncedSchoolAccounts([source]); continue; }
+      if (result?.ok) { synced.push(source); continue; }
       failed.push(source);
       // loginSchoolAccount 自己吞掉异常并返回 ok:false，必须把原因记下来，
       // 否则"页面像没登录"就没有任何线索。
@@ -1486,27 +1486,30 @@ async function startupSchoolSync({ onlySources = null, force = false } = {}) {
  * （settings.yaml 里 accounts 已经有三个平台），但课表页/课程页永远是空的
  * （共用快照里 `edupage` / `managebac` 段都是 null）。
  *
- * 做法：按"每个平台当前保存的账号名"判断有没有新账号（换个账号名也算），
- * 有新账号就后台补一次学校同步；同一时刻只跑一轮。
+ * 做法：按"每个平台当前保存的账号 + 密码"判断有没有新账号（任一端改了密码也算），
+ * 有新账号就后台补一次学校同步；同一时刻只跑一轮。同一份账号密码只自动提交一次，
+ * 不论成败——失败后要等用户改了账号或密码、或手动点"登录并同步"才会再试。
  */
-const syncedSchoolAccounts = new Map();
+const attemptedSchoolAccounts = new Map();
 let accountsArrivalSync = null;
 
+/** 账号 + 密码的指纹（只在内存里，不落盘）；没有完整账号时为空串。 */
+function schoolAccountFingerprint(source) {
+  const record = credentialVault?.getForFill(source, { allowDisabled: true });
+  if (!record?.username || !record.password) return '';
+  return createHash('sha256').update(`${record.username}\n${record.password}`).digest('hex');
+}
+
 function pendingSchoolAccounts() {
-  const sites = credentialStatus().sites || {};
   return ['edupage', 'managebac'].filter((source) => {
-    const username = String(sites[source]?.username || '');
-    return Boolean(username) && syncedSchoolAccounts.get(source) !== username;
+    const fingerprint = schoolAccountFingerprint(source);
+    return Boolean(fingerprint) && attemptedSchoolAccounts.get(source) !== fingerprint;
   });
 }
 
-/** 学校同步成功后就地记下"这个平台的这个账号已经同步过了"。 */
-function rememberSyncedSchoolAccounts(sources) {
-  const sites = credentialStatus().sites || {};
-  for (const source of sources) {
-    const username = String(sites[source]?.username || '');
-    if (username) syncedSchoolAccounts.set(source, username);
-  }
+function rememberSchoolAttempt(source) {
+  const fingerprint = schoolAccountFingerprint(source);
+  if (fingerprint) attemptedSchoolAccounts.set(source, fingerprint);
 }
 
 function syncSchoolAfterAccountsArrived() {
@@ -1620,6 +1623,8 @@ async function loginSchoolAccount(source, options = {}) {
   // Validate the week before sending credentials. This is an explicit button
   // action, separate from opt-in background restoration.
   schoolState.key(source, options.weekStart);
+  // 提交之前就记下，失败也算：密码错时不能每轮 phix 同步都再交一次（ManageBac 会锁号）。
+  rememberSchoolAttempt(source);
   try {
     // `manual: true` = 允许用共用 settings.yaml 里的账号密码提交这次登录。
     // 手动点"登录并同步"、以及"账号刚从云端同步下来"这两条路都走它；
