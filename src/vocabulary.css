@@ -170,9 +170,9 @@
 .vocab-danger { color: var(--wine-700) !important; }
 .vocab-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 9px; margin-top: 15px; }
 .vocab-pagination > span { font-size: 0.875rem; color: var(--vocab-muted); margin-right: auto; }
-.vocab-dialog { width: min(650px, calc(100vw - 48px)); max-height: min(86vh, 850px); overflow-y: auto; padding: 25px 27px; border: 1px solid #d4d7c9; border-radius: 22px; color: var(--ink); background: #fbfaf6; box-shadow: var(--shadow-lg); }
+.vocab-dialog { width: min(650px, calc(100vw - 48px)); border: 1px solid #d4d7c9; color: var(--ink); background: #fbfaf6; box-shadow: var(--shadow-lg); }
 .vocab-dialog::backdrop { background: rgba(13,35,26,.45); backdrop-filter: blur(5px); }
-.vocab-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 21px; }
+.vocab-dialog-head { justify-content: space-between; }
 .vocab-dialog-head h3 { margin: 0; font-size: 1.3125rem; letter-spacing: -.03em; }
 .vocab-dialog-head button { background: var(--ivory-200); color: var(--ink-2); font-size: 1.4375rem; font-weight: 300; }
 .vocab-field { display: flex; flex-direction: column; gap: 7px; margin: 13px 0; min-width: 0; }
@@ -180,11 +180,11 @@
 .vocab-field input, .vocab-field textarea { width: 100%; min-height: 40px; padding: 10px 12px; border: 1px solid #d7dcd2; border-radius: 10px; color: var(--ink); background: #fff; font-size: 1rem; line-height: 1.6; }
 .vocab-field textarea { resize: vertical; }
 .vocab-field input[type=number] { max-width: 160px; }
-.vocab-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.vocab-field-grid { display: grid; gap: 14px; }
 .vocab-lookup-row { display: flex; align-items: flex-end; gap: 11px; }
 .vocab-lookup-row .vocab-field { flex: 1; margin-top: 0; margin-bottom: 0; }
 .vocab-lookup-row .secondary-button { flex-shrink: 0; margin-bottom: 1px; }
-.vocab-dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 22px; padding-top: 17px; border-top: 1px solid var(--border); }
+.vocab-dialog-actions { display: flex; align-items: center; justify-content: flex-end; }
 .vocab-dialog-actions > span { font-size: 0.875rem; color: var(--vocab-muted, #66766d); margin-right: auto; }
 .vocab-expression-ai { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding: 14px; border: 1px solid #d4e0d6; border-radius: 12px; background: var(--green-50); }
 .vocab-expression-ai strong { color: var(--green-900); font-size: .9375rem; }

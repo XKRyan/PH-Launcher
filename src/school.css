@@ -100,7 +100,6 @@
 .school-course-card.is-drop-before { border-top:2px solid var(--green-700); transform:translateY(2px); }
 .school-course-card.is-drop-after { border-bottom:2px solid var(--green-700); transform:translateY(-2px); }
 .school-drag-hint { margin:-4px 0 12px; font-size:.8125rem; color:var(--ink-3); }
-@media(prefers-reduced-motion:reduce) { .school-course-card { transition:none; } }
 .school-text-button { background:transparent; color:var(--green-800); padding:7px 10px; border-radius:8px; font-size: 1rem; }
 .school-text-button:hover { background:var(--green-50); }
 .school-task-filters { display:flex; gap:10px; margin-bottom:18px; }
@@ -144,13 +143,13 @@
 .school-core-grid h3 { font-size: 2.5rem; color:var(--green-800); margin:15px 0 5px; letter-spacing:-1px; }
 .school-core-grid p { color:var(--ink-2); line-height:1.8; margin:10px 0 24px; max-width:380px; }
 .school-credit { color:var(--ink-3); display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; border-top:1px solid var(--border); margin-top:35px; padding-top:16px; font-size: 0.875rem; }
-.school-dialog { width:min(760px,calc(100vw - 40px)); max-width:760px; }
+.school-dialog { max-width:760px; }
 .school-dialog .modal-head h3 { font-size: 1.3125rem; margin:0; }
-.school-dialog-content { max-height:65vh; overflow-y:auto; padding-right:6px; }
+.school-dialog-content { padding-right:6px; }
 .school-dialog-content>p { color:var(--ink-2); line-height:1.85; }
 .school-dialog-content h2 { font-size: 1.5625rem; }
 .school-dialog-content h4 { color:var(--ink-3); font-size: 1rem; margin:27px 0 12px; }
-.school-dialog-footer { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:10px; border-top:1px solid var(--border); margin-top:22px; padding-top:18px; }
+.school-dialog-footer { display:flex; justify-content:flex-end; flex-wrap:wrap; border-top:1px solid var(--border); margin-top:22px; padding-top:18px; }
 .school-group-tools { display:flex; justify-content:flex-end; gap:4px; }
 .school-group-filters { display:flex; flex-wrap:wrap; align-items:center; gap:9px; margin:14px 0 8px; }
 .school-group-filters input { flex:1; min-width:180px; min-height:42px; padding:9px 11px; border:1px solid var(--border); border-radius:10px; background:var(--ivory-50); }

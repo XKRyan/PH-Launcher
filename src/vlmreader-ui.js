@@ -2,7 +2,7 @@
   let opening = null;
   let info = null;
   const page = () => document.getElementById('vlmReaderPage');
-  const escape = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function render(loading = false) {
     const root = page(); if (!root) return;
     // 与其他页面一致：page-intro 标题区 + 一张卡片

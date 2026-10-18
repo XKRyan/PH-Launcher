@@ -13,7 +13,7 @@
   const failedSessions = new Map();
   const deletedSessionIds = new Set();
   let historyOperationGeneration = 0;
-  const esc = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const historyApi = () => window.ph?.ai?.history;
   const newId = () => globalThis.crypto?.randomUUID?.() || `temporary-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
