@@ -4233,8 +4233,9 @@ function registerIpc() {
     configureApplicationMenu();
     return { language };
   });
-  ipcMain.handle('data:get', () => secureStore.forRenderer());
-  ipcMain.handle('data:save', (_event, nextData) => {
+  ipcMain.handle('data:get', (event) => { assertMainRenderer(event); return secureStore.forRenderer(); });
+  ipcMain.handle('data:save', (event, nextData) => {
+    assertMainRenderer(event);
     const previousShortcuts = JSON.stringify(secureStore.data.settings.shortcuts || {});
     const previousOpenAtLogin = Boolean(secureStore.data.settings.openAtLogin);
     const safeData = {};
@@ -4254,7 +4255,8 @@ function registerIpc() {
     if (previousOpenAtLogin !== Boolean(secureStore.data.settings.openAtLogin)) applyLoginItemSetting();
     return result;
   });
-  ipcMain.handle('data:export', async () => {
+  ipcMain.handle('data:export', async (event) => {
+    assertMainRenderer(event);
     const result = await showLocalizedSaveDialog(mainWindow, {
       title: '导出 PH Launcher 数据',
       defaultPath: `PH-Launcher-backup-${new Date().toISOString().slice(0, 10)}.json`,
@@ -4455,7 +4457,7 @@ function registerIpc() {
     return { ok: pendingAiActions.reject(proposalId) };
   });
   ipcMain.handle('ai:deployment-state', () => localAiDeployment.snapshot());
-  ipcMain.handle('ai:deploy-local', () => localAiDeployment.start());
+  ipcMain.handle('ai:deploy-local', (event) => { assertMainRenderer(event); return localAiDeployment.start(); });
   ipcMain.handle('ai:cancel-deployment', () => localAiDeployment.cancel());
   ipcMain.handle('ai:show-deployment-log', () => {
     const logPath = localAiDeployment.diagnosticsPath();
@@ -4491,12 +4493,13 @@ function registerIpc() {
     assertMainRenderer(event);
     return vlmReaderLauncher.open();
   });
-  ipcMain.handle('system:open-url', (_event, rawUrl) => {
+  ipcMain.handle('system:open-url', (event, rawUrl) => {
+    assertMainRenderer(event);
     const parsed = safeHttpUrl(rawUrl, true);
     if (!parsed) throw new Error('不支持的链接');
     return shell.openExternal(parsed.toString());
   });
-  ipcMain.handle('system:show-data', () => shell.openPath(dataRoot().root));
+  ipcMain.handle('system:show-data', (event) => { assertMainRenderer(event); return shell.openPath(dataRoot().root); });
   ipcMain.handle('system:data-choice', (event) => { assertMainRenderer(event); return sharedDataChoice(); });
   // Switching folders never moves data by itself: the pointer is written and the
   // next launch picks it up, so nothing can be half-copied.
@@ -5372,6 +5375,20 @@ function createWindow() {
     }
     siteViews.clear();
     mainWindow = null;
+  });
+  // 主窗口只显示 src/index.html：AI 回复、邮件里的链接被点到时不能把整个启动器
+  // （连同 window.ph 桥）换成外部网页。https 链接交给系统浏览器，其他一律拦下。
+  const keepLauncherPage = (event, url) => {
+    event.preventDefault();
+    const parsed = safeHttpUrl(url, false);
+    if (parsed) shell.openExternal(parsed.toString()).catch(() => {});
+  };
+  mainWindow.webContents.on('will-navigate', keepLauncherPage);
+  mainWindow.webContents.on('will-redirect', keepLauncherPage);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const parsed = safeHttpUrl(url, false);
+    if (parsed) shell.openExternal(parsed.toString()).catch(() => {});
+    return { action: 'deny' };
   });
   mainWindow.webContents.on('did-fail-load', (_event, code, description, _validatedUrl, isMainFrame) => {
     if (IS_SELF_TEST && isMainFrame) failSelfTest(new Error(`main renderer load failed (${code}): ${description || 'unknown'}`));
