@@ -25,8 +25,8 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 
 ## 下载与状态
 
-- Windows x64 提供安装版与免安装版；请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 中实际存在的最新发布为准，并核对同一发布页的 SHA-256。Windows 目前没有商业代码签名证书，可能显示“未知发布者”。
-- `1.0.10` 提供 Windows x64 安装版／便携版；macOS Universal 包需在 macOS runner 上构建，发布页会注明签名、公证与 SHA-256 状态。当前源码位于 [`main`](https://github.com/XKRyan/PH-Launcher/tree/main)。
+- Windows x64 只提供安装程序（`-Setup.exe`），数据保存在程序文件夹的 `data/` 中；请以 [GitHub Releases](https://github.com/XKRyan/PH-Launcher/releases) 中实际存在的最新发布为准，并核对同一发布页的 SHA-256。Windows 目前没有商业代码签名证书，可能显示“未知发布者”。
+- macOS Universal 包需在 macOS runner 上构建，发布页会注明签名、公证与 SHA-256 状态。进入软件时会检查新版本，点“更新”之前不会下载任何东西。当前源码位于 [`main`](https://github.com/XKRyan/PH-Launcher/tree/main)。
 
 ## 主要功能
 
@@ -39,13 +39,13 @@ PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello
 - 完整权限经单独确认后，可按请求读取启动器中的课程、成绩、作业、课表、邮件、日程、笔记和词汇等学习内容。支持搜索宣讲会邮件并生成日程待确认清单；日期时间不清楚时须补充。读取范围不含密码、Cookie、授权码或任意电脑文件。API 模式会发送相应内容给所选服务商。
 - AI 工作区：选择或新建一个文件夹后，AI 可以列出、读取其中的文本与 Word 文档，并起草 Word 文档；所有路径都要求落在该文件夹内，符号链接、绝对路径与 `..` 一律拒绝，未选择文件夹时文件工具不可用。
 - 待确认的外发操作：AI 可以提出发送邮件、提交 ManageBac 作业和回复讨论的方案。没有在清单上确认就不会执行；确认后邮件还会再弹出一次系统确认，提交与回复会提示你到学校网站核对结果。
-- AI 对话与手动保存的学习偏好在本机加密保存。更换模型或连接后，旧会话可查看但不自动发给新服务；使用 API 时，长期记忆默认不附加。
+- AI 对话与手动保存的学习偏好保存在本机数据目录。更换模型或连接后，旧会话可查看但不自动发给新服务；使用 API 时，长期记忆默认不附加。
 - 数据结构与 [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher) 对齐：两者使用同一套数据目录时共用 `settings.yaml` 账号、`Schedule` 日程与 `agent/` 会话记录，各自的私有数据分别放在 `phl/` 与 `phll/`。详见 [数据格式规范](docs/data-format.md)。
 - 个人课表默认显示周一至周五，可显示周末；“我的课表”与“我的日程”分别设置提前提醒。课程、日程与专注结束使用独立大提醒窗口，可关闭或延后 5 分钟。提醒需要程序运行、电脑唤醒，学校提醒还需当前账号课表同步成功。
 - 本地普通聊天逐步显示回复，可随时停止。选择本地 AI 时，程序启动后会后台准备已安装的服务与选定模型；选择 API 或暂不启用时，不启动或预热本地 AI。不会后台自动安装或下载模型。
 - 邮件按钮和链接单独列在正文前，显示实际域名；点击并确认后用系统浏览器打开。邮件图片不自动加载，链接格式合法不代表网站可信。
 
-完整说明见 [使用指南](使用指南.md)、[1.0.10 更新说明](docs/PH-Launcher-1.0.10-更新说明.md) 与 [1.0 更新说明](docs/PH-Launcher-1.0-更新说明.md)，Mac 构建边界见 [Mac 构建与验证](Mac构建与验证.md)，历史版本安全说明见 [PH Launcher 0.5.1 发布与安全说明](PH-Launcher-0.5.1-发布与安全说明.md)。
+完整说明见 [使用指南](docs/使用指南.md)、[1.0.10 更新说明](docs/PH-Launcher-1.0.10-更新说明.md) 与 [1.0 更新说明](docs/PH-Launcher-1.0-更新说明.md)，Mac 构建边界见 [Mac 构建与验证](docs/Mac构建与验证.md)，历史版本安全说明见 [PH Launcher 0.5.1 发布与安全说明](docs/PH-Launcher-0.5.1-发布与安全说明.md)。
 
 ## 学校功能使用
 
@@ -71,7 +71,7 @@ Windows 构建：`npm run dist` 和 `npm run dist:installer`。Mac 未签名测�
 
 ## 隐私与安全
 
-可选“账号记忆”只保存你主动输入并同意保存的账号密码，使用 Windows／macOS 系统密钥加密；ManageBac 与 EduPage 的“自动重新登录”须另行明确开启。平和邮箱凭据同样存于系统加密凭据库，且不会自动填入网站。账号密码不进入备份，也不提供给 AI；共享电脑不建议启用。笔记、任务、课程和专注记录默认保存在本机；导出备份不包含 API Key。云端 AI 只应接收用户主动提交或明确授权的数据。
+可选“账号记忆”只保存你主动输入并同意保存的账号密码。为了与 PHL Lite、网页端共用 `settings.yaml`，当前版本的账号记忆、API Key、笔记、任务与 AI 会话都以**明文**保存在本机数据目录中（旧版本的加密文件仍可读取），共享电脑不要保存密码。ManageBac 与 EduPage 的“自动重新登录”须另行明确开启。平和邮箱凭据不会自动填入网站。账号密码不进入备份，也不提供给 AI；导出备份不包含 API Key。开启 phix 云同步时，数据上传前端到端加密。云端 AI 只应接收用户主动提交或明确授权的数据。
 
 IB Docs 仅作为带风险提示的第三方外部链接。PH Launcher 不内嵌、下载、缓存、镜像、索引或代理其中内容；仅在学校或权利人明确授权的情况下访问和使用。
 
