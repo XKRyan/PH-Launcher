@@ -1,5 +1,15 @@
 # 工作交接
 
+## v2.0（2026-10-18）
+
+用户要求以 fix/manual-course-selection（起点 35780bad178dd726e4bf476487cc7c1bb1c88252）优化课程作业，完成 Windows/macOS 并合入 main 发布。保留原分支 143 个领先 main 的提交，不用旧版覆盖。工作目录 F:\Codex\2026-10-18\PH-Launcher-v2。
+
+新增作业筛选、否定状态识别、分段要求与附件、选择文件后明确确认上传、单次令牌/24 MB/账号绑定/结果未核实保护，以及返回课程和刷新入口。学校表单限定到当前任务；上传 POST 不自动重试。真实学校提交未测试，也未执行。英文及 24px 小窗口已用真实 Electron 合成页面检查。
+
+本地首轮 1014 项回归与 source self-test 通过。PHL Lite 账号兼容测试使用独立仓库固定提交 cd420f40a05dfae8b3482b851785ba4411d7b48d（PHL_LITE_DIR）；Windows 禁用 checkout 换行转换以保持字节一致。独立 npm ci，不使用 node_modules 联接。打包证据将由 build-v2 工作流按精确提交记录。
+
+macOS 仓库没有签名 secrets，使用既有 ad-hoc Universal DMG/ZIP 验证流程，不宣称 Developer ID 或公证。旧 v1 发布工作流已限制到 v1 标签，v2 通过已注册 build-collaboration 入口调用 build-v2，验证后手动发布已验证产物。GitHub 发布不等同于更新 phix.ing 独立更新服务器；本次不改该服务。
+
 ## 1.0.10（2026-09-10，main 线）
 
 2026-09-10：1.0.10 为 AI 完整权限新增日程删除能力。AI 必须先读取真实日程 id，只能生成待确认删除清单；用户确认后才删除。数据变化会使清单失效，每周重复日程会明确提示整组删除。1.0.9 的聊天记录恢复修复继续保留。

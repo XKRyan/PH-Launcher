@@ -1,0 +1,187 @@
+name: Build reviewed Windows and macOS packages
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact 40-character reviewed source commit
+        required: true
+        type: string
+      version:
+        description: Expected package version
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character commit SHA at the selected branch or tag
+        required: true
+        type: string
+      version:
+        description: Expected package version
+        required: true
+        default: '2.0.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reviewed-packages-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows-x64
+          - os: macos-15
+            platform: macOS-universal-unsigned
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      EXPECTED_SHA: ${{ inputs.source_sha }}
+      EXPECTED_VERSION: ${{ inputs.version }}
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      PHL_LITE_DIR: ${{ github.workspace }}/.ci/phl-lite
+      LITE_SOURCE_SHA: cd420f40a05dfae8b3482b851785ba4411d7b48d
+    steps:
+      - name: Preserve exact source bytes on checkout
+        run: git config --global core.autocrlf false
+
+      - name: Checkout reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Checkout pinned shared-account compatibility source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: huaziqian40-bot/Pinghe-Launcher-Lite
+          ref: cd420f40a05dfae8b3482b851785ba4411d7b48d
+          path: .ci/phl-lite
+          persist-credentials: false
+          sparse-checkout: ui/account-ui.js
+          sparse-checkout-cone-mode: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify exact source and version
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+          assert.match(process.env.EXPECTED_SHA, /^[0-9a-f]{40}$/);
+          assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), process.env.EXPECTED_SHA);
+          assert.equal(process.env.GITHUB_SHA, process.env.EXPECTED_SHA, 'Dispatch branch/tag must still point at the reviewed source');
+          assert.equal(execFileSync('git', ['-C', process.env.PHL_LITE_DIR, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), process.env.LITE_SOURCE_SHA);
+          assert.equal(require('./package.json').version, process.env.EXPECTED_VERSION);
+          assert.equal(fs.existsSync('assets/dictionary/ecdict.db'), false, 'Dictionary must be generated from pinned input');
+          NODE
+
+      - name: Install locked dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Prepare pinned offline dictionary
+        run: npm run dictionary:prepare
+
+      - name: Run automated tests
+        run: npm test
+
+      - name: Run isolated application self-test
+        timeout-minutes: 3
+        run: npm run self-test
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Run isolated packaged Windows self-test
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $executable = (Resolve-Path -LiteralPath 'release/win-unpacked/PH Launcher.exe').Path
+          $process = Start-Process -FilePath $executable -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged self-test failed: $($process.ExitCode)" }
+
+      - name: Build ad-hoc signed Universal macOS packages
+        if: runner.os == 'macOS'
+        run: npm run dist:mac:preview
+
+      - name: Run isolated packaged macOS self-test
+        if: runner.os == 'macOS'
+        timeout-minutes: 3
+        run: '"release/mac-universal/PH Launcher.app/Contents/MacOS/PH Launcher" --self-test'
+
+      - name: Verify both macOS architectures and packaged resources
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: |
+          zsh scripts/verify-mac-preview.sh
+          node scripts/prepare-mac-preview-assets.cjs
+
+      - name: Record source and artifact checksums
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { sha256 } = require('./scripts/prepare-mac-preview-assets.cjs');
+          const version = require('./package.json').version;
+          const mac = process.platform === 'darwin';
+          const names = mac
+            ? [`PH-Launcher-${version}-macOS-universal.dmg`, `PH-Launcher-${version}-macOS-universal.zip`]
+            : [`PH-Launcher-${version}-Setup.exe`];
+          const assets = names.map(name => {
+            const file = path.join('release', name);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.size < 100 * 1024 * 1024) throw new Error(`Missing or unexpectedly small artifact: ${name}`);
+            return { name, bytes: stat.size, sha256: sha256(file) };
+          });
+          // Retain generated updater metadata for a separately reviewed feed deployment.
+          for (const name of fs.readdirSync('release').filter(name => /^latest(?:-mac)?\.yml$/.test(name) || name.endsWith('.blockmap'))) {
+            const file = path.join('release', name);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.size === 0) throw new Error(`Invalid updater metadata: ${name}`);
+            assets.push({ name, bytes: stat.size, sha256: sha256(file) });
+          }
+          const evidence = {
+            version, sourceCommit: process.env.EXPECTED_SHA, liteCompatibilityCommit: process.env.LITE_SOURCE_SHA, platform: process.env.BUILD_PLATFORM,
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            signing: mac ? 'ad-hoc only; no Developer ID or Apple notarization' : 'unsigned',
+            unitTests: 'passed', sourceSelfTest: 'passed', packagedSelfTest: 'passed', assets
+          };
+          fs.writeFileSync(`release/${process.env.BUILD_PLATFORM}-build-evidence.json`, JSON.stringify(evidence, null, 2) + '\n');
+          fs.writeFileSync(`release/${process.env.BUILD_PLATFORM}-SHA256SUMS.txt`, assets.map(a => `${a.sha256}  ${a.name}`).join('\n') + '\n');
+          NODE
+
+      - name: Upload reviewed packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PH-Launcher-${{ inputs.version }}-${{ matrix.platform }}
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            release/PH-Launcher-*-Setup.exe
+            release/PH-Launcher-*-macOS-universal.dmg
+            release/PH-Launcher-*-macOS-universal.zip
+            release/*UNSIGNED*.md
+            release/*-build-evidence.json
+            release/*SHA256SUMS.txt
+            release/latest*.yml
+            release/*.blockmap

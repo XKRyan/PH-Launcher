@@ -1,10 +1,11 @@
-name: Release Windows packages
+name: Release legacy v1 Windows packages
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      # v2+ uses build-v2.yml, followed by manual publication of verified artifacts.
+      - "v1.*"
 
 permissions:
   contents: write
@@ -36,6 +37,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $package = Get-Content -Raw package.json | ConvertFrom-Json
+          if ($package.version -notmatch '^1\.') {
+            throw 'This legacy workflow only supports v1. Use build-v2.yml and publish the verified draft manually for v2+.'
+          }
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$($package.version)") {
             throw "Tag $env:GITHUB_REF_NAME does not match package version $($package.version)."
           }

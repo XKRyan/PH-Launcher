@@ -5,6 +5,16 @@ on:
     branches: [main]
     paths: ["electron/**", "src/**", "tests/**", "package*.json", "build/**", ".github/workflows/build-collaboration.yml"]
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character commit SHA at the selected branch or tag
+        required: true
+        type: string
+      version:
+        description: Expected package version
+        required: true
+        default: '2.0.0'
+        type: string
 
 permissions:
   contents: read
@@ -14,7 +24,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reviewed-packages:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/build-v2.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      version: ${{ inputs.version }}
+
   package:
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -23,10 +41,22 @@ jobs:
     timeout-minutes: 55
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      PHL_LITE_DIR: ${{ github.workspace }}/.ci/phl-lite
     steps:
+      - name: Preserve exact source bytes on checkout
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Checkout pinned shared-account compatibility source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: huaziqian40-bot/Pinghe-Launcher-Lite
+          ref: cd420f40a05dfae8b3482b851785ba4411d7b48d
+          path: .ci/phl-lite
+          persist-credentials: false
+          sparse-checkout: ui/account-ui.js
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"

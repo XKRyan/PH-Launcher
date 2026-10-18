@@ -959,11 +959,17 @@ test('package config includes hardened Universal macOS DMG, ZIP and PKG targets'
   assert.equal(packageJson.build.pkg.installLocation, '/Applications');
 });
 
-test('Windows and signed macOS releases use separate tag namespaces', () => {
+test('legacy releases only accept v1 tags and leave v2 publication to reviewed artifacts', () => {
   const windowsWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release-windows.yml'), 'utf8');
   const macWorkflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release-macos.yml'), 'utf8');
-  assert.match(windowsWorkflow, /tags:\s*\n\s*- "v\*"/);
-  assert.match(macWorkflow, /tags:\s*\n\s*- "mac-v\*"/);
+  const windows = yaml.load(windowsWorkflow, { schema: yaml.JSON_SCHEMA });
+  const mac = yaml.load(macWorkflow, { schema: yaml.JSON_SCHEMA });
+  assert.deepEqual(windows.on.push.tags, ['v1.*']);
+  assert.deepEqual(mac.on.push.tags, ['mac-v1.*']);
+  assert.ok(Object.hasOwn(windows.on, 'workflow_dispatch'));
+  assert.ok(Object.hasOwn(mac.on, 'workflow_dispatch'));
+  assert.match(windowsWorkflow, /\$package\.version -notmatch '\^1\\\.'/);
+  assert.match(macWorkflow, /"\$version" != 1\.\*/);
   assert.doesNotMatch(macWorkflow, /refs\/tags\/v/);
   assert.match(macWorkflow, /mac-v\$version/);
 });
