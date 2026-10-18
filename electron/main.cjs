@@ -23,6 +23,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { createHash } = require('node:crypto');
+const { windowTheme } = require('./window-theme.cjs');
 const { AiHistoryStore } = require('./ai-history.cjs');
 const { createVocabularyStudy } = require('./vocabulary-study.cjs');
 const { createVocabularyAdvisor } = require('./vocabulary-advisor.cjs');
@@ -923,6 +924,10 @@ function armSelfTestTimeout() {
   selfTestTimeout = setTimeout(() => failSelfTest(new Error(`timeout after ${SELF_TEST_TIMEOUT_MS}ms`)), SELF_TEST_TIMEOUT_MS);
 }
 
+/** 本机地址（本地 AI、OAuth 回调等只允许连这几个）。 */
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+const isLoopbackHost = (hostname) => LOOPBACK_HOSTS.includes(hostname);
+
 function safeHttpUrl(rawUrl, allowLocalHttp = false) {
   try {
     const parsed = new URL(rawUrl);
@@ -930,7 +935,7 @@ function safeHttpUrl(rawUrl, allowLocalHttp = false) {
     if (
       allowLocalHttp &&
       parsed.protocol === 'http:' &&
-      ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname)
+      isLoopbackHost(parsed.hostname)
     ) {
       return parsed;
     }
@@ -1138,7 +1143,7 @@ function finishSplash() {
   // 开机画面是墨绿的，右上角那块系统窗口控件底色也跟着墨绿（不然会有一条色差），
   // 开机画面淡出之后再换回顶栏的颜色。
   try {
-    const theme = require('./window-theme.cjs').windowTheme(secureStore.data.settings.appearance);
+    const theme = windowTheme(secureStore.data.settings.appearance);
     if (process.platform !== 'darwin' && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setTitleBarOverlay({ color: theme.primary, symbolColor: theme.symbol, height: TOPBAR_HEIGHT });
     }
@@ -2280,7 +2285,7 @@ function createTrayImage() {
 
 function applyWindowTheme() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const theme = require('./window-theme.cjs').windowTheme(secureStore.data.settings.appearance);
+  const theme = windowTheme(secureStore.data.settings.appearance);
   mainWindow.setBackgroundColor(theme.paper);
   if (process.platform === 'win32') mainWindow.setTitleBarOverlay({ color: theme.primary, symbolColor: theme.symbol, height: TOPBAR_HEIGHT });
 }
@@ -2987,7 +2992,7 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta, onReaso
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   if (config.provider === 'local') {
     const endpoint = safeHttpUrl(config.localEndpoint, true);
-    if (!endpoint || !['127.0.0.1', 'localhost', '::1'].includes(endpoint.hostname)) throw new Error('本地 AI 地址必须是本机地址');
+    if (!endpoint || !isLoopbackHost(endpoint.hostname)) throw new Error('本地 AI 地址必须是本机地址');
     if (!String(config.localModel || '').trim()) throw new Error('请填写本地模型名称');
     const url = new URL('/api/chat', endpoint);
     const payload = {
@@ -3144,7 +3149,7 @@ async function aiChat(messages, { signal, onDelta, onReasoning, onStatus, useMem
   if (attached.length && config.provider === 'api' && attachmentApiConsent !== true) throw Error('请先确认将附件发送给所选 API');
   if (attached.some(file => file.type === 'image') && config.provider === 'local') {
     const endpoint = safeHttpUrl(config.localEndpoint, true);
-    if (!endpoint || !['127.0.0.1', 'localhost', '::1'].includes(endpoint.hostname)) throw Error('本地 AI 地址必须是本机地址');
+    if (!endpoint || !isLoopbackHost(endpoint.hostname)) throw Error('本地 AI 地址必须是本机地址');
     const response = await fetch(new URL('/api/show', endpoint), { method: 'POST', redirect: 'error', signal,
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: config.localModel }) });
     if (!response.ok || !(await response.json()).capabilities?.includes('vision')) throw Error('所选本地模型不支持图片，请选择支持视觉的模型；不会自动上传到 API');
@@ -3313,7 +3318,7 @@ async function startLocalAiWarmup() {
   const config = secureStore?.data?.settings?.ai;
   if (!config?.enabled || config.provider !== 'local' || !String(config.localModel || '').trim()) return;
   const endpoint = safeHttpUrl(config.localEndpoint, true);
-  if (!endpoint || !['127.0.0.1', 'localhost', '::1'].includes(endpoint.hostname)) return;
+  if (!endpoint || !isLoopbackHost(endpoint.hostname)) return;
   const key = localAiKey(config);
   if (localAiWarmup.task && localAiWarmup.key === key) return localAiWarmup.task;
   cancelLocalAiWarmup();
@@ -3811,17 +3816,17 @@ const PREPARE_STEPS = [
     id: 'profile',
     label: '个人资料',
     run: async () => {
-      const layout = phixDataRoot();
-      let doc = null;
-      try {
-        doc = JSON.parse(require('node:fs').readFileSync(
-          require('node:path').join(layout.root, 'Profile'), 'utf8'));
-      } catch { doc = null; }
-      const name = String(doc?.display_name || '').trim();
+      const name = String(readPhixProfile()?.display_name || '').trim();
       return { ok: true, detail: name ? `你好，${name}` : '已就绪' };
     },
   },
 ];
+
+/** 共用数据根下的 phix 个人资料文件（PHL / PHL Lite / 网页端共用）。 */
+function phixProfilePath() { return path.join(phixDataRoot().root, 'Profile'); }
+function readPhixProfile() {
+  try { return JSON.parse(fs.readFileSync(phixProfilePath(), 'utf8')); } catch { return null; }
+}
 
 function registerPhixIpc() {
   const handle = (name, handler) => ipcMain.handle(`phix:${name}`, async (event, ...args) => {
@@ -3836,20 +3841,12 @@ function registerPhixIpc() {
     const result = await phixSession.restore();
     return result || { logged_in: false };
   });
-  handle('profile', () => {
-    const layout = phixDataRoot();
-    const profilePath = require('node:path').join(layout.root, 'Profile');
-    try {
-      const text = require('node:fs').readFileSync(profilePath, 'utf8');
-      return JSON.parse(text);
-    } catch { return null; }
-  });
+  handle('profile', () => readPhixProfile());
   handle('save-profile', (input) => {
-    const layout = phixDataRoot();
-    const profilePath = require('node:path').join(layout.root, 'Profile');
-    const doc = input && typeof input === 'object' ? input : {};
+    const doc = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     doc.updated_at = doc.updated_at || new Date().toISOString();
-    require('node:fs').writeFileSync(profilePath, JSON.stringify(doc, null, 2), 'utf8');
+    // Profile 与 PHL Lite / 网页端共用：原子写入，别让对方读到写了一半的文件
+    sharedSettings.atomicWriteFileSync(phixProfilePath(), JSON.stringify(doc, null, 2));
     return doc;
   });
   handle('ping', async (server) => {
@@ -5324,7 +5321,7 @@ async function runSelfTest() {
 
 function createWindow() {
   const applicationIcon = loadApplicationIcon();
-  const theme = require('./window-theme.cjs').windowTheme(secureStore.data.settings.appearance);
+  const theme = windowTheme(secureStore.data.settings.appearance);
   const windowOptions = {
     width: 1440,
     height: 900,
