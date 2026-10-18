@@ -4632,7 +4632,7 @@ async function runCapture() {
     if (initialized) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (['today', 'plan', 'notes', 'dictionary', 'vocabulary', 'school', 'timetable', 'class-timetable', 'courses', 'calendar', 'mail', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
+  if (['today', 'plan', 'notes', 'dictionary', 'vocabulary', 'school', 'timetable', 'courses', 'calendar', 'mail', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
     await mainWindow.webContents.executeJavaScript(`navigate(${JSON.stringify(CAPTURE_ROUTE)})`);
     // The first-run onboarding dialog is modal and would hide every preview; it
     // is scheduled with a timer, so wait it out before dismissing.
@@ -5111,16 +5111,18 @@ async function runSelfTest() {
     navigate('school');
     await window.schoolUI.refresh();
     const schoolRendered = Boolean(document.querySelector('#schoolPage')?.textContent.includes('EduPage'));
-    const schoolNavItems = [...document.querySelectorAll('.primary-nav .nav-item')].slice(1, 6);
+    const schoolNavItems = [...document.querySelectorAll('.primary-nav .nav-item')].slice(1, 5);
     // Read the visible label span: count badges live inside the item but are
     // dynamic content and must not affect the navigation structure check.
     const schoolNavLabels = schoolNavItems.map((item) => item.querySelector('span')?.textContent.trim() || item.textContent.trim());
-    const schoolNavigation = JSON.stringify(schoolNavLabels) === JSON.stringify(['我的课表', '我的日程', '班级课表', '我的课程', '平和邮箱'])
+    const schoolNavigation = JSON.stringify(schoolNavLabels) === JSON.stringify(['我的课表', '我的日程', '我的课程', '平和邮箱'])
       && !document.querySelector('.primary-nav [data-site="edupage"], .primary-nav [data-site="managebac"]');
+    // 班级课表页已删除：旧路由要落到我的课表，导航里也不再有这一项
     navigate('class-timetable');
     await window.schoolUI.refresh();
-    const classTimetableRendered = document.querySelector('#schoolPage h1')?.textContent === '班级课表'
-      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'class-timetable';
+    const classTimetableRemoved = document.querySelector('#schoolPage h1')?.textContent === '我的课表'
+      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'timetable'
+      && !document.querySelector('[data-route="class-timetable"]');
     navigate('courses');
     await window.schoolUI.refresh();
     const coursesRendered = document.querySelector('#schoolPage h1')?.textContent === '我的课程'
@@ -5190,7 +5192,7 @@ async function runSelfTest() {
       schoolRendered,
       schoolNavigation,
       schoolNavLabels,
-      classTimetableRendered,
+      classTimetableRemoved,
       coursesRendered,
       nativeMailRendered,
       nativeXinlvRendered,

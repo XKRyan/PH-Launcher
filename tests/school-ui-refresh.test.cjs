@@ -148,7 +148,7 @@ test('a fresh prior week never suppresses a missing selected-week refresh', asyn
   assert.equal(ui.calls.sync.at(-1).options.force, false);
 });
 
-test('personal and class timetables are independent routes with distinct teaching-group scope', async () => {
+test('my timetable only shows the selected teaching groups; the old class route falls back to it', async () => {
   const weekStart = monday();
   const lesson = (group) => ({ id: group, date: weekStart, start: '08:00', end: '08:40', course: `Course ${group}`, room: 'A101', teacher: 'T', groups: [group], groupKey: group, cancelled: false });
   const ui = harness({
@@ -157,18 +157,15 @@ test('personal and class timetables are independent routes with distinct teachin
   });
   ui.context.window.schoolUI.open('timetable'); await settle();
   assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课表');
-  assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1);
+  assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1, '只显示已选的教学组');
   assert.equal(ui.document.querySelector('.school-course-tabs'), null);
+  assert.equal(ui.document.querySelector('.school-readonly-scope'), null, '不再有班级视图的说明条');
+  assert.ok(ui.document.querySelector('[data-school-action="groups"]'), '个人课表保留选择教学组入口');
   await ui.context.window.schoolUI.open('class-timetable');
-  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '班级课表');
-  assert.equal(ui.document.querySelectorAll('.school-lesson').length, 2);
-  assert.match(ui.document.querySelector('.school-readonly-scope').textContent, /Synthetic Class/);
-  assert.equal(ui.document.querySelector('[data-school-action="groups"]'), null);
-  assert.equal(ui.document.querySelector('[data-school-action="import-plan"]'), null);
-  await ui.context.window.schoolUI.open('timetable');
+  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课表');
   assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1);
   assert.equal(ui.calls.sync.length, 0, 'local route changes must not imply network consent');
-  assert.equal(ui.calls.preferences.length, 0, 'class viewing cannot overwrite personal group selection');
+  assert.equal(ui.calls.preferences.length, 0);
 });
 
 test('course workspace owns its course/notification/task/core sections without aggregate school tabs', async () => {

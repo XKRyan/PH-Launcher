@@ -158,7 +158,7 @@ function createAiLauncherReader({ getData, getSchoolSnapshot, readSchoolDetail, 
     if (args.view === 'personal') {
       const preferences = snapshot?.preferences || {};
       const selected = new Set(Array.isArray(preferences.groups) && preferences.accountKey === cached.accountKey ? preferences.groups : []);
-      if (!selected.size) return unavailable('尚未选择自己的 EduPage 教学组；可读取班级课表，或请用户先选择教学组。');
+      if (!selected.size) return unavailable('尚未选择自己的 EduPage 教学组；可读取全班课表（view=class），或请用户先在“我的课表”里选择教学组。');
       lessons = lessons.filter((item) => selected.has(item.groupKey));
     }
     return wrap({ source: 'edupage', fetchedAt: clean(cached.fetchedAt, 64), weekStart: clean(cached.weekStart, 20), view: args.view, ...paged(lessons, args, projectLesson) });

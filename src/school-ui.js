@@ -64,8 +64,7 @@
    */
   const autoApproved = (source) => state.consent.has(source) || Boolean(state.snapshot.accounts?.[source]?.saved);
   const visible = () => Boolean(root && document.visibilityState !== 'hidden' && root.classList.contains('active'));
-  const isTimetableRoute = () => state.route === 'timetable' || state.route === 'class-timetable';
-  const isClassTimetable = () => state.route === 'class-timetable';
+  const isTimetableRoute = () => state.route === 'timetable';
   const activeSource = () => isTimetableRoute() ? 'edupage' : 'managebac';
   function mergeSnapshot(snapshot, expectedWeek = '') {
     if (!snapshot || typeof snapshot !== 'object') return;
@@ -112,7 +111,7 @@
   // A missing choice is not evidence of enrolment. Personal timetable stays empty
   // until the student explicitly chooses teaching groups.
   const selectedLessons = () => { const data = currentWeek(); const selected = selections(); return selected === null ? [] : (data?.lessons || []).filter((lesson) => selected.includes(lesson.groupKey)); };
-  const displayedLessons = () => isClassTimetable() ? currentWeek()?.lessons || [] : selectedLessons();
+  const displayedLessons = () => selectedLessons();
   const btn = (label, action, extra = '', primary = false) => `<button type="button" class="${primary ? 'primary-button' : 'secondary-button'}" data-school-action="${action}" ${extra}>${esc(label)}</button>`;
   const courseReminderLabel = () => prefs().courseReminderMinutes === null || prefs().courseReminderMinutes === undefined ? '上课提醒：未开启' : prefs().courseReminderMinutes === 0 ? '上课提醒：准时' : `上课提醒：提前 ${prefs().courseReminderMinutes} 分钟`;
   const noData = (title, description, site) => `<div class="school-empty"><span class="school-empty-symbol" aria-hidden="true">${site === 'edupage' ? '▦' : '▤'}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><div class="school-actions">${btn(state.snapshot.accounts?.[site]?.saved ? '修改账号' : '输入账号密码', 'account', `data-site="${site}"`, !state.snapshot.accounts?.[site]?.saved)}${state.snapshot.accounts?.[site]?.saved ? btn('登录并同步', 'connect', `data-source="${site}" ${state.busy.has(site) ? 'disabled' : ''}`, true) : ''}${site === 'edupage' && state.snapshot.cachedWeeks?.length ? btn('查看上次课表', 'cached-week', `data-week="${esc(state.snapshot.cachedWeeks[0])}"`) : ''}</div><small>账号密码只提交给对应学校网站；学校内容不会自动发送给 AI。</small></div>`;
@@ -145,24 +144,19 @@
   function timetable() {
     const data = currentWeek();
     const start = state.week;
-    const classRoute = isClassTimetable();
     // 刷新按钮全部去掉：课表按需自动更新，角落里只留一行数据时间。
     // 「⬇ 导出课表」照网页端：点开是站内小下拉（PNG / CSV 两个条目），不用系统菜单。
     const exportBox = `<span class="school-export" id="schoolExportBox"><button type="button" class="secondary-button" data-school-action="export-menu" aria-haspopup="menu" aria-controls="schoolExportMenu" aria-expanded="${state.exportMenu ? 'true' : 'false'}" ${data ? '' : 'disabled'}>⬇ 导出课表</button><span class="school-export-menu" id="schoolExportMenu" role="menu" ${state.exportMenu ? '' : 'hidden'}><button type="button" role="menuitem" data-school-action="export-png">导出图片 PNG</button><button type="button" role="menuitem" data-school-action="export-csv">导出表格 CSV</button></span></span>`;
-    // 「选择教学组」入口只在**个人课表**出现：班级课表是只读视图（看全班安排），
-    // 从那里打开个人选课弹窗会把两个路由的语义混起来 —— 已有用例明确要求
-    // 班级视图里不存在该按钮。个人视图没选课时有专门的空态大按钮兜底（见下）。
-    const selectionActions = (data && !classRoute) ? `<div class="school-actions">${btn('选择教学组', 'groups')}${btn('自动识别选课', 'auto-groups')}${btn(courseReminderLabel(), 'course-reminder', `${selections()?.length && selectedLessons().some((lesson) => !lesson.cancelled) ? '' : 'disabled'}`)}</div>` : '';
+    // 没选课时有专门的空态大按钮兜底（见下）。
+    const selectionActions = data ? `<div class="school-actions">${btn('选择教学组', 'groups')}${btn('自动识别选课', 'auto-groups')}${btn(courseReminderLabel(), 'course-reminder', `${selections()?.length && selectedLessons().some((lesson) => !lesson.cancelled) ? '' : 'disabled'}`)}</div>` : '';
     const toolbar = `<div class="school-weekbar"><strong>${esc(start)} — ${esc(shift(start, state.showWeekend ? 6 : 4))}</strong><div class="school-actions">${btn('上一周', 'week', 'data-delta="-7" aria-label="上一周"')}${btn('本周', 'week', 'data-delta="0"')}${btn('下一周', 'week', 'data-delta="7" aria-label="下一周"')}${btn(state.showWeekend ? '隐藏周末' : '显示周末', 'toggle-weekend', `aria-pressed="${state.showWeekend}"`)}${exportBox}</div></div>${selectionActions}`;
-    if (!data) return toolbar + syncSummary('edupage') + noData(classRoute ? '查看班级这一周的课程' : '把一周安排放在眼前', state.weeks.size ? '这一周尚未读取，程序会自动补上。' : classRoute ? '先登录 EduPage，再读取当前账号所属班级的课表。这里展示全部可见教学组。' : '先登录 EduPage，再读取本周课表。首次同步后，选择你自己的教学组。', 'edupage');
+    if (!data) return toolbar + syncSummary('edupage') + noData('把一周安排放在眼前', state.weeks.size ? '这一周尚未读取，程序会自动补上。' : '先登录 EduPage，再读取本周课表。首次同步后，选择你自己的教学组。', 'edupage');
     const selected = selections();
     const lessons = groupLessons(displayedLessons());
-    const selectionNotice = classRoute
-      ? `<div class="school-callout school-readonly-scope">当前账号所属班级：${esc(data.className || '班级名称未提供')} · 显示全部可见教学组，不受个人选课筛选影响。<br>本版暂不支持切换到其他班级；添加自己的课程提醒，请前往“我的课表”。</div><div class="school-meta">${esc(data.className || '当前班级')}</div>`
-      : selected === null ? '' : `<div class="school-meta">已选择 ${selected.length} 个教学组 · ${selectedLessons().filter((lesson) => !lesson.cancelled).length} 节有效课程</div>`;
-    if (!classRoute && (!selected || selected.length === 0)) {
+    const selectionNotice = selected === null ? '' : `<div class="school-meta">已选择 ${selected.length} 个教学组 · ${selectedLessons().filter((lesson) => !lesson.cancelled).length} 节有效课程</div>`;
+    if (!selected || selected.length === 0) {
       const configured = Array.isArray(selected);
-      return toolbar + syncSummary('edupage') + `<div class="school-selection-empty"><span class="school-empty-symbol" aria-hidden="true">✓</span><h3>${configured ? '当前没有选择教学组' : '先选择你的教学组'}</h3><p>${configured ? '个人课表保持为空，不会用班级课程代替。' : '班级课表包含所有可选课程。请按科目搜索并勾选你实际参加的教学组，系统不会替你猜测。'}</p>${btn(configured ? '重新选择教学组' : '开始选择教学组', 'groups', '', true)}</div>` + warnings(data);
+      return toolbar + syncSummary('edupage') + `<div class="school-selection-empty"><span class="school-empty-symbol" aria-hidden="true">✓</span><h3>${configured ? '当前没有选择教学组' : '先选择你的教学组'}</h3><p>${configured ? '个人课表保持为空，不会用班级课程代替。' : 'EduPage 课表包含全班所有可选课程。请按科目搜索并勾选你实际参加的教学组，系统不会替你猜测。'}</p>${btn(configured ? '重新选择教学组' : '开始选择教学组', 'groups', '', true)}</div>` + warnings(data);
     }
 
     // ---- 按节次对齐：行 = 节次，列 = 星期（版式照抄 Pinghe Launcher Lite）----
@@ -277,7 +271,6 @@
     const week = currentWeek();
     if (!week) return null;
     const lessons = groupLessons(displayedLessons());
-    const classRoute = isClassTimetable();
     const days7 = [];
     for (let index = 0; index < 7; index += 1) {
       const date = shift(state.week, index);
@@ -306,7 +299,7 @@
         return day.cells[column.index].map(exportLessonText).join('\n');
       }),
     }));
-    return { title: `${classRoute ? '班级课表' : '我的课表'} · ${days7[0].date} ~ ${days7[6].date}`, weekStart: days7[0].date, header, rows, columns: columns.length, days: days7.length };
+    return { title: `我的课表 · ${days7[0].date} ~ ${days7[6].date}`, weekStart: days7[0].date, header, rows, columns: columns.length, days: days7.length };
   }
   /** 一节课在导出表里的文字：课程 · 教室 · 老师（和网页端一个格式）。 */
   function exportLessonText(lesson) {
@@ -672,7 +665,7 @@
     timeLineObserver?.disconnect();
     const source = activeSource();
     const data = state.snapshot[source];
-    const page = isClassTimetable() ? { title: '班级课表', description: '查看当前账号所属班级的课程与教室安排。' } : state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
+    const page = state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
     // 用户 2026-09-19：「所有同步、刷新全都自动，不要让用户察觉，最多来一行不起眼的小字
     // 在角落」—— 所以这里没有「自动更新」开关、也没有刷新按钮，只有右下角那行数据时间。
     root.innerHTML = `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div>${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size && !data ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
@@ -941,7 +934,7 @@
       }
       if (action === 'course-reminder') {
         const value = prefs().courseReminderMinutes;
-        showDialog('上课提醒', `<p>只提醒当前账号、你已选择的教学组中的课程；班级课表和未选择的教学组不会触发提醒。</p><div class="school-actions">${[[null, '不提醒'], [0, '准时提醒'], [5, '提前 5 分钟'], [10, '提前 10 分钟'], [15, '提前 15 分钟'], [30, '提前 30 分钟'], [60, '提前 60 分钟']].map(([minutes, label]) => btn(label, 'save-course-reminder', `data-minutes="${minutes === null ? '' : minutes}" ${value === minutes ? 'aria-pressed="true"' : ''}`, value === minutes)).join('')}</div><p class="school-footnote">此设置只影响学校个人课表，不会更改日程提醒或手动计划中的已有提醒。</p>`);
+        showDialog('上课提醒', `<p>只提醒当前账号、你已选择的教学组中的课程；未选择的教学组不会触发提醒。</p><div class="school-actions">${[[null, '不提醒'], [0, '准时提醒'], [5, '提前 5 分钟'], [10, '提前 10 分钟'], [15, '提前 15 分钟'], [30, '提前 30 分钟'], [60, '提前 60 分钟']].map(([minutes, label]) => btn(label, 'save-course-reminder', `data-minutes="${minutes === null ? '' : minutes}" ${value === minutes ? 'aria-pressed="true"' : ''}`, value === minutes)).join('')}</div><p class="school-footnote">此设置只影响学校个人课表，不会更改日程提醒或手动计划中的已有提醒。</p>`);
       }
       if (action === 'save-course-reminder') { button.disabled = true; const raw = button.dataset.minutes; await savePreferences({ courseReminderMinutes: raw === '' ? null : Number(raw) }); modal.close(); state.notice = '上课提醒设置已保存。'; render(); }
       if (action === 'import-plan') {
@@ -990,7 +983,7 @@
     catch (error) { state.error = userError(error, '无法读取学校工作台'); render(); }
   }
   function normalizeRoute(route) {
-    return ['timetable', 'class-timetable', 'courses'].includes(route) ? route : 'timetable';
+    return ['timetable', 'courses'].includes(route) ? route : 'timetable';
   }
   // Drag-to-reorder for the course list. The order is stored locally in the
   // school preferences so it survives re-syncs, and the animation is pure CSS.

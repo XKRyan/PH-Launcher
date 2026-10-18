@@ -49,12 +49,12 @@ function appHarness() {
   return { document, calls, runtime: context.__schoolNavigation };
 }
 
-test('学校应用侧栏只保留指定的五项，且顺序固定', () => {
+test('学校应用侧栏只保留指定的四项，且顺序固定（班级课表已删除）', () => {
   const { document } = parseHTML(pageSource);
   const items = schoolNavigationItems(document);
-  assert.deepEqual(items.map((item) => item.textContent.trim()), ['我的课表', '我的日程', '班级课表', '我的课程', '平和邮箱']);
+  assert.deepEqual(items.map((item) => item.textContent.trim()), ['我的课表', '我的日程', '我的课程', '平和邮箱']);
   assert.deepEqual(items.map((item) => item.dataset.route || `site:${item.dataset.site}`), [
-    'timetable', 'calendar', 'class-timetable', 'courses', 'mail',
+    'timetable', 'calendar', 'courses', 'mail',
   ]);
   assert.equal(document.querySelector('.primary-nav [data-site="managebac"]'), null);
   assert.equal(document.querySelector('.primary-nav [data-site="edupage"]'), null);
@@ -71,12 +71,12 @@ test('学校路由复用学校页面并保持各自的活动状态', () => {
   assert.equal(document.querySelector('#topTitle').textContent, '我的课表');
   assert.deepEqual(calls.school, ['timetable']);
 
+  // 班级课表页已删除：旧路由（快捷方式、AI 跳转）落到我的课表
   runtime.navigate('class-timetable');
-  assert.equal(runtime.state.route, 'class-timetable');
-  assert.equal(document.querySelector('#schoolPage').classList.contains('active'), true);
-  assert.equal(document.querySelector('[data-route="class-timetable"]').classList.contains('active'), true);
-  assert.equal(document.querySelector('#topTitle').textContent, '班级课表');
-  assert.deepEqual(calls.school, ['timetable', 'class-timetable']);
+  assert.equal(runtime.state.route, 'timetable');
+  assert.equal(document.querySelector('[data-route="class-timetable"]'), null);
+  assert.equal(document.querySelector('#topTitle').textContent, '我的课表');
+  assert.deepEqual(calls.school, ['timetable', 'timetable']);
 
   runtime.navigate('school');
   assert.equal(runtime.state.route, 'timetable', '旧 school 路由应继续打开个人课表');

@@ -25,14 +25,14 @@ const ROUTE_META = {
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
   psychology: { title: '心履', eyebrow: 'WELLBEING' },
-  'class-timetable': { title: '班级课表', eyebrow: 'CLASS TIMETABLE', page: 'school' },
   courses: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   ib: { title: 'IB 工具', eyebrow: 'IB TOOLKIT' },
   ai: { title: 'AI 学习助手', eyebrow: 'OPTIONAL AI' },
   settings: { title: '设置', eyebrow: 'PREFERENCES' },
 };
-const ROUTE_ALIASES = { school: 'timetable' };
-const SCHOOL_WORKSPACE_ROUTES = new Set(['timetable', 'class-timetable', 'courses']);
+// class-timetable：班级课表页已删除，旧的快捷方式/AI 跳转落到我的课表
+const ROUTE_ALIASES = { school: 'timetable', 'class-timetable': 'timetable' };
+const SCHOOL_WORKSPACE_ROUTES = new Set(['timetable', 'courses']);
 const SUBJECTS = ['通用', 'English', 'Chinese', 'Math', 'Physics', 'Chemistry', 'Biology', 'Economics', 'Humanities', 'EE', 'TOK', 'CAS'];
 const LOCAL_MODEL_SIZES = {
   'qwen3.5:0.8b': 1.0,
@@ -2828,7 +2828,6 @@ function commandCatalog() {
     { id: 'focus', label: '开始或暂停专注', description: '控制当前计时器', icon: 'i-clock', shortcut: 'Ctrl Shift P' },
     { id: 'timetable', label: '打开我的课表', description: '查看自己的教学组课表', icon: 'i-calendar', shortcut: '' },
     { id: 'calendar', label: '打开我的日程', description: '管理个人日程', icon: 'i-calendar', shortcut: '' },
-    { id: 'class-timetable', label: '打开班级课表', description: '查看班级全部可见教学组', icon: 'i-grid', shortcut: '' },
     { id: 'courses', label: '打开我的课程', description: '查看课程、作业与截止信息', icon: 'i-book', shortcut: '' },
     { id: 'plan', label: '打开计划', description: '任务、课程表与专注记录', icon: 'i-calendar', shortcut: '' },
     { id: 'ib', label: '打开 IB 工具', description: '指令词、字数与成绩试算', icon: 'i-flask', shortcut: '' },
