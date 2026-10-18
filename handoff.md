@@ -6,7 +6,7 @@
 
 新增作业筛选、否定状态识别、分段要求与附件、选择文件后明确确认上传、单次令牌/24 MB/账号绑定/结果未核实保护，以及返回课程和刷新入口。学校表单限定到当前任务；上传 POST 不自动重试。真实学校提交未测试，也未执行。英文及 24px 小窗口已用真实 Electron 合成页面检查。
 
-本地首轮 1014 项回归与 source self-test 通过。PHL Lite 账号兼容测试使用独立仓库固定提交 cd420f40a05dfae8b3482b851785ba4411d7b48d（PHL_LITE_DIR）；Windows 禁用 checkout 换行转换以保持字节一致。独立 npm ci，不使用 node_modules 联接。打包证据将由 build-v2 工作流按精确提交记录。
+本地首轮 1014 项回归与 source self-test 通过，补充上传重试保护后 1015 项通过。PHL Lite 账号兼容测试使用独立仓库固定提交 cd420f40a05dfae8b3482b851785ba4411d7b48d（PHL_LITE_DIR）；Windows 禁用 checkout 换行转换以保持字节一致。独立 npm ci，不使用 node_modules 联接。打包证据由 build-v2 工作流按精确提交记录。发布前另增加旧 macOS 构建入口保护测试，避免 main 推送重复触发不适用于 v2 的旧流水线；v2 使用统一的双平台验证入口。
 
 macOS 仓库没有签名 secrets，使用既有 ad-hoc Universal DMG/ZIP 验证流程，不宣称 Developer ID 或公证。旧 v1 发布工作流已限制到 v1 标签，v2 通过已注册 build-collaboration 入口调用 build-v2，验证后手动发布已验证产物。GitHub 发布不等同于更新 phix.ing 独立更新服务器；本次不改该服务。
 

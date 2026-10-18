@@ -1,20 +1,7 @@
-name: Build unsigned macOS packages
+name: Build legacy v1 unsigned macOS packages
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/build-macos.yml"
-      - "assets/**"
-      - "build/**"
-      - "electron/**"
-      - "scripts/**"
-      - "src/**"
-      - "tests/**"
-      - "package.json"
-      - "package-lock.json"
 
 permissions:
   contents: read
@@ -35,6 +22,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Reject newer releases in the legacy pipeline
+        run: node -e "if (!require('./package.json').version.startsWith('1.')) { console.error('Use build-v2.yml for v2+ reviewed packages.'); process.exit(1); }"
       - name: Install dependencies
         run: npm ci
       - name: Prepare pinned offline dictionary

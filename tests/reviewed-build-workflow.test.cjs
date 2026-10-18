@@ -8,6 +8,14 @@ function workflow(name) {
   return yaml.load(fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', name), 'utf8'), { schema: yaml.JSON_SCHEMA });
 }
 
+test('legacy macOS builder cannot run on main pushes or package v2 via an obsolete pipeline', () => {
+  const legacy = workflow('build-macos.yml');
+  assert.deepEqual(Object.keys(legacy.on), ['workflow_dispatch']);
+  const steps = legacy.jobs['build-universal'].steps;
+  const guard = steps.findIndex(step => step.run?.includes("version.startsWith('1.')"));
+  assert.ok(guard >= 0 && guard < steps.findIndex(step => step.run === 'npm ci'));
+});
+
 test('registered manual entry invokes the reviewed build from the same commit without duplicate preview jobs', () => {
   const caller = workflow('build-collaboration.yml');
   const build = workflow('build-v2.yml');
