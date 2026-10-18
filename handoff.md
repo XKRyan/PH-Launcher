@@ -12,6 +12,8 @@ macOS 仓库没有签名 secrets，使用既有 ad-hoc Universal DMG/ZIP 验证�
 
 最终双平台构建 https://github.com/XKRyan/PH-Launcher/actions/runs/39129247306 成功，产物源码提交 63fc62894a927f91fe97643d3d9ae1adf8c66a80；两端各 1016 项测试、源码与打包后启动自检通过，macOS DMG/ZIP 各核验 13 个 Universal Mach-O 文件。因本机 Azure 大文件下载异常，旧 build-macos 手动入口改为“核验成功构建 → 下载原产物 → 逐文件 SHA-256 检查 → 上传到空白草稿”，不重新打包、不覆盖资产、不自动公开。此后提交仅修改发布工具及交接，应用源码仍与上述已测提交一致。
 
+发布完成：2026-10-18 已快进合入 main，PR #10 已合并；v2.0.0 标签指向上述已测构建提交。正式发布页 https://github.com/XKRyan/PH-Launcher/releases/tag/v2.0.0，包含 Windows Setup、Universal DMG/ZIP、更新元数据、SHA-256 与两端构建证据。传输工作流 39130040152 成功；另通过 GitHub Release API 的 digest/size 与原构建证据逐项比对。最终发布工具改动后的本地 1016 项测试全部通过（v2-publication-final-tests.log）。本机仅完整下载了 release/v2.0.0-verified/evidence 的小型证据文件；完整安装包在正式发布页，不要把本机失败下载留下的零字节 artifact.zip 当作安装包。未改 phix.ing 更新服务器，未执行真实学校登录或作业提交。
+
 ## 1.0.10（2026-09-10，main 线）
 
 2026-09-10：1.0.10 为 AI 完整权限新增日程删除能力。AI 必须先读取真实日程 id，只能生成待确认删除清单；用户确认后才删除。数据变化会使清单失效，每周重复日程会明确提示整组删除。1.0.9 的聊天记录恢复修复继续保留。
