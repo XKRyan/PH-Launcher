@@ -11,6 +11,7 @@ function fixture(authenticate = async () => {}) {
   const calls = [];
   const attempts = [];
   const context = vm.createContext({
+    taskUploadInFlight: false,
     rememberSchoolAttempt: (site) => attempts.push(site),
     SchoolAuthError, SchoolDataError, schoolSessionMutations: new Set(),
     invalidateSchoolSnapshots: () => calls.push('invalidate'),

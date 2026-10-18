@@ -9,6 +9,7 @@ function fixture() {
   const handlers = new Map(); let saved = null; let invalidations = 0; let resolveClear; let rejectClear;
   const clearing = new Promise((resolve, reject) => { resolveClear = resolve; rejectClear = reject; });
   const context = vm.createContext({
+    taskUploadInFlight: false,
     schoolSessionMutations: new Set(),
     invalidateSchoolSnapshots: () => { invalidations += 1; },
     assertMainRenderer: () => {},
@@ -22,6 +23,13 @@ function fixture() {
   vm.runInContext(main.slice(main.indexOf("  ipcMain.handle('credentials:save'"), main.indexOf("  ipcMain.handle('credentials:remove'")), context);
   return { context, handlers, resolveClear, rejectClear, get saved() { return saved; }, get invalidations() { return invalidations; } };
 }
+
+test('active task upload blocks ManageBac account mutation but not EduPage', async () => {
+  const f = fixture(); f.context.taskUploadInFlight = true;
+  await assert.rejects(f.context.mutateSchoolSession('managebac', async () => {}), /正在上传/);
+  assert.equal(f.invalidations, 0);
+  assert.doesNotThrow(() => f.context.assertSchoolSessionReady('edupage'));
+});
 
 test('account switch blocks new school work and commits credentials only after clearing old cookies', async () => {
   const f = fixture();

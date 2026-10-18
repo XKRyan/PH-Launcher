@@ -72,6 +72,7 @@ test('upload resolves the page form, copies every hidden field and posts the fil
   } });
   const result = await client.submitTaskFile('21', '31', { bytes: Buffer.from('essay-bytes'), filename: 'essay.docx' });
   assert.equal(result.taskId, '31');
+  assert.equal(result.verification, 'unverified');
   const post = requests.find((request) => request.method === 'POST');
   assert.equal(post.url, 'https://shph.managebac.cn/student/classes/21/core_tasks/31/dropbox/upload');
   assert.match(post.headers['Content-Type'], /^multipart\/form-data; boundary=/);
@@ -161,4 +162,65 @@ test('writes fail closed on an expired session and never treat it as success', a
     return response('rejected', 422);
   } });
   await assert.rejects(rejected.submitTaskFile('21', '31', { bytes: Buffer.from('bytes'), filename: 'e.docx' }), { code: 'NETWORK_ERROR' });
+});
+
+test('upload refuses forms scoped to another class or task and destructive method overrides', async () => {
+  for (const html of [
+    dropboxHtml.replace('/classes/21/', '/classes/99/'),
+    dropboxHtml.replace('/core_tasks/31/', '/core_tasks/131/'),
+    dropboxHtml.replace('/core_tasks/31', ''),
+    dropboxHtml.replace('value="patch"', 'value="delete"'),
+    dropboxHtml.replace(`value="${TOKEN}"`, 'value=""').replace(`<meta name="csrf-token" content="${TOKEN}">`, ''),
+  ]) {
+    let posts = 0;
+    const client = new SchoolDataClient({ pause: async () => {}, fetch: async (site, url, init) => {
+      if (init.method === 'POST') posts += 1;
+      return response(html);
+    } });
+    await assert.rejects(client.submitTaskFile('21', '31', { bytes: Buffer.from('bytes'), filename: 'e.docx' }), { code: 'NO_SUBMISSION' });
+    assert.equal(posts, 0);
+  }
+});
+
+test('upload preserves repeated hidden values verbatim and ignores disabled controls', async () => {
+  let posted = '';
+  const html = dropboxHtml.replace('</form>', '<input type="hidden" name="extra[]" value="a  b"><input type="hidden" name="extra[]" value="c"><input type="hidden" disabled name="disabled" value="no"></form>');
+  const client = new SchoolDataClient({ fetch: async (site, url, init) => {
+    if (init.method === 'GET') return response(html);
+    posted = bodyText(init.body);
+    return response('', 303, { location: '/student/classes/21/core_tasks/31' });
+  } });
+  await client.submitTaskFile('21', '31', { bytes: Buffer.from('bytes'), filename: 'e.docx' });
+  assert.equal((posted.match(/name="extra\[\]"/g) || []).length, 2);
+  assert.match(posted, /a  b/);
+  assert.doesNotMatch(posted, /name="disabled"/);
+});
+
+test('upload rejects ambiguous redirects or HTTP 200 login pages without retrying POST', async () => {
+  for (const [body, status, headers, code] of [
+    ['', 302, { location: 'https://evil.test/student/classes/21/core_tasks/31' }, 'SUBMISSION_UNCONFIRMED'],
+    ['', 302, { location: '/student/classes/21/core_tasks/131' }, 'SUBMISSION_UNCONFIRMED'],
+    ['', 307, { location: '/student/classes/21/core_tasks/31/dropbox/upload' }, 'SUBMISSION_UNCONFIRMED'],
+    ['', 302, {}, 'SUBMISSION_UNCONFIRMED'],
+    ['<form><input type="password"></form>', 200, {}, 'LOGIN_REQUIRED'],
+  ]) {
+    let posts = 0;
+    const client = new SchoolDataClient({ fetch: async (site, url, init) => {
+      if (init.method === 'GET') return response(dropboxHtml);
+      posts += 1;
+      return response(body, status, headers);
+    } });
+    await assert.rejects(client.submitTaskFile('21', '31', { bytes: Buffer.from('bytes'), filename: 'e.docx' }), { code });
+    assert.equal(posts, 1);
+  }
+});
+
+test('dropbox discovery does not follow another task containing the requested digits', async () => {
+  const requested = [];
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (site, url) => {
+    requested.push(url);
+    return response('<a href="/student/classes/21/core_tasks/131/dropbox/new">Upload</a>');
+  } });
+  await assert.rejects(client.submitTaskFile('21', '31', { bytes: Buffer.from('bytes'), filename: 'e.docx' }), { code: 'NO_SUBMISSION' });
+  assert.ok(requested.every(url => !url.includes('/131/')));
 });

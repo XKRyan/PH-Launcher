@@ -115,25 +115,36 @@ function parseCsrfToken(html) {
 }
 // Rails dropbox uploads must reproduce the page's own form: routing only accepts
 // PATCH (hidden _method), and the file field name is server-generated.
-function parseDropboxUploadForm(html) {
+function parseDropboxUploadForm(html, courseId, taskId) {
   const doc = htmlDocument(html);
   for (const form of doc.querySelectorAll('form')) {
     const action = clean(form.getAttribute('action'), 400);
     if (String(form.getAttribute('method') || 'get').toLowerCase() !== 'post' || !/dropbox/i.test(action)) continue;
-    const input = form.querySelector('input[type="file"]');
+    let target;
+    try { target = new URL(readUrl('managebac', action, 'POST')); } catch { continue; }
+    // A form displayed on this page is not proof that it submits to this task.
+    if (!new RegExp(`^/student/classes/${courseId}/core_tasks/${taskId}/dropbox(?:/[a-z_]+)*$`).test(target.pathname)) continue;
+    const input = form.querySelector('input[type="file"]:not([disabled])');
     const field = clean(input?.getAttribute('name'), 200);
     if (!field) continue;
-    const fields = {};
-    for (const hidden of form.querySelectorAll('input[type="hidden"]')) {
+    const fields = Object.create(null);
+    const hiddenInputs = [...form.querySelectorAll('input[type="hidden"]:not([disabled])')];
+    if (hiddenInputs.length > 37) continue;
+    let unsupported = false;
+    for (const hidden of hiddenInputs) {
       const name = clean(hidden.getAttribute('name'), 200);
-      if (name && !Object.hasOwn(fields, name)) fields[name] = clean(hidden.getAttribute('value'), 2000);
+      const value = String(hidden.getAttribute('value') || '');
+      if (value.length > 8000) { unsupported = true; break; }
+      if (name) fields[name] = Object.hasOwn(fields, name) ? [].concat(fields[name], value) : value;
     }
-    const submit = form.querySelector('input[type="submit"], button[name]');
+    if (unsupported || (fields._method && (typeof fields._method !== 'string' || !/^(?:post|patch)$/i.test(fields._method)))) continue;
+    const submit = form.querySelector('input[type="submit"]:not([disabled]), button[type="submit"][name]:not([disabled])');
     const submitName = clean(submit?.getAttribute('name'), 200);
     if (submitName && !Object.hasOwn(fields, submitName)) fields[submitName] = clean(submit.getAttribute('value'), 2000);
     const token = fields.authenticity_token || parseCsrfToken(html);
+    if (typeof token !== 'string' || !token) continue;
     if (token) fields.authenticity_token = token;
-    return { field, action, fields, token };
+    return { field, action: target.href, fields, token };
   }
   return null;
 }
@@ -257,8 +268,7 @@ function parseDropboxLinks(html, courseId, taskId) {  const doc = htmlDocument(h
     let url;
     try { url = new URL(href, ORIGINS.managebac); } catch { continue; }
     if (url.origin !== ORIGINS.managebac || url.username || url.password || url.search || url.hash) continue;
-    if (!new RegExp(`^/student/classes/${courseId}/`).test(url.pathname)) continue;
-    if (!/^\/student\/classes\/\d+\/(?:core_tasks\/\d+\/)?dropbox(?:\/[a-z_]+)*$/.test(url.pathname)) continue;
+    if (!new RegExp(`^/student/classes/${courseId}/core_tasks/${taskId}/dropbox(?:/[a-z_]+)*$`).test(url.pathname)) continue;
     if (!found.includes(url.pathname)) found.push(url.pathname);
   }
   return found.slice(0, 3);
@@ -367,10 +377,44 @@ function parseCourseFiles(html, courseId) {
   return [...doc.querySelectorAll('.row.file, [data-ec3-info]')].slice(0, 100).map((row) => {
     let metadata = {};
     try { metadata = JSON.parse(row.getAttribute('data-ec3-info') || '{}'); } catch { /* Display visible filename only. */ }
-    return { name: clean(metadata.name, 180) || text(row, null, 180), url: `${ORIGINS.managebac}/student/classes/${courseId}/files` };
+    const direct = taskAttachments(row)[0];
+    return { name: clean(metadata.name, 180) || direct?.name || text(row, null, 180), url: direct?.url || `${ORIGINS.managebac}/student/classes/${courseId}/files` };
   }).filter((item) => item.name);
 }
-function parseTaskDetail(html) {
+function taskAttachments(root, courseId, taskId) {
+  const items = new Map();
+  const original = /^\d+$/.test(String(courseId)) && /^\d+$/.test(String(taskId))
+    ? `${ORIGINS.managebac}/student/classes/${courseId}/core_tasks/${taskId}` : '';
+  for (const link of root.querySelectorAll('a[href]')) {
+    if (link.closest('form, .recent-discussions')) continue;
+    let url;
+    try { url = new URL(link.getAttribute('href'), ORIGINS.managebac); } catch { continue; }
+    if (url.origin !== ORIGINS.managebac || url.username || url.password || !/^\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(url.pathname)) continue;
+    const name = text(link, null, 180) || clean(link.getAttribute('download'), 180);
+    if (!name) continue;
+    // Existing school URLs can be opened in the authenticated browser. Signed
+    // links stay on the original page instead of leaking credentials to cache.
+    const direct = !url.search && !url.hash;
+    const href = direct ? readUrl('managebac', url.href) : original;
+    if (href) items.set(`${href}|${name}`, { name, url: href, ...(direct ? {} : { originalPage: true }) });
+  }
+  if (original) for (const row of root.querySelectorAll('[data-ec3-info]')) {
+    if (row.closest('form, .recent-discussions')) continue;
+    let metadata;
+    try { metadata = JSON.parse(row.getAttribute('data-ec3-info') || '{}'); } catch { continue; }
+    const name = clean(metadata?.name, 180);
+    if (name && ![...items.values()].some(item => item.name === name)) items.set(`${original}|${name}`, { name, url: original, originalPage: true });
+  }
+  return [...items.values()].slice(0, 30);
+}
+function taskDescription(node) {
+  const copy = node.cloneNode(true);
+  for (const item of copy.querySelectorAll('form,input,textarea,button,.recent-discussions,.title,.badge-label,.due-date,.assessment,[data-ec3-info]')) item.remove();
+  for (const item of copy.querySelectorAll('br')) item.replaceWith('\n');
+  for (const item of copy.querySelectorAll('p,div,li,h1,h2,h3,h4,h5,h6,tr,section')) { item.prepend('\n'); item.append('\n'); }
+  return String(copy.textContent || '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, 8000);
+}
+function parseTaskDetail(html, courseId, taskId) {
   const doc = htmlDocument(html);
   const root = doc.querySelector('.core-task-show');
   if (!root) fail('PAGE_CHANGED', '没有识别到作业详情，请在原网页查看');
@@ -380,9 +424,7 @@ function parseTaskDetail(html) {
   const dueText = text(head, '.due-date', 200);
   const dueAt = exactDueDate(head);
   const score = text(head, '.assessment', 120);
-  const copy = root.cloneNode(true);
-  for (const node of copy.querySelectorAll('form,input,textarea,button,.recent-discussions,.fusion-card-item')) node.remove();
-  return { title, status, dueText, dueAt, score, description: text(copy, null, 8000) };
+  return { title, status, dueText, dueAt, score, description: taskDescription(root), attachments: taskAttachments(root, courseId, taskId) };
 }
 function discussionAuthor(node) {
   if (!node) return { author: '', category: '' };
@@ -664,7 +706,15 @@ class SchoolDataClient {
           // Rails answers a successful upload or reply with a redirect back to the
           // material itself; there is nothing further to read from it.
           if (method !== 'GET') {
-            if (site === 'managebac') return '';
+            if (site === 'managebac') {
+              const source = new URL(url);
+              const scope = source.pathname.match(/^\/student\/classes\/\d+\/(?:core_tasks\/\d+|discussions\/\d+)(?=\/|$)/)?.[0];
+              if (![302, 303].includes(response.status) || !response.headers.get('location') || !scope
+                || destination.origin !== source.origin || destination.username || destination.password
+                || (destination.pathname !== scope && !destination.pathname.startsWith(`${scope}/`))) fail('SUBMISSION_UNCONFIRMED', '网站返回了无法确认的提交结果，请在原网页核对，勿重复提交');
+              readUrl(site, destination.href);
+              return '';
+            }
             fail('PAGE_CHANGED', 'EduPage 课表请求需要重新登录');
           }
           url = readUrl(site, destination.href); continue;
@@ -788,7 +838,7 @@ class SchoolDataClient {
   async getTaskDetail(courseId, taskId) {
     const cid = validatedId(courseId); const tid = validatedId(taskId);
     const path = `/student/classes/${cid}/core_tasks/${tid}`;
-    return { id: `managebac:${cid}:${tid}`, courseId: cid, taskId: tid, url: `${ORIGINS.managebac}${path}`, ...parseTaskDetail(await this.request('managebac', path)), fetchedAt: this.now().toISOString() };
+    return { id: `managebac:${cid}:${tid}`, courseId: cid, taskId: tid, url: `${ORIGINS.managebac}${path}`, ...parseTaskDetail(await this.request('managebac', path), cid, tid), fetchedAt: this.now().toISOString() };
   }
   async getCourseDiscussions(courseId) {
     const id = validatedId(courseId); const path = `/student/classes/${id}/discussions`;
@@ -812,7 +862,7 @@ class SchoolDataClient {
         if (error.code === 'LOGIN_REQUIRED') throw error;
         continue;
       }
-      const entry = parseDropboxUploadForm(html);
+      const entry = parseDropboxUploadForm(html, courseId, taskId);
       if (entry?.action) return entry;
       for (const linked of parseDropboxLinks(html, courseId, taskId)) {
         let target;
@@ -820,7 +870,7 @@ class SchoolDataClient {
           if (error.code === 'LOGIN_REQUIRED') throw error;
           continue;
         }
-        const linkedEntry = parseDropboxUploadForm(target);
+        const linkedEntry = parseDropboxUploadForm(target, courseId, taskId);
         if (linkedEntry?.action) return linkedEntry;
       }
       await this.pause(120);
@@ -836,8 +886,9 @@ class SchoolDataClient {
     if (!entry) fail('NO_SUBMISSION', '这个任务没有可用的网上提交入口，可能已截止或需要老师开放；请到 ManageBac 网页确认');
     const { body, contentType } = buildMultipart({ fields: entry.fields, file: { field: entry.field, filename: clean(filename, 180) || 'file', bytes: content } });
     const headers = entry.token ? { 'X-CSRF-Token': entry.token, 'X-Requested-With': 'XMLHttpRequest' } : {};
-    await this.request('managebac', entry.action, { method: 'POST', body, contentType, headers });
-    return { courseId: cid, taskId: tid, bytes: content.length, url: `${ORIGINS.managebac}/student/classes/${cid}/core_tasks/${tid}`, submittedAt: this.now().toISOString() };
+    const result = await this.request('managebac', entry.action, { method: 'POST', body, contentType, headers });
+    if (result) htmlDocument(result); // A login form returned with HTTP 200 is not success.
+    return { courseId: cid, taskId: tid, bytes: content.length, url: `${ORIGINS.managebac}/student/classes/${cid}/core_tasks/${tid}`, submittedAt: this.now().toISOString(), verification: 'unverified' };
   }
   async replyToDiscussion(courseId, discussionId, text, { private: isPrivate = false } = {}) {
     const cid = validatedId(courseId); const did = validatedId(discussionId);

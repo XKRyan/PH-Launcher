@@ -173,6 +173,9 @@ contextBridge.exposeInMainWorld('ph', {
     discussions: (courseId) => ipcRenderer.invoke('school:discussions', courseId),
     discussion: (courseId, id) => ipcRenderer.invoke('school:discussion', courseId, id),
     task: (courseId, id) => ipcRenderer.invoke('school:task', courseId, id),
+    prepareTaskUpload: (courseId, taskId) => ipcRenderer.invoke('school:prepare-task-upload', courseId, taskId),
+    submitTaskUpload: (token) => ipcRenderer.invoke('school:submit-task-upload', token),
+    cancelTaskUpload: (token) => ipcRenderer.invoke('school:cancel-task-upload', token),
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
     // 通知 / 待办（ManageBac）：未读数 + 待办条目（与网页端同一口径）
     notifications: () => ipcRenderer.invoke('school:notifications'),

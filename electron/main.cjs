@@ -150,6 +150,7 @@ const vocabularyCatalog = require('./vocabulary-catalog.cjs');
 const vocabularyPlacement = require('./vocabulary-placement.cjs');
 const { starterPacks, starterCards } = require('./vocabulary-starters.cjs');
 const { SchoolDataClient, SchoolDataError, readUrl: schoolReadUrl } = require('./school-data.cjs');
+const { createTaskUploadManager } = require('./school-task-upload.cjs');
 const { createSchoolFetch } = require('./school-transport.cjs');
 const { SchoolAuthenticator, SchoolAuthError } = require('./school-auth.cjs');
 const { SchoolCache } = require('./school-cache.cjs');
@@ -1431,7 +1432,31 @@ async function syncSchool(source, options = {}) {
   return schoolSnapshot();
 }
 
+let taskUploadInFlight = false;
+const taskUploads = createTaskUploadManager({
+  getRevision: () => {
+    assertSchoolSessionReady('managebac');
+    const account = credentialStatus().sites?.managebac;
+    if (!account?.saved) throw new Error('请先登录 ManageBac');
+    return JSON.stringify([schoolState.epoch.managebac, account]);
+  },
+  chooseFile: async (courseId, taskId) => {
+    // Read/authenticate before presenting the picker. The write itself is never
+    // wrapped in withSession, which may retry an operation after logging in.
+    await readSchoolDetail(() => schoolClient.getTaskDetail(courseId, taskId));
+    const result = await showLocalizedOpenDialog(mainWindow, { title: '选择作业文件', properties: ['openFile'] });
+    return result.canceled ? null : result.filePaths[0];
+  },
+  submit: async (courseId, taskId, file) => {
+    assertSchoolSessionReady('managebac');
+    taskUploadInFlight = true;
+    try { return await schoolClient.submitTaskFile(courseId, taskId, file); }
+    finally { taskUploadInFlight = false; }
+  },
+});
+
 function assertSchoolSessionReady(source) {
+  if (source === 'managebac' && taskUploadInFlight) throw new Error('作业正在上传，请等待结果后再更改账号或操作');
   if (schoolSessionMutations.has(source)) throw new Error('正在更新此网站的账号，请稍后再试');
 }
 
@@ -2733,8 +2758,11 @@ async function executeAiEffect(action) {
     const stat = await fs.promises.stat(target);
     if (!stat.isFile() || !stat.size || stat.size > 24 * 1024 * 1024) throw new Error('要提交的文件已不符合要求，请重新生成清单');
     const bytes = await fs.promises.readFile(target);
-    await schoolClient.submitTaskFile(action.courseId, action.taskId, { bytes, filename: action.filename });
-    return { ok: true, message: `已提交 ${action.relative}，请到 ManageBac 网页确认是否收到` };
+    assertSchoolSessionReady('managebac');
+    taskUploadInFlight = true;
+    try { await schoolClient.submitTaskFile(action.courseId, action.taskId, { bytes, filename: action.filename }); }
+    finally { taskUploadInFlight = false; }
+    return { ok: true, message: `已发送 ${action.relative} 的上传请求，尚未确认学校收件，请到 ManageBac 作业页面核对` };
   }
   if (action?.type === 'reply-discussion') {
     assertSchoolSessionReady('managebac');
@@ -4078,6 +4106,9 @@ function registerIpc() {
   schoolHandle('discussions', (id) => readSchoolDetail(() => schoolClient.getCourseDiscussions(id)));
   schoolHandle('discussion', (courseId, id) => readSchoolDetail(() => schoolClient.getDiscussionDetail(courseId, id)));
   schoolHandle('task', (courseId, id) => readSchoolDetail(() => schoolClient.getTaskDetail(courseId, id)));
+  schoolHandle('prepare-task-upload', (courseId, taskId) => taskUploads.prepare(courseId, taskId));
+  schoolHandle('submit-task-upload', (token) => taskUploads.confirm(token));
+  schoolHandle('cancel-task-upload', (token) => taskUploads.cancel(token));
   schoolHandle('ib-overview', (kind) => readSchoolDetail(() => schoolClient.getCoreOverview(kind)));
   // 通知 / 待办（与网页端同一口径）。读得到就顺手写进共用 data/School，
   // 让 Pinghe Launcher Lite 也少一次抓取。
