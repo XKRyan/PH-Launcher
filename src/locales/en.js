@@ -872,5 +872,14 @@
     '链接未能打开，请重试或切换下载来源。': 'Could not open the link. Retry or choose another source.',
     '打开本机阅读器，或下载安装': 'Open the installed reader, or download it',
   });
+  Object.assign(root.PH_EN.exact, {
+    '搜索课程': 'Search courses', '查看作业与课程资料 →': 'Assignments and resources →',
+    '没有匹配的课程': 'No matching courses', '暂无待处理作业': 'No pending assignments',
+    '暂未识别到单元与计划。': 'No unit plans were found.', '返回课程列表': 'Back to courses',
+    '返回列表': 'Back to list', '重试': 'Retry', '暂无待处理通知': 'No pending notifications',
+    '只显示当前待处理作业；同步确认已提交后自动移除，同一作业只保留一条。': 'Only pending assignments are shown. Submitted work is removed after sync, with one entry per assignment.',
+    '有新作业或临近截止时会弹窗提醒。': 'New assignments and approaching deadlines appear in a popup.',
+    '启动器运行时每 10 分钟检查更新，最小化到托盘也可提醒。完全退出后不能提醒；作业提醒会直接弹窗。': 'Checks every 10 minutes while running, including in the tray. Assignment reminders open a popup; quit apps cannot send reminders.',
+  });
   if (typeof module === 'object' && module.exports) module.exports = root.PH_EN;
 }(typeof window === 'undefined' ? {} : window));

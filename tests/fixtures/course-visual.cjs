@@ -46,6 +46,19 @@ app.whenReady().then(async () => {
     }
     throw new Error('Blank renderer capture: ' + name);
   };
+  await capture('courses-new-zh');
+  await run("document.querySelector('[data-school-action=course]').click()"); await wait();
+  await capture('course-detail-new-zh');
+  await run("window.i18n.apply('en')");
+  await capture('course-detail-new-en');
+  win.setSize(780, 650); await wait();
+  assert.equal(await run("document.querySelector('.school-dialog-content').scrollWidth <= document.querySelector('.school-dialog-content').clientWidth + 1"), true);
+  await capture('course-detail-compact-en');
+  await run("document.querySelector('dialog').close(); window.i18n.apply('zh-CN')");
+  win.setSize(1280, 900);
+  await run("document.querySelector('[data-course-tab=notifications]').click()");
+  await capture('notifications-new-zh');
+  assert.equal(await run("document.querySelectorAll('.school-task-row').length"), 2);
   await run("document.querySelector('[data-course-tab=tasks]').click()");
   await capture('tasks-zh');
   assert.equal(await run("document.querySelectorAll('.school-task-overview button').length"), 3);

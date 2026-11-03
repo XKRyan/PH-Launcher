@@ -72,3 +72,19 @@ test('task identities and labels cannot grow the reminder state unboundedly', ()
   assert.equal(Object.keys(result.state.entries).length, 2000);
   assert.doesNotMatch(JSON.stringify(result.state), /Biology|Task /);
 });
+
+test('reminder inbox replaces deadline stages and clears submitted, hidden and rescheduled items', () => {
+  const { pendingAlerts } = require('../electron/task-reminders.cjs');
+  const tasks = [task(1, 23)]; let result = run(tasks);
+  assert.equal(pendingAlerts(result.state, snapshot(tasks)).length, 1);
+  const wake = now + 22.5 * hour;
+  result = run(tasks, { state: result.state, now: wake, snapshot: snapshot(tasks, { fetchedAt: new Date(wake).toISOString() }) });
+  assert.equal(Object.keys(result.state.inbox).length, 1);
+  assert.equal(pendingAlerts(result.state, snapshot([...tasks, ...tasks])).length, 1);
+  for (const replacement of [task(1, 23, { status: 'Submitted / Ungraded' }), task(1, 100)]) {
+    const next = run([replacement], { state: result.state });
+    assert.equal(pendingAlerts(next.state, snapshot([replacement])).length, 0);
+  }
+  const hidden = run(tasks, { state: result.state, hiddenTasks: [tasks[0].id] });
+  assert.deepEqual(Object.keys(hidden.state.inbox), []);
+});

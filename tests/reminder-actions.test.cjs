@@ -64,3 +64,27 @@ test('reminder actions tolerate reentrant removal and keep the window actionable
   assert.equal(failing.windows[0].isDestroyed(), true);
   retryable.dispose();
 });
+
+test('task popup updates one window, suppresses history and cannot complete calendar events', () => {
+  const fake = fakeElectron(); let opened = 0; let completed = 0;
+  const manager = createReminderWindowManager({ ...fake, path, onOpenTask: () => opened++, onComplete: () => completed++ });
+  const task = { id: 'managebac-tasks', kind: 'task', title: '1 assignment', body: 'Biology' };
+  manager.upsert(task); manager.upsert({ ...task, body: 'Updated deadline' });
+  assert.equal(fake.windows.length, 1);
+  assert.equal(fake.windows[0].webContents.sends.at(-1)[1].body, 'Updated deadline');
+  fake.emit('reminder:complete', fake.windows[0]);
+  assert.equal(opened, 1); assert.equal(completed, 0);
+  assert.equal(manager.upsert(task, { open: false }), false);
+  manager.upsert(task); manager.remove(task.id);
+  assert.equal(fake.windows[1].isDestroyed(), true);
+  manager.dispose();
+});
+test('queued task updates replace earlier stages behind other reminders', () => {
+  const fake = fakeElectron(); const manager = createReminderWindowManager({ ...fake, path });
+  manager.enqueue({ id: 'calendar:one', title: 'Calendar' });
+  manager.upsert({ id: 'tasks', kind: 'task', title: '24h' });
+  manager.upsert({ id: 'tasks', kind: 'task', title: '1h' });
+  fake.windows[0].close(); fake.windows[1].onceListeners.get('ready-to-show')();
+  assert.equal(fake.windows[1].webContents.sends.at(-1)[1].title, '1h');
+  fake.windows[1].close(); assert.equal(fake.windows.length, 2); manager.dispose();
+});

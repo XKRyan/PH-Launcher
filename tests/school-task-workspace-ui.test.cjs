@@ -245,3 +245,29 @@ test('a deliberate checked-site reset allows a new selection but still requires 
   assert.deepEqual(ui.calls.submit, ['file-1', 'file-2']);
   assert.match(ui.document.querySelector('.school-upload-notice').textContent, /尚未核实/);
 });
+
+test('notification list deduplicates tasks and removes submitted work on refresh', async () => {
+  const ui = harness(); await ui.open();
+  ui.snapshot().managebac.tasks.push({ ...ui.snapshot().managebac.tasks[0] });
+  ui.click('[data-course-tab="notifications"]');
+  assert.equal(ui.document.querySelectorAll('[data-school-action="task"][data-id="1"]').length, 1);
+  assert.equal(ui.document.querySelector('[data-school-action="task"][data-id="6"]'), null);
+  ui.snapshot().managebac.tasks[0].status = 'Submitted';
+  ui.snapshot().managebac.tasks.at(-1).status = 'Submitted';
+  await ui.window.schoolUI.refresh();
+  assert.equal(ui.document.querySelector('[data-school-action="task"][data-id="1"]'), null);
+});
+test('course detail switches sections without refetching and returns to the filtered list', async () => {
+  const ui = harness(); await ui.open(); ui.click('[data-course-tab="courses"]');
+  ui.field('course-query', 'Biology', 'input');
+  assert.equal(ui.document.querySelectorAll('.school-course-card').length, 1);
+  ui.click('[data-school-action="course"]'); await settle();
+  assert.ok(ui.document.querySelector('[data-school-action="course-detail-tab"][data-tab="tasks"]'));
+  ui.click('[data-school-action="course-detail-tab"][data-tab="files"]');
+  assert.match(ui.document.querySelector('.school-course-panel').textContent, /暂未识别到文件/);
+  ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
+  assert.equal(ui.calls.course.length, 1);
+  assert.equal(ui.document.querySelector('.school-completed-details').hasAttribute('open'), false);
+  ui.click('dialog [data-school-action="close"]');
+  assert.equal(ui.document.querySelector('[data-school-field="course-query"]').value, 'Biology');
+});

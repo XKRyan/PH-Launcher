@@ -4,7 +4,7 @@ const { pathToFileURL } = require('node:url');
 const { windowTheme } = require('./window-theme.cjs');
 const MAX_REMINDER_WINDOW_QUEUE = 1_000;
 
-function createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow = () => null, onSnooze = () => {}, onComplete = () => {}, onCancelOccurrence = () => {}, onClose = () => {}, getAppearance = () => ({}), getLanguage = () => 'zh-CN' } = {}) {
+function createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow = () => null, onSnooze = () => {}, onComplete = () => {}, onCancelOccurrence = () => {}, onClose = () => {}, onOpenTask = () => {}, getAppearance = () => ({}), getLanguage = () => 'zh-CN' } = {}) {
   if (!BrowserWindow || !ipcMain || !path) throw new TypeError('Electron dependencies are required');
   let window = null;
   const queue = [];
@@ -52,14 +52,28 @@ function createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindo
     }
     if (window === reminderWindow && !reminderWindow.isDestroyed()) reminderWindow.close();
   };
-  const snoozeHandler = (event) => actionHandler(event, value => { snoozed = value; }, reminder => onSnooze(reminder, 5));
-  const completeHandler = (event) => actionHandler(event, value => { completed = value; }, onComplete);
-  const cancelOccurrenceHandler = (event) => actionHandler(event, value => { cancelled = value; }, onCancelOccurrence);
+  const snoozeHandler = (event) => actionHandler(event, value => { snoozed = value; }, reminder => reminder.kind === 'task' ? undefined : onSnooze(reminder, 5));
+  const completeHandler = (event) => actionHandler(event, value => { completed = value; }, reminder => reminder.kind === 'task' ? onOpenTask(reminder) : onComplete(reminder));
+  const cancelOccurrenceHandler = (event) => actionHandler(event, value => { cancelled = value; }, reminder => reminder.kind === 'task' ? undefined : onCancelOccurrence(reminder));
   ipcMain.on('reminder:close', closeHandler);
   ipcMain.on('reminder:snooze', snoozeHandler);
   ipcMain.on('reminder:complete', completeHandler);
   ipcMain.on('reminder:cancel-occurrence', cancelOccurrenceHandler);
   return {
+    upsert(reminder, { open = true } = {}) {
+      if (disposed || !reminder?.id) return false;
+      if (active?.id === reminder.id) {
+        if (JSON.stringify(active) !== JSON.stringify(reminder)) {
+          active = reminder;
+          window?.webContents.send('reminder:show', { ...active, appearance: windowOptions().appearance });
+        }
+        return true;
+      }
+      const index = queue.findIndex(item => item.id === reminder.id);
+      if (index >= 0) { queue[index] = reminder; return true; }
+      if (!open) return false;
+      return this.enqueue(reminder);
+    },
     enqueue(reminder) { if (disposed || !reminder?.id || active?.id === reminder.id || queue.some((item) => item.id === reminder.id) || queue.length + (active ? 1 : 0) >= MAX_REMINDER_WINDOW_QUEUE) return false; queue.push(reminder); showNext(); return true; },
     remove(id) { id = String(id); for (let index = queue.length - 1; index >= 0; index--) if (queue[index].id === id) queue.splice(index, 1); if (active?.id === id && window && !window.isDestroyed()) { cancelled = true; window.close(); } },
     dispose() { disposed = true; queue.length = 0; ipcMain.removeListener?.('reminder:close', closeHandler); ipcMain.removeListener?.('reminder:snooze', snoozeHandler); ipcMain.removeListener?.('reminder:complete', completeHandler); ipcMain.removeListener?.('reminder:cancel-occurrence', cancelOccurrenceHandler); if (window && !window.isDestroyed()) window.destroy(); window = null; active = null; },

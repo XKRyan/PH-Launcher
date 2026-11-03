@@ -23,19 +23,22 @@ function harness() {
     credentialVault: { getForFill: () => ({ username }) },
     schoolClient: { async syncManageBac(options) { fetches++; assert.equal(options.refreshGrades, false); return { ...snapshot }; } },
     publishSchoolSnapshot() {},
-    showNotification(title, body, onClick) { assert.ok(saves > 0, 'persist before delivery'); notifications.push({ title, body, onClick }); return true; },
+    reminderWindows: { upsert(item, options) { assert.ok(saves > 0, 'persist before delivery'); if (options.open) notifications.push(item); }, remove(id) { events.push(['removed', id]); } },
     sendToRenderer: (...args) => events.push(args),
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function managebacReminderAccount()'), source.indexOf('function runCommand(')), context);
   return { context, data, schoolState, snapshot, notifications, events, switchAccount: () => { username = 'another-student'; }, failSave: () => { failSave = true; }, fetches: () => fetches };
 }
-test('integration persists deadline delivery and routes a clicked alert to pending tasks', () => {
+test('integration persists popup delivery and removes it after submission or account change', () => {
   const h = harness(); h.context.checkTaskReminders();
   assert.equal(h.notifications.length, 1);
   h.context.checkTaskReminders(); assert.equal(h.notifications.length, 1);
-  h.notifications[0].onClick(); assert.deepEqual(h.events.at(-1), ['shortcut:action', 'school-tasks']);
-  h.switchAccount(); const count = h.events.length; h.notifications[0].onClick(); assert.equal(h.events.length, count);
+  assert.equal(h.notifications[0].kind, 'task');
+  h.snapshot.tasks[0].status = 'Submitted'; h.context.checkTaskReminders();
+  assert.deepEqual(h.events.at(-1), ['removed', 'managebac-tasks']);
+  h.switchAccount(); h.context.checkTaskReminders();
+  assert.deepEqual(h.events.at(-1), ['removed', 'managebac-tasks']);
 });
 test('failed persistence does not display or consume an alert', () => {
   const h = harness(); h.failSave(); h.context.checkTaskReminders();
@@ -61,4 +64,16 @@ test('a failed read that expires a session is not retried by later polling', asy
   h.context.schoolClient.syncManageBac = async () => { calls++; const error = new Error('Expired'); error.code = 'LOGIN_REQUIRED'; throw error; };
   await h.context.refreshTaskReminders(); await h.context.refreshTaskReminders();
   assert.equal(calls, 1); assert.equal(h.notifications.length, 0);
+});
+
+test('verified task status updates both persisted and current snapshots', () => {
+  const { SchoolCache } = require('../electron/school-cache.cjs'); let saved;
+  const cache = new SchoolCache({ onChange: value => { saved = value; } });
+  const task = { id: 'managebac:21:31', courseId: '21', status: 'Pending' };
+  cache.current.managebac = { tasks: [structuredClone(task)] };
+  cache.entries.set('managebac:', { at: 0, data: { tasks: [structuredClone(task)] } });
+  assert.equal(cache.updateTaskStatus('21', '31', 'Submitted'), true);
+  assert.equal(saved.entries[0].data.tasks[0].status, 'Submitted');
+  assert.equal(cache.current.managebac.tasks[0].status, 'Submitted');
+  assert.equal(cache.updateTaskStatus('22', '31', 'Pending'), false);
 });

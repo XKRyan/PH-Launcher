@@ -1377,6 +1377,7 @@ function persistSchoolCache() {
 }
 
 function invalidateSchoolSnapshots(source) {
+  if (!source || source === 'managebac') reminderWindows?.remove('managebac-tasks');
   cancelAllAiRequests('学校账号或登录状态已变更');
   aiLauncherReader = null;
   if (!source || source === 'mail') {
@@ -2454,30 +2455,29 @@ function managebacReminderAccount() {
 
 function checkTaskReminders() {
   if (IS_HEADLESS || !secureStore || schoolSessionMutations.has('managebac') || taskUploadInFlight) return;
+  const account = managebacReminderAccount();
+  if (!account || schoolCache.managebac?.accountKey !== account) {
+    reminderWindows?.remove('managebac-tasks'); return;
+  }
   const previous = secureStore.data.taskReminderState;
   const prefs = secureStore.data.settings.schoolPreferences || {};
   const result = taskReminders.evaluate({ state: previous, snapshot: schoolCache.managebac,
-    accountKey: managebacReminderAccount(), settings: prefs.taskReminders, hiddenTasks: prefs.hiddenTasks });
-  if (!result.changed) return;
-  secureStore.data.taskReminderState = result.state;
-  try { secureStore.save(); }
-  catch { secureStore.data.taskReminderState = previous; return; }
-  const english = secureStore.data.settings.language === 'en';
-  for (const kind of ['new', 'due']) {
-    const alerts = result.alerts.filter(item => kind === 'new' ? item.type === 'new' : item.type !== 'new');
-    if (!alerts.length) continue;
-    const title = english ? `${alerts.length} ${kind === 'new' ? 'new ManageBac tasks' : 'tasks due soon'}`
-      : `${alerts.length} 项${kind === 'new' ? '新任务 / 作业' : '作业即将截止'}`;
-    const body = alerts.slice(0, 3).map(item => {
-      const date = item.dueAt ? new Date(item.dueAt).toLocaleString(english ? 'en-GB' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dueText;
-      return `${item.course.slice(0, 60)} · ${item.title.slice(0, 90)}${date ? ` · ${date}` : ''}`;
-    }).join('\n');
-    const account = result.state.accountKey;
-    showNotification(title, body, () => {
-      if (managebacReminderAccount() !== account) return;
-      sendToRenderer('shortcut:action', 'school-tasks');
-    });
+    accountKey: account, settings: prefs.taskReminders, hiddenTasks: prefs.hiddenTasks });
+  if (result.changed) {
+    secureStore.data.taskReminderState = result.state;
+    try { secureStore.save(); }
+    catch { secureStore.data.taskReminderState = previous; return; }
   }
+  const alerts = taskReminders.pendingAlerts(result.state, schoolCache.managebac);
+  if (!alerts.length) { reminderWindows?.remove('managebac-tasks'); return; }
+  const english = secureStore.data.settings.language === 'en';
+  const body = alerts.slice(0, 6).map(item => {
+    const date = item.dueAt ? new Date(item.dueAt).toLocaleString(english ? 'en-GB' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dueText;
+    const kind = Date.parse(item.dueAt) < Date.now() ? (english ? 'Overdue' : '已逾期') : item.type === 'new' ? (english ? 'New' : '新作业') : (english ? 'Due soon' : '即将截止');
+    return `${kind} · ${String(item.course || '').slice(0, 60)} · ${String(item.title || '').slice(0, 100)}${date ? ` · ${date}` : ''}`;
+  }).join('\n\n') + (alerts.length > 6 ? (english ? `\n\nView all ${alerts.length} assignments in the app.` : `\n\n在课程页面查看全部 ${alerts.length} 项作业。`) : '');
+  reminderWindows?.upsert({ id: 'managebac-tasks', kind: 'task', accountKey: account,
+    title: english ? `${alerts.length} assignment reminders` : `${alerts.length} 项作业提醒`, body }, { open: result.alerts.length > 0 });
 }
 
 let taskRefreshBusy = false;
@@ -4173,7 +4173,15 @@ function registerIpc() {
   schoolHandle('course', (id) => readSchoolDetail(() => schoolClient.getCourseDetail(id)));
   schoolHandle('discussions', (id) => readSchoolDetail(() => schoolClient.getCourseDiscussions(id)));
   schoolHandle('discussion', (courseId, id) => readSchoolDetail(() => schoolClient.getDiscussionDetail(courseId, id)));
-  schoolHandle('task', (courseId, id) => readSchoolDetail(() => schoolClient.getTaskDetail(courseId, id)));
+  schoolHandle('task', (courseId, id) => readSchoolDetail(async () => {
+    const account = managebacReminderAccount();
+    const epoch = schoolState.epoch.managebac;
+    const detail = await schoolClient.getTaskDetail(courseId, id);
+    if (account && epoch === schoolState.epoch.managebac && account === managebacReminderAccount() && schoolCache.managebac?.accountKey === account) {
+      if (schoolState.updateTaskStatus(courseId, id, detail.status)) { publishSchoolSnapshot('managebac', schoolCache.managebac); checkTaskReminders(); sendToRenderer('school:synced', { synced: ['managebac'], failed: [] }); }
+    }
+    return detail;
+  }));
   schoolHandle('prepare-task-upload', (courseId, taskId) => taskUploads.prepare(courseId, taskId));
   schoolHandle('submit-task-upload', (token) => taskUploads.confirm(token));
   schoolHandle('cancel-task-upload', (token) => taskUploads.cancel(token));
@@ -5859,6 +5867,7 @@ app.whenReady().then(() => {
   if (!IS_HEADLESS) {
     reminderWindows = createReminderWindowManager({ BrowserWindow, ipcMain, path, parentWindow: () => mainWindow,
       getAppearance: () => secureStore.data.settings.appearance, getLanguage: () => secureStore.data.settings.language,
+      onOpenTask: item => { if (item.accountKey !== managebacReminderAccount()) return; mainWindow?.show(); mainWindow?.focus(); sendToRenderer('shortcut:action', 'school-tasks'); },
       onSnooze: (item, minutes) => { saveCalendarReminderAction(item, 'snoozed', { snoozedUntil: Date.now() + minutes * 60000 }); reminderScheduler.snooze(item.id, minutes); },
       onComplete: item => { saveCalendarReminderAction(item, 'completed'); reminderScheduler.cancel(item.id); },
       onCancelOccurrence: item => { saveCalendarReminderAction(item, 'cancelled'); reminderScheduler.cancel(item.id); } });

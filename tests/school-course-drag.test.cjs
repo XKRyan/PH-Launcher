@@ -76,7 +76,7 @@ test('course cards render as draggable rows in the saved manual order', async ()
   assert.equal(ui.document.querySelectorAll('[data-school-drag]').length, 3, 'every course is draggable');
   assert.equal(JSON.stringify(cardOrder(ui.document)), JSON.stringify(['c3', 'c1', 'c2']), 'saved order first, new courses appended');
   assert.equal(ui.document.querySelector('[data-school-drag]').getAttribute('draggable'), 'true');
-  assert.match(ui.document.querySelector('#schoolPage').textContent, /拖动课程卡片可调整顺序/);
+  assert.match(ui.document.querySelector('#schoolPage').textContent, /自定义（拖拽）/);
   assert.equal(ui.document.querySelector('[data-school-field="course-sort"]').value, 'manual');
 });
 
@@ -109,4 +109,14 @@ test('dropping a course on itself changes nothing', async () => {
   await settle();
   assert.equal(ui.calls.preferences.length, 0, 'no write for a no-op drop');
   assert.equal(JSON.stringify(cardOrder(ui.document)), JSON.stringify(['c1', 'c2', 'c3']));
+});
+
+test('dragging a filtered course retains the order entries of invisible courses', async () => {
+  const ui = harness(snapshotWith({ courseOrder: ['c1', 'c2', 'c3'] }));
+  ui.context.window.schoolUI.open('courses'); await settle();
+  const search = ui.document.querySelector('[data-school-field="course-query"]');
+  search.value = 'E'; search.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  assert.equal(ui.document.querySelectorAll('[data-school-drag]').length, 2);
+  drag(ui.window, ui.document, { from: 'c3', to: 'c2', below: false }); await settle();
+  assert.deepEqual(Array.from(ui.calls.preferences.at(-1).courseOrder), ['c1', 'c3', 'c2']);
 });

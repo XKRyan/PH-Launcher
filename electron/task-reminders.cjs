@@ -17,7 +17,7 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
   if (!snapshot || !accountKey || snapshot.accountKey !== accountKey || !Array.isArray(snapshot.tasks)) return { state, alerts: [], changed: false };
   const prefs = preferences(settings);
   const previous = state?.accountKey === accountKey ? state : null;
-  const next = { version: 1, accountKey, courses: [...(previous?.courses || [])], entries: { ...(previous?.entries || {}) } };
+  const next = { version: 1, accountKey, courses: [...(previous?.courses || [])], entries: { ...(previous?.entries || {}) }, inbox: { ...(previous?.inbox || {}) } };
   const initialized = new Set(next.courses);
   const hidden = new Set(hiddenTasks);
   const alerts = [];
@@ -43,14 +43,27 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
       if (closest !== undefined && !entry.stages.includes(closest)) type = type ? 'new-due' : 'due';
       if (type) entry.stages = [...new Set([...entry.stages, ...stages])];
     }
+    if (!eligible || (old && old.deadline !== deadline) || (!prefs.newTasks && !prefs.deadlines)) delete next.inbox[id];
+    if (type) next.inbox[id] = type;
     if (type) alerts.push({ type, taskId: String(task.id), courseId: String(task.courseId), title: String(task.title || 'ManageBac'), course: String(task.course || ''), dueAt: task.dueAt || '', dueText: task.dueText || '' });
     // Avoid rewriting storage every timer tick for unchanged data.
     if (old && old.deadline === entry.deadline && JSON.stringify(old.stages) === JSON.stringify(entry.stages)) entry.seen = old.seen;
     next.entries[id] = entry;
   }
+  const present = new Set(snapshot.tasks.filter(t => t?.id).map(t => key(String(t.id))));
+  for (const id of Object.keys(next.inbox)) if (!present.has(id)) delete next.inbox[id];
   next.courses = [...new Set([...next.courses, ...successful.map(String)])].slice(-300);
   const entries = Object.entries(next.entries).sort((a, b) => b[1].seen - a[1].seen);
   next.entries = Object.fromEntries(entries.slice(0, 10000));
   return { state: next, alerts, changed: JSON.stringify(previous) !== JSON.stringify(next) };
 }
-module.exports = { evaluate, preferences, TASK_REMINDER_OPTIONS: OPTIONS };
+function pendingAlerts(state, snapshot) {
+  if (!state || state.accountKey !== snapshot?.accountKey) return [];
+  const unique = new Map();
+  for (const task of snapshot.tasks || []) {
+    const type = state.inbox?.[key(String(task.id))];
+    if (type && !submitted(task)) unique.set(String(task.id), { ...task, type });
+  }
+  return [...unique.values()];
+}
+module.exports = { evaluate, pendingAlerts, preferences, TASK_REMINDER_OPTIONS: OPTIONS };

@@ -44,6 +44,17 @@ class SchoolCache {
     if (this.entries.has('managebac:')) this.current.managebac = this.entries.get('managebac:').data;
     return restored;
   }
+  updateTaskStatus(courseId, taskId, status) {
+    if (typeof status !== 'string' || !status.trim()) return false;
+    let changed = false;
+    const snapshots = new Set([this.current.managebac, this.entries.get('managebac:')?.data]);
+    for (const snapshot of snapshots) {
+      const task = snapshot?.tasks?.find(item => String(item.courseId) === String(courseId) && String(item.id).split(':').at(-1) === String(taskId));
+      if (task && task.status !== status) { task.status = status; changed = true; }
+    }
+    if (changed) this._changed();
+    return changed;
+  }
   exportForStorage() {
     return { week: this.week, entries: [...this.entries.entries()].map(([key, entry]) => ({ key, at: entry.at, data: entry.data })) };
   }

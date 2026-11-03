@@ -241,3 +241,21 @@
 .school-dialog .school-reminder-settings p { margin: 0; }
 .school-reminder-settings fieldset { display: flex; flex-wrap: wrap; gap: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }
 @media(max-width: 650px) { .school-task-overview { gap: 6px; } .school-task-overview button { flex-direction: column; gap: 4px; padding: 10px; } }
+/* Course workspace: consistent cards, readable hierarchy, keyboard-sized controls. */
+.school-course-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:16px; }
+.school-course-card { display:grid; grid-template-columns:36px minmax(0,1fr) 18px; align-content:start; align-items:center; gap:12px; padding:20px; min-height:174px; }
+.school-course-card .school-course-mark { grid-column:1; grid-row:1; }
+.school-course-card h3 { grid-column:2; grid-row:1; white-space:normal; font-size:1.05rem; line-height:1.45; }
+.school-course-card .school-course-grip { grid-column:3; grid-row:1; }
+.school-course-card .school-course-workload { grid-column:1 / -1; font-size:.9rem; color:var(--green-800); }
+.school-course-card>div { grid-column:1 / -1; justify-content:flex-start; }
+.school-course-card small { grid-column:1 / -1; }
+.school-section-head input[type=search] { min-width:0; width:clamp(160px,20vw,260px); font:inherit; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--white); color:var(--ink); }
+.school-detail-tabs { width:100%; box-sizing:border-box; margin:20px 0; gap:4px; }
+.school-detail-tabs button { flex:1; padding:10px 12px; font:inherit; min-height:44px; }
+.school-detail-tabs button span { opacity:.75; }
+.school-course-panel { min-height:200px; }
+.school-completed-details { margin-top:20px; border-top:1px solid var(--border); padding-top:16px; }
+.school-completed-details summary { cursor:pointer; min-height:32px; color:var(--ink-2); }
+.school-course-card:focus-visible,.school-course-tabs button:focus-visible,.school-task-main:focus-visible { outline:3px solid var(--green-700); outline-offset:3px; }
+@media(max-width:700px) { .school-section-head .school-actions { width:100%; } .school-section-head input[type=search] { flex:1; } .school-detail-tabs { flex-wrap:wrap; } .school-detail-tabs button { flex:1 1 40%; } }
