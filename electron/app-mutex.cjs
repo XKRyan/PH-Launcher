@@ -2,7 +2,7 @@
 // PH Launcher and Pinghe Launcher Lite must not run at the same time against the
 // same data folder (they share settings.yaml / Schedule / agent/). Each app
 // writes one PID marker into the shared data root and checks the other's:
-//   * same app already running → the caller shows "already running" and exits
+//   * same app already running → the caller wakes the existing owner and exits
 //     (for the common case the existing single-instance lock focuses the window)
 //   * the sibling app running → the caller shows a conflict message and exits
 // A stale marker (crash / power loss) is detected by PID liveness, so a dead
@@ -129,3 +129,24 @@ function release({ dataDir, kind } = {}) {
 }
 
 module.exports = { APP_NAMES, HEARTBEAT_MS, HEARTBEAT_STALE_MS, MARKERS, acquire, markerFresh, pidAlive, readMarker, release, touch };
+
+// Wake the owner of the shared data folder without creating a second writer.
+function focusAddress(dataDir) {
+  const hash = require('node:crypto').createHash('sha256').update(path.resolve(dataDir).toLowerCase()).digest('hex').slice(0,32);
+  const slash = String.fromCharCode(92);
+  return process.platform === 'win32' ? slash + slash + '.' + slash + 'pipe' + slash + `phl-focus-${hash}` : path.join(require('node:os').tmpdir(), `phl-focus-${hash}.sock`);
+}
+function listenFocus(dataDir, focus) {
+  const server = require('node:net').createServer(socket => { socket.destroy(); focus(); });
+  server.on('error', () => {}); server.listen(focusAddress(dataDir)); server.unref(); return server;
+}
+function requestFocus(dataDir) {
+  return new Promise(resolve => {
+    const socket = require('node:net').connect(focusAddress(dataDir));
+    const finish = ok => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(1500, () => finish(false));
+    socket.on('connect', () => finish(true)); socket.on('error', () => finish(false));
+  });
+}
+module.exports.listenFocus = listenFocus;
+module.exports.requestFocus = requestFocus;

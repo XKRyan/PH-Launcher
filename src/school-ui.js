@@ -574,7 +574,7 @@
     const courses = state.snapshot.managebac?.courses || [];
     const selected = courses.find(course => String(course.id) === id);
     const name = data?.name || selected?.name || '课程';
-    const header = `<div class="school-course-breadcrumb">${btn('全部课程', 'course-list')}<span aria-hidden="true">/</span><span data-i18n-ignore>${esc(name)}</span></div><header class="school-class-header"><div><span class="section-kicker">MY CLASS</span><h1 data-i18n-ignore>${esc(name)}</h1></div><div class="school-actions"><label class="school-inline-label"><span>切换课程</span><select data-school-field="class-switch" aria-label="切换课程">${courses.map(course => `<option data-i18n-ignore value="${esc(course.id)}" ${String(course.id) === id ? 'selected' : ''}>${esc(course.name)}</option>`).join('')}</select></label>${originalButton(data?.url)}</div></header>`;
+    const header = `<div class="school-course-breadcrumb">${context.lesson ? btn('返回课表', 'course-tab', 'data-course-tab="timetable"') : btn('全部课程', 'course-list')}<span aria-hidden="true">/</span><span data-i18n-ignore>${esc(name)}</span></div><header class="school-class-header"><div><span class="section-kicker">MY CLASS</span><h1 data-i18n-ignore>${esc(name)}</h1></div><div class="school-actions"><label class="school-inline-label"><span>切换课程</span><select data-school-field="class-switch" aria-label="切换课程">${courses.map(course => `<option data-i18n-ignore value="${esc(course.id)}" ${String(course.id) === id ? 'selected' : ''}>${esc(course.name)}</option>`).join('')}</select></label>${context.lesson ? btn('更改课程关联', 'relink-course') : ''}${originalButton(data?.url)}</div></header>`;
     if (context.loading) return header + '<div class="school-empty" role="status">正在读取，请稍候…</div>';
     if (context.error) return header + `<div class="school-error" role="alert">${esc(context.error)}</div>${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}`;
     if (!data) return header;
@@ -753,9 +753,12 @@
     rows.sort((a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity));
     return `${syncSummary('managebac')}<div class="school-section-head"><h2>通知与待办 <small>${rows.length}</small></h2>${btn('提醒设置', 'task-reminders')}</div><p class="school-footnote">只显示当前待处理作业；同步确认已提交后自动移除，同一作业只保留一条。</p><div class="school-task-list">${rows.length ? taskRows(rows) : '<div class="school-empty"><h3>暂无待处理通知</h3><p>有新作业或临近截止时会弹窗提醒。</p></div>'}</div>`;
   }
+  function courseNavigation() {
+    const tabs = [['timetable', '课表'], ['courses', '课程'], ['notifications', '通知'], ['tasks', '作业与截止'], ['discussions', '讨论'], ['core', 'CAS / EE']];
+    return `<nav class="school-course-tabs" aria-label="课程内容">${tabs.map(([key, label]) => `<button type="button" data-school-action="course-tab" data-course-tab="${key}" class="${(isTimetableRoute() ? key === 'timetable' : state.courseTab === key) ? 'active' : ''}" aria-current="${(isTimetableRoute() ? key === 'timetable' : state.courseTab === key) ? 'page' : 'false'}">${label}</button>`).join('')}</nav>`;
+  }
   function courseWorkspace() {
-    const tabs = [['courses', '课程'], ['notifications', '通知'], ['tasks', '作业与截止'], ['discussions', '讨论'], ['core', 'CAS / EE']];
-    return `<nav class="school-course-tabs" aria-label="课程内容">${tabs.map(([key, label]) => `<button type="button" data-school-action="course-tab" data-course-tab="${key}" class="${state.courseTab === key ? 'active' : ''}" aria-current="${state.courseTab === key ? 'page' : 'false'}">${label}</button>`).join('')}</nav>${state.courseTab === 'courses' ? (courseDetail ? coursePage() : courses()) : state.courseTab === 'notifications' ? notifications() : state.courseTab === 'discussions' ? discussions() : state.courseTab === 'tasks' ? tasks() : core()}`;
+    return `${courseNavigation()}${state.courseTab === 'courses' ? (courseDetail ? coursePage() : courses()) : state.courseTab === 'notifications' ? notifications() : state.courseTab === 'discussions' ? discussions() : state.courseTab === 'tasks' ? tasks() : core()}`;
   }
   function render() {
     if (!root) return;
@@ -765,15 +768,16 @@
     timeLineObserver?.disconnect();
     const source = activeSource();
     const data = state.snapshot[source];
-    const page = state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课表', description: '从 EduPage 同步课程，选择自己的教学组。' };
+    const page = state.route === 'courses' ? { title: '我的课程', description: '查看课程、作业截止时间与 CAS / EE 项目。' } : { title: '我的课程', description: '从 EduPage 同步课程，选择自己的教学组。' };
     // 用户 2026-09-19：「所有同步、刷新全都自动，不要让用户察觉，最多来一行不起眼的小字
     // 在角落」—— 所以这里没有「自动更新」开关、也没有刷新按钮，只有右下角那行数据时间。
-    root.innerHTML = `${state.route === 'courses' && state.courseTab === 'courses' && courseDetail ? '' : `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div>`}${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size && !data ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${isTimetableRoute() ? timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
+    root.innerHTML = `${state.route === 'courses' && state.courseTab === 'courses' && courseDetail ? '' : `<div class="school-top"><div><span class="section-kicker">PH LAUNCHER × HELLO PINGHE!</span><h1>${page.title}</h1><p>${page.description}</p></div></div>`}${state.error ? `<div class="school-error" role="alert">${esc(state.error)}</div>` : ''}${state.notice ? `<div class="school-success" role="status">${esc(state.notice)}</div>` : ''}${state.busy.size && !data ? '<div class="school-loading" role="status"><span></span>正在读取学校数据，请稍候。你可以继续使用其他本地工具。</div>' : ''}${isTimetableRoute() ? courseNavigation() + timetable() : courseWorkspace()}<footer class="school-credit">合作整合：PH Launcher · Hello Pinghe! Launcher <span>非学校官方应用</span></footer>`;
     if (state.error) {
       const challenge = /验证码|双重验证|额外验证/.test(state.error);
       root.querySelector('[role="alert"]')?.insertAdjacentHTML('afterend', `<div class="school-actions">${btn('修改登录账号', 'account', `data-site="${source}"`)}${challenge ? btn('完成学校验证', 'login', `data-site="${source}"`, true) : ''}</div>`);
     }
     protectSchoolContent(root);
+    window.i18n?.refresh?.(root);
     fitTimetableRows();
     updateTimeLine();
     const grid = root.querySelector('#schoolTimetableGrid');
@@ -843,6 +847,7 @@
     modal.setAttribute('aria-labelledby', 'schoolDialogTitle');
     modal.innerHTML = `<div class="modal-head"><h3 id="schoolDialogTitle">${esc(title)}</h3><button type="button" data-school-action="close" aria-label="关闭" autofocus>×</button></div><div class="school-dialog-content">${body}</div><div class="school-dialog-footer">${footer || btn('关闭', 'close')}</div>`;
     protectSchoolContent(modal);
+    window.i18n?.refresh?.(modal);
     if (!modal.open) modal.showModal();
     else if (focusedAction) {
       const replacement = [...modal.querySelectorAll('[data-school-action]')].find((node) => node.dataset.schoolAction === focusedAction && !node.disabled);
@@ -1113,6 +1118,14 @@
       if (action === 'task-filter') { state.courseTab = 'tasks'; state.taskStatus = button.dataset.status; state.showHidden = false; render(); }
       if (action === 'account') { modal?.close(); window.openSchoolAccount(button.dataset.site); }
       if (action === 'connect') consent(button.dataset.source, () => connect(button.dataset.source, { approved: true }));
+      if (action === 'linked-course') {
+        const lesson = state.linkingLesson; if (!lesson) return;
+        await savePreferences({ courseLink: { groupKey: lesson.groupKey, courseId: button.dataset.id, edupageAccount: currentWeek()?.accountKey, managebacAccount: state.snapshot.managebac?.accountKey } });
+        modal?.close(); state.route = 'courses'; window.navigate?.('courses');
+        await openCourse(button.dataset.id); if (courseDetail?.id === button.dataset.id) { courseDetail.lesson = lesson; courseDetail.tab = 'tasks'; render(); } return;
+      }
+      if (action === 'course-tab' && button.dataset.courseTab === 'timetable') { state.route = 'timetable'; window.navigate?.('timetable'); open('timetable'); return; }
+      if (action === 'course-tab' && isTimetableRoute()) { state.route = 'courses'; window.navigate?.('courses'); }
       if (action === 'course-tab') { state.courseTab = button.dataset.courseTab; state.error = ''; state.notice = ''; render(); autoRefresh();  if (state.courseTab === 'discussions') void loadDiscussions(); }
       if (action === 'login') { modal?.close(); await window.openSite(button.dataset.site); }
       if (action === 'consent') { const callback = modal.schoolConsentAction; state.consent.add(button.dataset.source); modal.close(); if (callback) callback(); }
@@ -1148,9 +1161,20 @@
         showDialog('确认加入课程提醒', `<p>将 ${state.week} 至 ${shift(state.week, 6)} 的 <strong>${lessons.length} 节课程</strong>加入本地计划。仅对具体日期生效，不会变成每周重复课程。</p><p>本次同步会更新同一账号在这些日期的已导入课程；手工创建的课程会保留。</p><div class="school-import-preview">${lessons.map((lesson) => `<div><time>${lesson.date} ${lesson.start}–${lesson.end}</time><strong>${esc(lesson.course)}</strong><span>${esc(lesson.room)}</span></div>`).join('')}</div>${warnings(currentWeek())}`, `${btn('取消', 'close')}${btn('核对无误，加入计划', 'confirm-import', '', true)}`);
       }
       if (action === 'confirm-import') { button.disabled = true; const result = await api().importPlan(); modal.close(); state.notice = `已将 ${result.added} 节具体日期的课程加入计划。`; render(); }
-      if (action === 'lesson') {
-        const lesson = groupLessons(displayedLessons()).find((item) => item.id === button.dataset.id); if (!lesson) return;
-        showDialog(lesson.course, `<div class="school-lesson-detail school-color-${color(lesson.groupKey)}"><strong>${lesson.date} · ${lesson.start}–${lesson.end}</strong><p>${esc(lesson.room || '教室未提供')} · ${esc(lesson.teacher || '老师未提供')}</p><p>${esc((lesson.groups || []).join(' / ') || '教学组未提供')}</p>${lesson.cancelled ? '<p>这节课程已取消，不会导入提醒。</p>' : ''}</div>`, `${btn((prefs().highlights || []).includes(lesson.groupKey) ? '取消重点标记' : '标记这个教学组', 'highlight', `data-key="${esc(lesson.groupKey)}"`)}${btn('打开 EduPage', 'login', 'data-site="edupage"')}`);
+      if (action === 'lesson' || action === 'relink-course') {
+        const lesson = action === 'relink-course' ? courseDetail?.lesson : groupLessons(displayedLessons()).find((item) => item.id === button.dataset.id); if (!lesson) return;
+        const courses = state.snapshot.managebac?.courses || [];
+        state.linkingLesson = lesson;
+        const saved = prefs().courseLinks;
+        const linked = saved?.edupageAccount === currentWeek()?.accountKey && saved?.managebacAccount === state.snapshot.managebac?.accountKey ? courses.find(course => String(course.id) === saved.items?.[lesson.groupKey]) : null;
+        const matches = linked ? [linked] : window.schoolSelectionInference?.matchingCourses(lesson, courses) || [];
+        if (matches.length === 1 && action !== 'relink-course') {
+          state.route = 'courses'; window.navigate?.('courses'); await openCourse(matches[0].id);
+          if (courseDetail?.id === String(matches[0].id)) { courseDetail.lesson = lesson; courseDetail.tab = 'tasks'; render(); } return;
+        }
+        const choices = action === 'relink-course' ? courses : matches.length ? matches : courses;
+        const links = `<p>选择对应课程，查看作业与资料。</p><div class="school-conflict-list">${choices.map(course => btn(course.name, 'linked-course', `data-i18n-ignore data-id="${esc(course.id)}"`)).join('')}</div>${choices.length ? '' : '<p>请先同步 ManageBac 课程。</p>'}`;
+        showDialog(lesson.course, `<div class="school-lesson-detail school-color-${color(lesson.groupKey)}"><strong>${lesson.date} · ${lesson.start}–${lesson.end}</strong><p>${esc(lesson.room || '教室未提供')} · ${esc(lesson.teacher || '老师未提供')}</p><p>${esc((lesson.groups || []).join(' / ') || '教学组未提供')}</p>${lesson.cancelled ? '<p>这节课程已取消，不会导入提醒。</p>' : ''}</div>${links}`, `${btn((prefs().highlights || []).includes(lesson.groupKey) ? '取消重点标记' : '标记这个教学组', 'highlight', `data-key="${esc(lesson.groupKey)}"`)}${btn('打开 EduPage', 'login', 'data-site="edupage"')}`);
       }
       if (action === 'lesson-cluster') {
         const items = groupLessons(displayedLessons()).filter((item) => item.date === button.dataset.date && item.start < button.dataset.end && item.end > button.dataset.start);

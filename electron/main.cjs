@@ -1757,6 +1757,13 @@ function updateSchoolPreferences(input) {
     next.accountKey = current.accountKey;
     next.groups = [...new Set(input.groups)].filter((id) => allowed.has(id)).slice(0, 200);
   }
+  if (input.courseLink) {
+    const link = input.courseLink, edu = schoolCache.edupage, mb = schoolCache.managebac;
+    if (!edu?.accountKey || !mb?.accountKey || link.edupageAccount !== edu.accountKey || link.managebacAccount !== mb.accountKey
+      || !edu.lessons?.some(item => item.groupKey === link.groupKey) || !mb.courses?.some(item => String(item.id) === String(link.courseId))) throw new Error('课程或账号已变化，请重新选择');
+    const prior = old.courseLinks?.edupageAccount === edu.accountKey && old.courseLinks?.managebacAccount === mb.accountKey ? old.courseLinks.items || {} : {};
+    next.courseLinks = { edupageAccount: edu.accountKey, managebacAccount: mb.accountKey, items: Object.fromEntries([...Object.entries(prior).filter(([key]) => key !== link.groupKey).slice(-199), [link.groupKey, String(link.courseId)]]) };
+  }
   if (Array.isArray(input.highlights)) next.highlights = input.highlights.filter((x) => typeof x === 'string' && /^[a-f0-9]{20}$/.test(x)).slice(0, 200);
   if (Array.isArray(input.hiddenTasks)) next.hiddenTasks = input.hiddenTasks.filter((x) => typeof x === 'string' && x.length < 100).slice(0, 1000);
   // Manual course order from drag-and-drop; unknown ids are kept so a course
@@ -5218,17 +5225,17 @@ async function runSelfTest() {
     navigate('school');
     await window.schoolUI.refresh();
     const schoolRendered = Boolean(document.querySelector('#schoolPage')?.textContent.includes('EduPage'));
-    const schoolNavItems = [...document.querySelectorAll('.primary-nav .nav-item')].slice(1, 5);
+    const schoolNavItems = [...document.querySelectorAll('.primary-nav .nav-item')].slice(1, 4);
     // Read the visible label span: count badges live inside the item but are
     // dynamic content and must not affect the navigation structure check.
     const schoolNavLabels = schoolNavItems.map((item) => item.querySelector('span')?.textContent.trim() || item.textContent.trim());
-    const schoolNavigation = JSON.stringify(schoolNavLabels) === JSON.stringify(['我的课表', '我的日程', '我的课程', '平和邮箱'])
+    const schoolNavigation = JSON.stringify(schoolNavLabels) === JSON.stringify(['我的日程', '我的课程', '平和邮箱'])
       && !document.querySelector('.primary-nav [data-site="edupage"], .primary-nav [data-site="managebac"]');
     // 班级课表页已删除：旧路由要落到我的课表，导航里也不再有这一项
     navigate('class-timetable');
     await window.schoolUI.refresh();
-    const classTimetableRemoved = document.querySelector('#schoolPage h1')?.textContent === '我的课表'
-      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'timetable'
+    const classTimetableRemoved = document.querySelector('#schoolPage h1')?.textContent === '我的课程'
+      && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'courses'
       && !document.querySelector('[data-route="class-timetable"]');
     navigate('courses');
     await window.schoolUI.refresh();
@@ -5618,6 +5625,7 @@ if (!gotLock) {
 
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.whenReady().then(() => {
+  if (!gotLock) return;
   selfTestStage('app-ready');
   startupMark('app-ready');
   armSelfTestTimeout();
@@ -5636,6 +5644,7 @@ app.whenReady().then(() => {
   const runLock = appMutex.acquire({ dataDir: dataRoot().root, kind: 'phl' });
   if (!runLock.ok) {
     startupMark(`run-conflict-${runLock.conflict}`);
+    if (runLock.conflict === 'phl') { appMutex.requestFocus(dataRoot().root).finally(() => app.exit(0)); return; }
     const message = runLock.conflict === 'phl'
       ? 'PH Launcher 已经在运行。请先退出已运行的窗口，再重新打开。'
       : `检测到 ${runLock.name} 正在运行。两个程序共用同一份数据，不能同时打开；请先退出对方，再启动 PH Launcher。`;
@@ -5643,6 +5652,12 @@ app.whenReady().then(() => {
     app.exit(0);
     return;
   }
+  const focusServer = appMutex.listenFocus(dataRoot().root, () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus();
+  });
+  app.once('will-quit', () => focusServer.close());
   // 心跳：定期刷新自己的运行标记。只靠 PID 会被系统回收的 PID 骗到，
   // 对方 90 秒没刷新就当作它已经不在（app-mutex 里判断）。
   const runLockTimer = setInterval(() => appMutex.touch({ dataDir: dataRoot().root, kind: 'phl' }), appMutex.HEARTBEAT_MS);

@@ -75,5 +75,10 @@
     return { status: suggested.length ? 'suggestion' : ambiguous.length ? 'ambiguous' : 'none', keys: [...new Set(suggested)], ambiguous: [...new Set(ambiguous)], unmatched: [...new Set(unmatched)] };
   }
 
-  return Object.freeze({ inferTeachingGroups, subjectKey });
+  function matchingCourses(lesson, courses = []) {
+    const canonical = value => subjectKey(String(value || '').replace(/\bpre[ -]?dp\b|\bgrade\s*\d+\b|\d+届\d*班/gi, ' '));
+    const subject = canonical(lesson.course);
+    return subject ? courses.filter(course => canonical(course.name) === subject && compatible(course, lesson)) : [];
+  }
+  return Object.freeze({ inferTeachingGroups, subjectKey, matchingCourses });
 });

@@ -5,6 +5,10 @@
   // content is intentionally absent from this catalog.
   root.PH_EN = {
     exact: {
+      '返回课表': 'Back to timetable',
+      '更改课程关联': 'Change linked class',
+      '选择对应课程，查看作业与资料。': 'Choose the matching class to view assignments and resources.',
+      '请先同步 ManageBac 课程。': 'Sync your ManageBac classes first.',
       '作业概览': 'Task overview',
       '24 小时内截止': 'Due within 24 hours',
       '提醒设置': 'Reminder settings',

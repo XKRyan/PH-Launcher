@@ -21,7 +21,7 @@ const ROUTE_META = {
   dictionary: { title: '离线词典', eyebrow: 'OFFLINE DICTIONARY' },
   vocabulary: { title: '背单词', eyebrow: 'WORDS IN CONTEXT' },
   vlmreader: { title: 'VLMReader', eyebrow: 'READ · LEARN · REMEMBER' },
-  timetable: { title: '我的课表', eyebrow: 'MY TIMETABLE', page: 'school' },
+  timetable: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
   calendar: { title: '我的日程', eyebrow: 'MY CALENDAR' },
   mail: { title: '平和邮箱', eyebrow: 'SCHOOL MAIL' },
   psychology: { title: '心履', eyebrow: 'WELLBEING' },
@@ -409,7 +409,7 @@ function navigate(route) {
   window.ph.sites.hide();
   const pageRoute = ROUTE_META[route].page || route;
   $$('.page').forEach((page) => page.classList.toggle('active', page.dataset.page === pageRoute));
-  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === route));
+  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.route === (route === 'timetable' ? 'courses' : route)));
   $('#siteToolbar').classList.add('hidden');
   $('#internalTopActions').classList.remove('hidden');
   setTopbar(ROUTE_META[route].title, ROUTE_META[route].eyebrow);

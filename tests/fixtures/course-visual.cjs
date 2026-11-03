@@ -23,6 +23,7 @@ app.whenReady().then(async () => {
       {id:'22:32',courseId:'22',course:'English A',title:'Reading response',status:'Not yet submitted',dueAt:'2026-10-17T15:59:00Z'},
       {id:'21:33',courseId:'21',course:'Biology HL',title:'Cell structure worksheet',status:'Submitted',dueAt:'2026-10-15T15:59:00Z'}];
     const snapshot = {managebac:{courses,tasks,fetchedAt:new Date().toISOString(),accountKey:'synthetic'},preferences:{},status:{},epochs:{managebac:1},accounts:{managebac:{saved:true}}};
+    window.fixtureSnapshot=snapshot;
     window.ph={school:{get:async()=>snapshot,sync:async()=>snapshot,preferences:async()=>snapshot,
       course:async id=>({id,name:courses.find(c=>c.id===id).name,grade:'6',tasks:tasks.filter(t=>t.courseId===id),files:[],events:[]}),
       task:async(cid,id)=>({...tasks.find(t=>t.id===cid+':'+id),description:'Explain how temperature affects enzyme activity.\\n\\nInclude a graph, describe your method and evaluate the reliability of the results.',attachments:[{name:'Investigation guide.pdf',url:'https://shph.managebac.cn/attachments/10/download'}],url:'https://shph.managebac.cn/student/classes/'+cid+'/core_tasks/'+id}),
@@ -30,7 +31,7 @@ app.whenReady().then(async () => {
       submitTaskUpload:async()=>{window.fixtureUploads++;return {verification:'unverified'}},cancelTaskUpload:async()=>({ok:true})}};
     window.openSite=async()=>{}; void 0;
   `);
-  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
+  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-selection-inference.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
   await run("window.i18n.mount('zh-CN'); window.schoolUI.open('courses')");
   const out = path.join(root, '.cache/v2-visual'); fs.mkdirSync(out, { recursive: true });
   const wait = () => new Promise(resolve => setTimeout(resolve, 150));
@@ -110,5 +111,23 @@ app.whenReady().then(async () => {
   await run("window.i18n.apply('zh-CN')"); win.setSize(780,650); await wait();
   assert.ok(await run("document.querySelector('#schoolPage').scrollWidth <= document.querySelector('#schoolPage').clientWidth + 1"));
   await capture('assignment-read-error-compact-zh');
+  await run(`(() => {
+    const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));const week=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+    window.fixtureSnapshot.edupage={accountKey:'edu',weekStart:week,fetchedAt:new Date().toISOString(),lessons:[{id:'lesson',groupKey:'g',course:'Biology HL',date:week,start:'08:00',end:'08:40',groups:[],teacher:'Sample Teacher',room:'A101'}],options:[]};
+    window.fixtureSnapshot.preferences={accountKey:'edu',groups:['g']};
+    window.schoolUI.open('timetable');
+  })()`); await wait(); win.setSize(1280,900); await wait();
+  await capture('unified-timetable-zh');
+  await run("window.i18n.apply('en')"); await capture('unified-timetable-en');
+  await run("document.querySelector('[data-school-action=lesson]').click()"); await wait();
+  assert.equal(await run("document.querySelector('[data-tab=tasks]').getAttribute('aria-current')"),'page');
+  assert.ok(await run("document.querySelector('[data-school-action=relink-course]') !== null"));
+  assert.match(await run("document.querySelector('.school-course-breadcrumb').textContent"),/Back to timetable/);
+  await capture('linked-assignments-en');
+  win.setSize(780,650);await wait();
+  assert.ok(await run("document.querySelector('#schoolPage').scrollWidth<=document.querySelector('#schoolPage').clientWidth+1"));
+  await capture('linked-assignments-compact-en');
+  await run("document.querySelector('.school-course-breadcrumb button').click()");await wait();
+  assert.ok(await run("document.querySelector('[data-school-action=lesson]') !== null"));
   console.log(JSON.stringify({success:true,geometry,out})); app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1)});

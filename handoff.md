@@ -1,5 +1,15 @@
 # 工作交接
 
+## 2.0.4 本地更新（2026-11-03）
+
+课表和课程合并为侧栏“我的课程”，内部保留课表、课程、通知、作业、讨论和 CAS/EE。旧 timetable 路由仍可用，侧栏激活统一课程入口。匹配使用课程名、级别、老师，唯一匹配直达作业；不确定时选择，手工关联写入 schoolPreferences.courseLinks，绑定 EduPage 和 ManageBac 两个账号，验证课程存在并保存失败回滚。支持更改关联及返回原周课表。英文新渲染节点立即翻译，用户内容保留原文，窄窗口标签换行。
+
+重复启动：未拿到 Electron 单实例锁不再执行 ready 初始化；不同配置但共享数据目录的实例通过本地 pipe 唤醒已有窗口后退出，Lite 互斥不变。新增 pipe、关联持久化/账号隔离、课表往返回归。
+
+最终针对性测试 66/66；另全量时超时的 calendar-localization/credential-electron 串行复跑通过。全量仍有既有 PHL/Lite account-ui.js 字节差异；合并入口导致的旧断言已更新并复跑。真实 Electron 中英文/780px 布局与返回检查通过；2.0.4 打包自检全部 true，包内运行文件与源码逐字节相同。没有真实学校登录/提交操作。
+
+已更新 D:\PHLauncher\PH Launcher，数据哈希不变；备份 .cache/managebac-update-backup-2026-11-03T05-00-18.300Z。日志 .cache/merge-{focused-tests,full-tests,visual,self-test,build}.log。没有推送或发布。
+
 ## 2.0.3 本地修复（2026-11-03）
 
 分支 feat/managebac-task-reminders。课程作业支持现代卡片、表格、普通链接和同课程分页；无法解析/分页失败明确区分 error、partial 与确认 empty。课程概览失败不再阻止作业读取。失败课程仅保留同账号的旧作业并标 stale，旧缓存不触发提醒。重试保留课程页签、筛选和查询。仅合成数据验证，未验证用户截图对应的真实学校响应，未真实登录或提交作业。

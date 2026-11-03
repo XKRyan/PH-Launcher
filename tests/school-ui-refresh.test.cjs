@@ -156,13 +156,13 @@ test('my timetable only shows the selected teaching groups; the old class route 
     managebac: null, preferences: { accountKey: 'a', groups: ['g1'] }, status: {},
   });
   ui.context.window.schoolUI.open('timetable'); await settle();
-  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课表');
+  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课程');
   assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1, '只显示已选的教学组');
-  assert.equal(ui.document.querySelector('.school-course-tabs'), null);
+  assert.ok(ui.document.querySelector('.school-course-tabs [data-course-tab="timetable"]'));
   assert.equal(ui.document.querySelector('.school-readonly-scope'), null, '不再有班级视图的说明条');
   assert.ok(ui.document.querySelector('[data-school-action="groups"]'), '个人课表保留选择教学组入口');
   await ui.context.window.schoolUI.open('class-timetable');
-  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课表');
+  assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课程');
   assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1);
   assert.equal(ui.calls.sync.length, 0, 'local route changes must not imply network consent');
   assert.equal(ui.calls.preferences.length, 0);
@@ -173,7 +173,7 @@ test('course workspace owns its course/notification/task/core sections without a
   ui.context.window.schoolUI.open('courses'); await settle();
   assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课程');
   // 2026-09-19 用户要求加「通知」栏（抓所有通知，和网页版一样）+「讨论」栏 → 现在五个标签。
-  assert.equal(ui.document.querySelectorAll('[data-course-tab]').length, 5);
+  assert.equal(ui.document.querySelectorAll('[data-course-tab]').length, 6);
   assert.ok(ui.document.querySelector('[data-course-tab="notifications"]'), '要有通知这一栏');
   assert.ok(ui.document.querySelector('[data-course-tab="discussions"]'), '要有讨论这一栏');
   assert.equal(ui.document.querySelector('.school-tabs'), null);

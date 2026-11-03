@@ -36,7 +36,7 @@ function harness(overrides = {}) {
   };
   window.ph = { school, system: { openUrl: async () => {} } };
   const context = { window, document, Intl, Date, URL, setInterval: () => 0, queueMicrotask, console };
-  for (const file of ['school-tasks.js', 'school-ui.js', 'locales/en.js', 'i18n.js']) vm.runInNewContext(fs.readFileSync(require.resolve(`../src/${file}`), 'utf8'), context);
+  for (const file of ['school-selection-inference.js', 'school-tasks.js', 'school-ui.js', 'locales/en.js', 'i18n.js']) vm.runInNewContext(fs.readFileSync(require.resolve(`../src/${file}`), 'utf8'), context);
   const click = selector => { const node = document.querySelector(selector); assert.ok(node, `missing ${selector}`); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
   const field = (name, value, type = 'change') => { const node = document.querySelector(`[data-school-field="${name}"]`); Object.defineProperty(node, 'value', { configurable: true, writable: true, value }); node.focus(); node.dispatchEvent(new window.Event(type, { bubbles: true })); };
   const open = async () => { window.schoolUI.open('courses'); await settle(); click('[data-course-tab="tasks"]'); await settle(); };
@@ -244,7 +244,7 @@ test('a deliberate checked-site reset allows a new selection but still requires 
   assert.equal(ui.calls.prepare.length, 2); assert.deepEqual(ui.calls.submit, ['file-1']);
   ui.click('[data-school-action="confirm-task-upload"]'); await settle();
   assert.deepEqual(ui.calls.submit, ['file-1', 'file-2']);
-  assert.match(ui.document.querySelector('.school-upload-notice').textContent, /尚未核实/);
+  assert.match(ui.document.querySelector('.school-upload-notice').textContent, /unverified/i);
 });
 
 test('notification list deduplicates tasks and removes submitted work on refresh', async () => {
@@ -332,4 +332,32 @@ test('unreadable class with no cache never says there are no matching assignment
   assert.match(ui.document.querySelector('.school-course-panel').textContent,/不能确认是否为空/);
   ui.window.i18n.apply('en');
   assert.match(ui.document.querySelector('.school-course-panel').textContent,/Assignments have not loaded/);
+});
+
+
+test('unified course tabs open timetable and a matched lesson opens its assignments', async () => {
+ const ui=harness(); const date=new Date(); date.setDate(date.getDate()-((date.getDay()+6)%7));
+ const week=[date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
+ ui.snapshot().edupage={accountKey:'edu',weekStart:week,fetchedAt:new Date().toISOString(),lessons:[{id:'lesson',groupKey:'g',course:'Biology',date:week,start:'08:00',end:'08:40',groups:[],teacher:'',room:''}],options:[]};
+ ui.snapshot().preferences={accountKey:'edu',groups:['g']};
+ await ui.open();ui.click('[data-course-tab="timetable"]');await settle();
+ assert.ok(ui.document.querySelector('[data-school-action="lesson"]'));
+ ui.click('[data-school-action="lesson"]');await settle();
+ assert.deepEqual(ui.calls.course,['22']);
+ assert.equal(ui.document.querySelector('[data-tab="tasks"]').getAttribute('aria-current'),'page');
+ ui.window.i18n.apply('en'); assert.match(ui.document.querySelector('.school-course-tabs').textContent,/Schedule/);
+ ui.click('[data-course-tab="timetable"]');await settle();assert.ok(ui.document.querySelector('[data-school-action="lesson"]'));
+});
+
+
+test('saved course association survives a new renderer and is ignored for another account', async () => {
+ for (const changed of [false,true]) {
+  const ui=harness();const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));const week=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+  ui.snapshot().edupage={accountKey:'edu',weekStart:week,fetchedAt:new Date().toISOString(),lessons:[{id:'lesson',groupKey:'g',course:'Ambiguous subject',date:week,start:'08:00',end:'08:40',groups:[]}],options:[]};
+  ui.snapshot().preferences=JSON.parse(JSON.stringify({accountKey:'edu',groups:['g'],courseLinks:{edupageAccount:'edu',managebacAccount:changed?'other':'synthetic-a',items:{g:'22'}}}));
+  await ui.open();ui.click('[data-course-tab="timetable"]');await settle();ui.click('[data-school-action="lesson"]');await settle();
+  assert.equal(ui.calls.course.length,changed?0:1);
+  if(!changed)assert.equal(ui.calls.course[0],'22');
+  else assert.ok(ui.document.querySelector('[data-school-action="linked-course"]'));
+ }
 });

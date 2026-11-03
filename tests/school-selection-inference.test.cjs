@@ -66,3 +66,13 @@ test('numbered groups and conflicting duplicate options are not silently merged'
   assert.deepEqual(inferTeachingGroups({ options: [option('3', 'History (G3)'), option('4', 'History (G4)')], enrolledCourses: ['History (G3)'] }).keys, ['3']);
   assert.deepEqual(inferTeachingGroups({ options: [option('same', 'Biology'), option('same', 'Biology')], enrolledCourses: ['Biology'] }).keys, []);
 });
+
+
+test('timetable courses match prefixed school names but never guess between levels or teachers', () => {
+ const { matchingCourses } = require('../src/school-selection-inference.js');
+ const courses=[{id:'1',name:'IB DP 2029届4班 Pre-DP Math HL (Pre-DP Grade 10)',teacher:'Jane Doe'},{id:'2',name:'Math SL',teacher:'Jane Doe'}];
+ assert.deepEqual(matchingCourses({course:'Mathematics HL',teacher:'Doe Jane'},courses).map(c=>c.id),['1']);
+ assert.equal(matchingCourses({course:'Mathematics',teacher:'Jane Doe'},courses).length,2);
+ assert.equal(matchingCourses({course:'Math HL',teacher:'Other Teacher'},courses).length,0);
+ assert.equal(matchingCourses({course:'Physics'},courses).length,0);
+});

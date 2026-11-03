@@ -130,5 +130,5 @@
       finally { select.disabled = false; }
     });
   }
-  window.i18n = { t, apply, mount, settings, isProtected: blocked, locale: () => language };
+  window.i18n = { t, apply, mount, settings, refresh: (container) => { observer?.disconnect(); visit(container); observe(); }, isProtected: blocked, locale: () => language };
 })();

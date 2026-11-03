@@ -6,7 +6,7 @@
 .school-actions button { white-space:nowrap; }
 /* 角落那行不起眼的小字：当前数据时间（同步全部自动，界面上没有刷新按钮）。 */
 .school-data-stamp { position:fixed; right:18px; bottom:8px; z-index:1; color:var(--ink-3); font-size:.7rem; opacity:.65; pointer-events:none; }
-.school-course-tabs { display:flex; gap:6px; padding:5px; border:1px solid var(--border); border-radius:14px; background:var(--ivory-50); margin-bottom:25px; width:fit-content; max-width:100%; overflow-x:auto; }
+.school-course-tabs { display:flex; flex-wrap:wrap; gap:6px; padding:5px; border:1px solid var(--border); border-radius:14px; background:var(--ivory-50); margin-bottom:25px; width:fit-content; max-width:100%; overflow-x:auto; }
 .school-course-tabs button { background:transparent; border-radius:10px; padding:10px 20px; color:var(--ink-2); font-weight:650; white-space:nowrap; }
 .school-course-tabs button.active { color:var(--white); background:var(--green-800); box-shadow:var(--shadow-sm); }
 .school-section-head,.school-weekbar { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:18px 0; }

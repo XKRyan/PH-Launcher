@@ -149,3 +149,15 @@ test.after(() => {
   for (const child of children) { try { child.kill(); } catch { /* no-op */ } }
   try { fs.rmSync(temp, { recursive: true, force: true }); } catch { /* no-op */ }
 });
+
+
+test('another profile wakes the existing owner through a local pipe', {timeout:5000}, async () => {
+ const {listenFocus,requestFocus}=require('../electron/app-mutex.cjs');
+ const dir=freshDir(); let awaken;
+ const woken=new Promise(resolve=>{awaken=resolve});
+ const server=listenFocus(dir,awaken);
+ await new Promise(resolve=>server.once('listening',resolve));
+ try { assert.equal(await requestFocus(dir),true); await woken; }
+ finally { await new Promise(resolve=>server.close(resolve)); }
+ assert.equal(await requestFocus(dir),false);
+});
