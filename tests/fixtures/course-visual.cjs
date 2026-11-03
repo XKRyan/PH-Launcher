@@ -31,7 +31,7 @@ app.whenReady().then(async () => {
     window.openSite=async()=>{}; void 0;
   `);
   for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
-  await run("window.schoolUI.open('courses')");
+  await run("window.i18n.mount('zh-CN'); window.schoolUI.open('courses')");
   const out = path.join(root, '.cache/v2-visual'); fs.mkdirSync(out, { recursive: true });
   const wait = () => new Promise(resolve => setTimeout(resolve, 150));
   const capture = async name => {
@@ -51,10 +51,15 @@ app.whenReady().then(async () => {
   await capture('course-detail-new-zh');
   await run("window.i18n.apply('en')");
   await capture('course-detail-new-en');
+  await run("document.querySelector('[data-school-action=course-detail-tab][data-tab=tasks]').click()");
+  await capture('class-tasks-new-en');
+  await run("document.querySelector('[data-school-action=class-task-filter][data-filter=completed]').click()");
+  assert.equal(await run("document.querySelectorAll('.school-course-panel [data-school-action=task]').length"),1);
+  await run("document.querySelector('[data-school-action=course-detail-tab][data-tab=overview]').click()");
   win.setSize(780, 650); await wait();
-  assert.equal(await run("document.querySelector('.school-dialog-content').scrollWidth <= document.querySelector('.school-dialog-content').clientWidth + 1"), true);
+  assert.equal(await run("document.querySelector('#schoolPage').scrollWidth <= document.querySelector('#schoolPage').clientWidth + 1"), true);
   await capture('course-detail-compact-en');
-  await run("document.querySelector('dialog').close(); window.i18n.apply('zh-CN')");
+  await run("document.querySelector('[data-school-action=course-list]').click(); window.i18n.apply('zh-CN')");
   win.setSize(1280, 900);
   await run("document.querySelector('[data-course-tab=notifications]').click()");
   await capture('notifications-new-zh');

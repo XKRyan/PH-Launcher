@@ -881,5 +881,11 @@
     '有新作业或临近截止时会弹窗提醒。': 'New assignments and approaching deadlines appear in a popup.',
     '启动器运行时每 10 分钟检查更新，最小化到托盘也可提醒。完全退出后不能提醒；作业提醒会直接弹窗。': 'Checks every 10 minutes while running, including in the tray. Assignment reminders open a popup; quit apps cannot send reminders.',
   });
+  Object.assign(root.PH_EN.exact, {
+    '通知': 'Notifications', '讨论': 'Discussions', '全部课程': 'All classes', '切换课程': 'Switch class', '课程概览': 'Overview',
+    '课程分区': 'Class sections', '查看全部作业': 'View all assignments',
+    '课程信息': 'Class information', '待处理作业': 'Pending assignments',
+    '查看单元': 'View units', '全部作业': 'All assignments', '搜索作业': 'Search assignments',
+  });
   if (typeof module === 'object' && module.exports) module.exports = root.PH_EN;
 }(typeof window === 'undefined' ? {} : window));

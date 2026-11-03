@@ -29,7 +29,7 @@ function harness(overrides = {}) {
     get: async () => snapshot, sync: async () => snapshot,
     preferences: async (change) => { snapshot.preferences = { ...snapshot.preferences, ...change }; return snapshot; },
     task: async (courseId, taskId) => { calls.task.push([courseId, taskId]); return overrides.task ? overrides.task(courseId, taskId) : detail(courseId, taskId); },
-    course: async id => { calls.course.push(id); return { id, name: '保存', tasks, files: [], events: [], url: `https://shph.managebac.cn/student/classes/${id}` }; },
+    course: async id => { calls.course.push(id); if (overrides.course) return overrides.course(id); return { id, name: '保存', tasks, files: [], events: [], url: `https://shph.managebac.cn/student/classes/${id}` }; },
     prepareTaskUpload: async (courseId, taskId) => { calls.prepare.push([courseId, taskId]); return overrides.prepare ? overrides.prepare(courseId, taskId) : { token: 'synthetic-token', filename: '保存 <draft>.pdf', size: 1200, courseId, taskId }; },
     submitTaskUpload: async token => { calls.submit.push(token); return overrides.submit ? overrides.submit(token) : { verification: 'unverified', courseId: '21', taskId: '1', url: detail('21', '1').url }; },
     cancelTaskUpload: async token => { calls.cancel.push(token); }
@@ -178,7 +178,8 @@ test('late picker result is canceled after back navigation and cannot replace co
   selection.resolve({ token: 'late', filename: 'old.pdf', size: 1, courseId: '21', taskId: '1' }); await settle();
   assert.deepEqual(ui.calls.cancel, ['late']); assert.deepEqual(ui.calls.course, ['21']);
   assert.equal(ui.document.querySelector('.school-upload-confirm'), null);
-  assert.match(ui.document.querySelector('#schoolDialogTitle').textContent, /课程详情/);
+  assert.equal(ui.document.querySelector('dialog').open, false);
+  assert.equal(ui.document.querySelector('.school-class-header h1').textContent, '保存');
 });
 
 test('an old detail response cannot replace a newer task, or reopen a closed dialog', async () => {
@@ -267,7 +268,41 @@ test('course detail switches sections without refetching and returns to the filt
   assert.match(ui.document.querySelector('.school-course-panel').textContent, /暂未识别到文件/);
   ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
   assert.equal(ui.calls.course.length, 1);
-  assert.equal(ui.document.querySelector('.school-completed-details').hasAttribute('open'), false);
-  ui.click('dialog [data-school-action="close"]');
+  assert.equal(ui.document.querySelector('[data-school-action="class-task-filter"][data-filter="pending"]').getAttribute('aria-pressed'), 'true');
+  ui.click('[data-school-action="course-list"]');
   assert.equal(ui.document.querySelector('[data-school-field="course-query"]').value, 'Biology');
+});
+
+test('class navigation ignores old requests when switching classes or returning to all classes', async () => {
+  const first = deferred();
+  const ui = harness({ course: id => id === '21' ? first.promise : Promise.resolve({id, name:'Biology',tasks:[],files:[],events:[]}) });
+  await ui.open(); ui.click('[data-course-tab="courses"]');
+  ui.click('[data-school-action="course"][data-id="21"]');
+  ui.field('class-switch', '22'); await settle();
+  assert.equal(ui.document.querySelector('.school-class-header h1').textContent, 'Biology');
+  first.resolve({id:'21',name:'Stale course',tasks:[],files:[],events:[]}); await settle();
+  assert.equal(ui.document.querySelector('.school-class-header h1').textContent, 'Biology');
+  ui.click('[data-school-action="course-list"]');
+  assert.equal(ui.document.querySelector('.school-class-header'), null);
+  assert.equal(ui.document.querySelectorAll('.school-course-card').length, 2);
+});
+test('closing assignment details preserves class section and task filters', async () => {
+  const ui = harness(); await ui.open(); ui.click('[data-course-tab="courses"]');
+  ui.click('[data-school-action="course"][data-id="21"]'); await settle();
+  ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
+  ui.click('[data-school-action="class-task-filter"][data-filter="completed"]');
+  ui.field('class-query', 'Task 6', 'input');
+  await ui.openTask('6'); ui.click('dialog [data-school-action="close"]');
+  assert.equal(ui.document.querySelector('[data-school-field="class-query"]').value, 'Task 6');
+  assert.equal(ui.document.querySelector('[data-school-action="class-task-filter"][data-filter="completed"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(ui.calls.course.length, 1);
+});
+test('class page and pending requests clear on account switch', async () => {
+  const pending = deferred(); const ui = harness({ course: () => pending.promise });
+  await ui.open(); ui.click('[data-course-tab="courses"]'); ui.click('[data-school-action="course"]');
+  ui.setSnapshot({ ...ui.snapshot(), managebac: null, epochs:{managebac:2} });
+  await ui.window.schoolUI.refresh();
+  pending.resolve({id:'21',name:'Old account',tasks:[],files:[],events:[]}); await settle();
+  assert.equal(ui.document.querySelector('.school-class-header'), null);
+  assert.doesNotMatch(ui.document.querySelector('#schoolPage').textContent,/Old account/);
 });

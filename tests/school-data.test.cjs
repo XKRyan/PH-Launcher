@@ -414,9 +414,9 @@ test('course detail exposes read-only discussion list, text, replies, and attach
   harness.api.discussion = async () => ({ courseId: '21', discussionId: '31', title: '<Topic>', url: 'https://shph.managebac.cn/student/classes/21/discussions/31', main: { author: 'Teacher', category: 'Biology', date: 'Today', body: '<Main>', attachments: [{ name: '<file>.pdf', url: 'https://shph.managebac.cn/attachments/7/download' }] }, comments: [{ id: '9', author: 'Student', date: 'Later', body: '<Reply>', attachments: [], private: false }] });
   harness.context.window.schoolUI.open('courses'); await settleUi();
   harness.click('[data-school-action="course"]'); harness.click('[data-school-action="consent"]'); await settleUi();
-  assert.ok(harness.document.querySelector('[data-school-action="course-discussions"]'));
-  harness.click('[data-school-action="course-discussions"]'); await settleUi();
-  assert.match(harness.document.querySelector('dialog').textContent, /<Topic>/);
+  assert.ok(harness.document.querySelector('[data-school-action="course-detail-tab"][data-tab="discussions"]'));
+  harness.click('[data-school-action="course-detail-tab"][data-tab="discussions"]'); await settleUi();
+  assert.match(harness.document.querySelector('.school-course-panel').textContent, /<Topic>/);
   harness.click('[data-school-action="discussion"]'); await settleUi();
   const dialog = harness.document.querySelector('dialog');
   assert.match(dialog.textContent, /<Main>/); assert.match(dialog.textContent, /<Reply>/);

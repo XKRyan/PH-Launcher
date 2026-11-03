@@ -32,3 +32,13 @@ The notification tab shows a deduplicated actionable list from the current task 
 Validation uses synthetic data only: popup replacement/dismissal/queue/account isolation, persisted completion, list deduplication, course navigation and full app regression. Actual Electron renders cover both languages, compact/large-font dialogs and a real native task popup. No production login or submission was performed.
 
 Final 2.0.2 validation: the 44-case targeted popup/course suite passed, followed by 18 account/drag/integration checks including filtered reorder. The full 1040-case run found the pre-existing PHL Lite byte mismatch and one obsolete drag-hint assertion; the latter was updated for the new UI and rerun successfully. Packaged self-test exited 0 with every application check true. Eight changed runtime files were byte-verified against the packaged archive. Local replacement is waiting for the running app to exit; no release or push was performed.
+
+### Final course navigation revision and local installation
+
+Following the user's request to use ManageBac's interaction model, course detail now opens as an inline class page with a class switcher, breadcrumb and persistent Overview / Units / Tasks / Calendar / Discussions / Files navigation. The overview summarizes actionable work and course information. Task filters and search survive closing task details; late requests and account changes cannot restore old class data. The existing confirmed upload flow remains intact.
+
+Reference: https://help.managebac.com/hc/en-us/articles/360019107391-Navigating-ManageBac-as-a-Student (official student navigation; inspected 2026-11-03). This is a navigation reference, not an assertion of identical platform features.
+
+Final verification: 44 targeted navigation checks passed; the full 1044-test run had 1042 passes, the known PHL Lite file mismatch, and an obsolete modal-discussion selector. The selector was migrated to the inline discussion tab and the 52-test data/workspace suite passed. Actual Electron screenshots confirmed Chinese/English layouts, compact windows and task filtering. The final packaged self-test passed, and the archive matched all eight modified runtime files.
+
+Installed locally on 2026-11-03 after the user's exit confirmation: version 2.0.2.0 / archive 2.0.2; executable and archive hashes verified. Only the executable and application archive were replaced. Personal data hashes were unchanged. Backup: `.cache/managebac-update-backup-2026-11-03T01-26-00.387Z`. No push or public release.
