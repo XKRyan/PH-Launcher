@@ -69,3 +69,18 @@ test('expired old account is removed before a failed automatic relogin', async (
   })), { code: 'NETWORK_ERROR' });
   assert.equal(cache.snapshot().edupage, null);
 });
+
+
+test('partial assignments retain same-account cached tasks, but confirmed empty and new accounts do not', async () => {
+  const cache = new SchoolCache();
+  const snapshot = (extra = {}) => ({ source: 'managebac', accountKey: 'a', fetchedAt: new Date().toISOString(), tasks: [], taskFailedCourses: [], ...extra });
+  const old = { id:'21:1', courseId:'21', title:'Old work' };
+  await cache.sync('managebac', {}, async () => snapshot({tasks:[old]}));
+  const partial = await cache.sync('managebac', {}, async () => snapshot({taskFailedCourses:['21']}));
+  assert.equal(partial.tasks[0].stale,true);
+  const empty = await cache.sync('managebac', {}, async () => snapshot());
+  assert.equal(empty.tasks.length,0);
+  await cache.sync('managebac', {}, async () => snapshot({tasks:[old]}));
+  const other = await cache.sync('managebac', {}, async () => snapshot({accountKey:'b',taskFailedCourses:['21']}));
+  assert.equal(other.tasks.length,0);
+});

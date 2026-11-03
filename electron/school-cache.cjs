@@ -132,6 +132,16 @@ class SchoolCache {
           this.invalidate(source);
         }
       }
+      // Keep only missing tasks from failed courses and the same verified account.
+      // A confirmed empty response must remove old work; cached work cannot send alerts.
+      if (source === 'managebac' && data.accountKey && data.accountKey === cached?.data.accountKey && Array.isArray(data.taskFailedCourses)) {
+        const failed = new Set(data.taskFailedCourses.map(String));
+        const current = new Map((data.tasks || []).map(task => [task.id, task]));
+        for (const task of cached.data.tasks || []) {
+          if (failed.has(String(task.courseId)) && !current.has(task.id)) current.set(task.id, { ...task, stale: true });
+        }
+        data.tasks = [...current.values()].slice(0, 2000);
+      }
       this.entries.delete(key);
       this.entries.set(key, { at: this.now(), data });
       while (this.entries.size > 9) this.entries.delete(this.entries.keys().next().value);

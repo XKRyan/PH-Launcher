@@ -306,3 +306,30 @@ test('class page and pending requests clear on account switch', async () => {
   assert.equal(ui.document.querySelector('.school-class-header'), null);
   assert.doesNotMatch(ui.document.querySelector('#schoolPage').textContent,/Old account/);
 });
+
+
+test('unreadable class tasks show cached work and retry preserves section and filters', async () => {
+  let attempt = 0;
+  const ui = harness({course: async id => ({id, tasks:[], tasksStatus: ++attempt === 1 ? 'error' : 'empty'})});
+  await ui.open(); ui.click('[data-course-tab="courses"]'); ui.click('[data-school-action="course"][data-id="21"]'); await settle();
+  ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
+  assert.ok(ui.document.querySelector('.school-task-cache-label'));
+  assert.match(ui.document.querySelector('.school-course-panel').textContent,/未能完整读取/);
+  ui.click('[data-school-action="class-task-filter"][data-filter="all"]');
+  ui.field('class-query','Task','input');
+  ui.click('[data-school-action="retry-course"]'); await settle();
+  assert.equal(ui.document.querySelector('[data-school-field="class-query"]').value,'Task');
+  assert.equal(ui.document.querySelector('[data-filter="all"]').getAttribute('aria-pressed'),'true');
+  assert.equal(ui.document.querySelector('.school-task-cache-label'),null);
+  assert.equal(ui.document.querySelector('[data-school-action="retry-course"]'),null);
+});
+
+test('unreadable class with no cache never says there are no matching assignments', async () => {
+  const ui=harness({course:async id=>({id,tasks:[],tasksStatus:'error'})});
+  ui.snapshot().managebac.tasks=[];
+  await ui.open();ui.click('[data-course-tab="courses"]');ui.click('[data-school-action="course"]');await settle();
+  ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
+  assert.match(ui.document.querySelector('.school-course-panel').textContent,/不能确认是否为空/);
+  ui.window.i18n.apply('en');
+  assert.match(ui.document.querySelector('.school-course-panel').textContent,/Assignments have not loaded/);
+});

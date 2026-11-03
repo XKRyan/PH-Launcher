@@ -68,6 +68,7 @@ function readUrl(site, raw, method = 'GET') {
     if (path === '/student/tasks_and_deadlines'
       && ([...params.keys()].length === 0
         || ([...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))))) return url.href;
+    if (/^\/student\/classes\/\d+\/core_tasks$/.test(path) && [...params.keys()].every(key => ['page', 'view'].includes(key) && params.getAll(key).length === 1) && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page'))) && (!params.has('view') || ['upcoming', 'past', 'overdue', 'all'].includes(params.get('view')))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
@@ -321,7 +322,7 @@ function exactDueDate(node) {
 function parseManageBacTasks(html, course = {}, { reference = new Date() } = {}) {
   const doc = htmlDocument(html);
   const tasks = new Map();
-  const cards = doc.querySelectorAll('.fusion-card-item.short-assignment, [data-task-id]');
+  const links = [...doc.querySelectorAll('a[href*="/core_tasks/"]')].filter(link => /\/classes\/\d+\/core_tasks\/\d+\/?$/.test(safeSourceUrl('managebac', link.getAttribute('href'))));
   // Hello! Pinghe mechanism: the date badge gives month/day, the due-date
   // line gives the time, and the past-due badge picks the year direction.
   // This resolves a concrete date for nearly every card, which is what the
@@ -351,25 +352,31 @@ function parseManageBacTasks(html, course = {}, { reference = new Date() } = {})
     const newer = sorted.filter((dt) => dt.getTime() >= dayStart);
     return (newer.length ? newer[0] : sorted[sorted.length - 1]).toISOString();
   };
-  for (const card of cards) {
-    const link = card.querySelector('.title a[href], h3 a[href], h4 a[href], a[href*="/core_tasks/"]');
+  for (const sourceLink of links) {
+    const card = sourceLink.closest('.fusion-card-item.short-assignment, [data-task-id], .f-task-tile, .f-tile, tr, .task-item, .task-card, li, article') || sourceLink.parentElement;
+    // Some layouts wrap multiple assignment links in one container or put the
+    // task id on the link itself. Never drop later links in either case.
+    const sourceUrl = safeSourceUrl('managebac', sourceLink.getAttribute('href'));
+    const link = [...card.querySelectorAll('a.f-tile__title-link, .title a[href], h3 a[href], h4 a[href]')].find(item => safeSourceUrl('managebac', item.getAttribute('href')) === sourceUrl) || sourceLink;
     const url = safeSourceUrl('managebac', link?.getAttribute('href'));
-    const ids = url.match(/\/classes\/(\d+)\/core_tasks\/(\d+)$/);
+    const ids = url.match(/\/classes\/(\d+)\/core_tasks\/(\d+)\/?$/);
     if (!ids || (course.id && ids[1] !== String(course.id))) continue;
     const title = text(link, null, 200);
     if (!title) continue;
     const id = `managebac:${ids[1]}:${ids[2]}`;
-    const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160);
+    if (tasks.has(id)) continue;
+    const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160) || text(card, '.f-tile__description span, time, [data-due-at], [data-due-date]', 160);
     const pastDue = Boolean(card.querySelector('.past-due'));
     tasks.set(id, {
       id, title, courseId: ids[1], course: clean(course.name, 160), url,
       dueText,
-      dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge-label', 80),
+      dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge[data-bs-title]', 80) || text(card, '.badge-label, .task-status, [data-status]', 80),
       score: text(card, '.assessment.task-score', 80),
       pastDue,
     });
   }
-  return { tasks: [...tasks.values()].slice(0, 500), recognized: cards.length > 0 || /No (?:tasks|assignments|records)|暂无作业/i.test(doc.documentElement?.textContent || '') };
+  const empty = tasks.size === 0 && /(?:No (?:tasks|assignments|records)(?: found| available)?|暂无作业|没有作业)/i.test(doc.documentElement?.textContent || '');
+  return { tasks: [...tasks.values()].slice(0, 500), recognized: tasks.size > 0 || empty, empty, truncated: tasks.size > 500 };
 }
 
 function parseCourseFiles(html, courseId) {
@@ -741,7 +748,7 @@ class SchoolDataClient {
   }
   async syncManageBac({ refreshGrades = true, previousCourses = [] } = {}) {
     const courses = new Map(); const tasks = new Map(); const warnings = [];
-    const taskSyncedCourses = [];
+    const taskSyncedCourses = []; const taskFailedCourses = [];
     let capped = false;
     for (let page = 1; page <= 8; page += 1) {
       const result = parseManageBacCourses(await this.request('managebac', `/student/classes/my?page=${page}`));
@@ -767,12 +774,13 @@ class SchoolDataClient {
         await this.pause(120);
       }
       try {
-        const parsed = parseManageBacTasks(await this.request('managebac', `/student/classes/${course.id}/core_tasks`), course);
-        if (parsed.recognized) taskSyncedCourses.push(String(course.id));
+        const parsed = await this.getCourseTasks(course);
+        if (['ready', 'empty'].includes(parsed.tasksStatus)) taskSyncedCourses.push(String(course.id));
         for (const task of parsed.tasks) tasks.set(task.id, task);
-        if (!parsed.recognized) warnings.push(`${course.name}：未识别到作业列表，请在原网页核对`);
+        if (['error', 'partial'].includes(parsed.tasksStatus)) { taskFailedCourses.push(String(course.id)); warnings.push(`${course.name}：作业未能完整读取，请在原网页核对`); }
       } catch (error) {
         if (error.code === 'LOGIN_REQUIRED') throw error;
+        taskFailedCourses.push(String(course.id));
         warnings.push(`${course.name}：部分数据没有同步成功`);
       }
       await this.pause(120);
@@ -823,20 +831,64 @@ class SchoolDataClient {
       const ts = resolved.getTime();
       return ts >= cutoff && ts <= futureLimit;
     });
-    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), taskSyncedCourses, warnings: warnings.slice(0, 30) };
+    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), taskSyncedCourses, taskFailedCourses, warnings: warnings.slice(0, 30) };
+  }
+  async getCourseTasks(course) {
+    const id = validatedId(course.id);
+    const base = `/student/classes/${id}/core_tasks`;
+    const queue = [base], seen = new Set(), tasks = new Map();
+    let incomplete = false;
+    while (queue.length && seen.size < 10) {
+      const raw = queue.shift(); const url = readUrl('managebac', raw);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      try {
+        const html = await this.request('managebac', url);
+        const parsed = parseManageBacTasks(html, course, { reference: this.now() });
+        if (!parsed.recognized || parsed.truncated) incomplete = true;
+        for (const task of parsed.tasks) tasks.set(task.id, task);
+        const doc = htmlDocument(html);
+        // Follow only observed, allowlisted pagination/view links for this class.
+        for (const link of doc.querySelectorAll('a[href]')) {
+          let next;
+          try { next = new URL(link.getAttribute('href'), url); } catch { continue; }
+          if (next.origin !== ORIGINS.managebac || next.pathname !== base || !next.search) continue;
+          try { readUrl('managebac', next.href); } catch { incomplete = true; continue; }
+          if (!seen.has(next.href) && !queue.includes(next.href)) queue.push(next.href);
+        }
+        if (queue.length) await this.pause(120);
+      } catch (error) {
+        if (error.code === 'LOGIN_REQUIRED') throw error;
+        incomplete = true;
+      }
+    }
+    if (queue.length) incomplete = true;
+    const values = [...tasks.values()];
+    return { tasks: values, tasksStatus: incomplete ? (values.length ? 'partial' : 'error') : (values.length ? 'ready' : 'empty') };
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
     const base = `/student/classes/${id}`;
-    const unitsHtml = await this.request('managebac', `${base}/units`);
-    const doc = htmlDocument(unitsHtml);
-    const grade = parseManageBacGrade(unitsHtml).grade;
-    const result = { id, name: text(doc, 'h1', 160), grade, url: `${ORIGINS.managebac}${base}/units`, units: text(doc.querySelector('.units-list-tab, .units-tabs'), null, 6000), tasks: [], files: [], events: [], warnings: [], fetchedAt: this.now().toISOString() };
+    const result = { id, name: '', grade: null, url: `${ORIGINS.managebac}${base}/units`, units: '', tasks: [], files: [], events: [], warnings: [], fetchedAt: this.now().toISOString() };
+    try {
+      const unitsHtml = await this.request('managebac', `${base}/units`);
+      const doc = htmlDocument(unitsHtml);
+      result.name = text(doc, 'h1', 160);
+      result.grade = parseManageBacGrade(unitsHtml).grade;
+      result.units = text(doc.querySelector('.units-list-tab, .units-tabs'), null, 6000);
+    } catch (error) {
+      if (error.code === 'LOGIN_REQUIRED') throw error;
+      result.warnings.push('课程概览暂时未能读取，其余栏目仍会继续加载');
+    }
     for (const section of ['core_tasks', 'files', 'events.json']) {
       await this.pause(120);
       try {
+        if (section === 'core_tasks') {
+          Object.assign(result, await this.getCourseTasks({ id, name: result.name }));
+          if (['error', 'partial'].includes(result.tasksStatus)) result.warnings.push('课程作业未能完整读取，请重试或在原网页核对');
+          continue;
+        }
         const body = await this.request('managebac', `${base}/${section}`);
-        if (section === 'core_tasks') result.tasks = parseManageBacTasks(body, { id, name: result.name }).tasks;
         if (section === 'files') result.files = parseCourseFiles(body, id);
         if (section === 'events.json') {
           let parsed;

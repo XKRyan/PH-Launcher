@@ -433,3 +433,60 @@ test('school UI shows login-expired errors instead of treating a failed sync as 
   assert.match(harness.document.querySelector('[role="alert"]').textContent, /登录已过期/);
   assert.ok(harness.document.querySelector('[data-school-action="account"]'));
 });
+
+
+test('course tasks recognize modern tiles and table rows with stable ids and exact dates', () => {
+  const html = `<article class="f-task-tile"><a class="f-tile__title-link" href="/student/classes/21/core_tasks/71/">Modern essay</a><time datetime="2026-11-04T16:00:00Z">Nov 5</time><span class="badge-label">Submitted</span></article>
+    <table><tr><td><a href="/student/classes/21/core_tasks/72">Worksheet</a></td><td class="task-status">Not submitted</td></tr></table>
+    <li><a href="/student/classes/22/core_tasks/73">Another class</a></li>`;
+  const parsed = parseManageBacTasks(html, { id: '21' });
+  assert.deepEqual(parsed.tasks.map(t => t.id), ['managebac:21:71', 'managebac:21:72']);
+  assert.equal(parsed.tasks[0].dueAt, '2026-11-04T16:00:00.000Z');
+  assert.equal(parsed.tasks[1].status, 'Not submitted');
+  assert.equal(parseManageBacTasks('<div data-task-id="7">Unrecognized layout</div>').recognized, false);
+  assert.equal(parseManageBacTasks('<p>No assignments found</p>').empty, true);
+});
+
+test('course tasks follow observed local pagination, deduplicate, and reject unrelated targets', async () => {
+  const calls = [];
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (_, url) => {
+    calls.push(url);
+    if (url.endsWith('page=2')) return response(tasksHtml.replaceAll('/31', '/32') + '<a href="?page=1">Previous</a>');
+    return response(tasksHtml + '<a href="?page=2">Next</a><a href="https://evil.test/student/classes/21/core_tasks?page=2">Evil</a><a href="/student/classes/22/core_tasks?page=2">Other</a>');
+  } });
+  const result = await client.getCourseTasks({ id: '21' });
+  assert.equal(result.tasksStatus, 'ready'); assert.equal(result.tasks.length, 2);
+  assert.equal(calls.length, 3); assert.ok(calls.every(url => url.startsWith('https://shph.managebac.cn/student/classes/21/')));
+  for (const query of ['?page=0','?page=2&page=3','?view=delete','?action=remove']) assert.throws(() => readUrl('managebac', '/student/classes/21/core_tasks' + query));
+});
+
+test('task page failures and unreadable layouts never claim a confirmed empty list', async () => {
+  for (const [body, expected] of [['<h1>Changed layout</h1>', 'error'], ['<p>No tasks found</p>', 'empty']]) {
+    const client = new SchoolDataClient({ pause: async () => {}, fetch: async () => response(body) });
+    assert.equal((await client.getCourseTasks({ id: '21' })).tasksStatus, expected);
+  }
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (_, url) => url.includes('page=2') ? response('Unavailable',503) : response(tasksHtml + '<a href="?page=2">Next</a>') });
+  const result = await client.getCourseTasks({ id: '21' });
+  assert.equal(result.tasksStatus, 'partial'); assert.equal(result.tasks.length, 1);
+  const login = new SchoolDataClient({ fetch: async () => response('<input type="password">') });
+  await assert.rejects(login.getCourseTasks({ id: '21' }), { code: 'LOGIN_REQUIRED' });
+});
+
+test('course detail exposes unreadable assignments separately from empty assignments', async () => {
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (_, url) => response(url.endsWith('/units') ? '<h1>Math</h1>' : url.endsWith('.json') ? '[]' : '<main>Unknown layout</main>') });
+  const result = await client.getCourseDetail('21');
+  assert.equal(result.tasksStatus, 'error'); assert.equal(result.tasks.length,0); assert.match(result.warnings.join(), /作业/);
+});
+
+
+test('unavailable overview does not prevent reading assignments', async () => {
+  const client = new SchoolDataClient({ pause: async () => {}, fetch: async (_,url) => url.endsWith('/units') ? response('Unavailable',503) : response(url.endsWith('/core_tasks') ? tasksHtml : url.endsWith('.json') ? '[]' : '') });
+  const result = await client.getCourseDetail('21');
+  assert.equal(result.tasksStatus,'ready');assert.equal(result.tasks.length,1);
+});
+
+
+test('shared containers and task-id anchors do not drop assignment links', () => {
+  const parsed = parseManageBacTasks('<div><a href="/student/classes/21/core_tasks/1">One</a><a href="/student/classes/21/core_tasks/2">Two</a></div><a data-task-id="3" href="/student/classes/21/core_tasks/3">Three</a>', {id:'21'});
+  assert.deepEqual(parsed.tasks.map(t=>t.title),['One','Two','Three']);
+});

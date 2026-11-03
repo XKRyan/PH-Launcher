@@ -100,5 +100,15 @@ app.whenReady().then(async () => {
   })()`);
   assert.equal(geometry.dialogInside, true); assert.equal(geometry.footerInside, true); assert.equal(geometry.horizontal, true);
   await capture('upload-compact-en');
+  // Exercise failed assignment reads with same-account cached tasks in the real renderer.
+  await run("document.querySelector('dialog').close(); document.documentElement.style.fontSize=''; window.ph.school.course=async id=>({id,name:'Biology HL',tasks:[],tasksStatus:'error'}); window.schoolUI.open('courses')");
+  win.setSize(1280,900); await wait();
+  await run("document.querySelector('[data-course-tab=courses]').click(); document.querySelector('[data-school-action=course]').click()"); await wait();
+  await run("document.querySelector('[data-school-action=course-detail-tab][data-tab=tasks]').click()");
+  assert.ok(await run("document.querySelector('.school-task-cache-label') !== null"));
+  await capture('assignment-read-error-en');
+  await run("window.i18n.apply('zh-CN')"); win.setSize(780,650); await wait();
+  assert.ok(await run("document.querySelector('#schoolPage').scrollWidth <= document.querySelector('#schoolPage').clientWidth + 1"));
+  await capture('assignment-read-error-compact-zh');
   console.log(JSON.stringify({success:true,geometry,out})); app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1)});

@@ -1,5 +1,13 @@
 # 工作交接
 
+## 2.0.3 本地修复（2026-11-03）
+
+分支 feat/managebac-task-reminders。课程作业支持现代卡片、表格、普通链接和同课程分页；无法解析/分页失败明确区分 error、partial 与确认 empty。课程概览失败不再阻止作业读取。失败课程仅保留同账号的旧作业并标 stale，旧缓存不触发提醒。重试保留课程页签、筛选和查询。仅合成数据验证，未验证用户截图对应的真实学校响应，未真实登录或提交作业。
+
+验证：最终作业/缓存/界面/提醒测试 85/85；实际 Electron 中英文、窄窗口错误与缓存展示通过。全量运行 1053 项：1050 通过、2 失败、1 超时取消；两个 Electron 超时用串行单独复跑 5/5 通过。剩余失败为已有 PHL / PHL Lite account-ui.js 字节不一致（27008 / 27663），与本次修改无关。后补共享容器回归单测已在最终 85 项内通过。打包自检 success:true，修改运行文件逐字节与源码一致。
+
+已替换 D:\PHLauncher\PH Launcher 的 exe 与 app.asar，版本 2.0.3；用户数据哈希前后相同。备份 .cache/managebac-update-backup-2026-11-03T02-04-50.719Z。证据 .cache/assignment-{final-tests,full-tests,recheck,visual,self-test,build}.log 与 .cache/v2-visual/assignment-read-error-*.png。没有推送或发布，等待用户实际学校数据反馈。
+
 ## v2.0（2026-10-18）
 
 用户要求以 fix/manual-course-selection（起点 35780bad178dd726e4bf476487cc7c1bb1c88252）优化课程作业，完成 Windows/macOS 并合入 main 发布。保留原分支 143 个领先 main 的提交，不用旧版覆盖。工作目录 F:\Codex\2026-10-18\PH-Launcher-v2。

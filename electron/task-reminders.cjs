@@ -27,6 +27,7 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
   for (const task of snapshot.tasks.slice(0, 2000)) {
     if (!task?.id || !task.courseId) continue;
     const id = key(String(task.id));
+    if (task.stale) { delete next.inbox[id]; continue; }
     const old = next.entries[id];
     const due = dueTime(task);
     const deadline = Number.isFinite(due) ? due : null;
@@ -62,7 +63,7 @@ function pendingAlerts(state, snapshot) {
   const unique = new Map();
   for (const task of snapshot.tasks || []) {
     const type = state.inbox?.[key(String(task.id))];
-    if (type && !submitted(task)) unique.set(String(task.id), { ...task, type });
+    if (type && !task.stale && !submitted(task)) unique.set(String(task.id), { ...task, type });
   }
   return [...unique.values()];
 }

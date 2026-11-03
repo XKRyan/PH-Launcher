@@ -88,3 +88,10 @@ test('reminder inbox replaces deadline stages and clears submitted, hidden and r
   const hidden = run(tasks, { state: result.state, hiddenTasks: [tasks[0].id] });
   assert.deepEqual(Object.keys(hidden.state.inbox), []);
 });
+
+
+test('retained stale assignments never issue reminders or consume delivery stages', () => {
+  const stale = run([task(1,.5,{stale:true})], {state:baseline()});
+  assert.equal(stale.alerts.length,0);
+  assert.equal(run([task(1,.5)],{state:stale.state}).alerts.length,1);
+});

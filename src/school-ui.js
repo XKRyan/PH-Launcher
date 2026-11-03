@@ -535,7 +535,8 @@
     id = String(id); modal?.close(); state.courseTab = 'courses';
     if (courseDetail?.id === id && !force) { render(); return; }
     if (!courseDetail) state.courseListScroll = document.getElementById('content')?.scrollTop || 0;
-    const context = { id, data: null, tab: 'overview', taskFilter: 'pending', query: '', loading: true, error: '', discussions: null };
+    const previous = force && courseDetail?.id === id ? courseDetail : null;
+    const context = { id, data: null, tab: previous?.tab || 'overview', taskFilter: previous?.taskFilter || 'pending', query: previous?.query || '', loading: true, error: '', discussions: previous?.discussions || null };
     courseDetail = context; render();
     const scroller = document.getElementById('content'); if (scroller) scroller.scrollTop = 0;
     const account = state.snapshot.managebac?.accountKey;
@@ -543,6 +544,13 @@
     try {
       const data = await api().course(id);
       if (courseDetail !== context || state.snapshot.managebac?.accountKey !== account || state.epochs.managebac !== epoch) return;
+      if (['error', 'partial'].includes(data.tasksStatus)) {
+        const merged = new Map((data.tasks || []).map(task => [task.id, task]));
+        for (const task of [...(previous?.data?.tasks || []), ...(state.snapshot.managebac?.tasks || [])]) {
+          if (String(task.courseId) === id && !merged.has(task.id)) merged.set(task.id, { ...task, stale: true });
+        }
+        data.tasks = [...merged.values()];
+      }
       context.data = data; context.loading = false; render();
     } catch (error) {
       if (courseDetail !== context) return;
@@ -572,6 +580,9 @@
     if (!data) return header;
     const hidden = new Set(prefs().hiddenTasks || []);
     const tasks = (data.tasks || []).filter(task => !hidden.has(task.id));
+    const incomplete = ['error', 'partial'].includes(data.tasksStatus);
+    const taskNotice = incomplete ? `<div class="school-error" role="alert"><p>作业未能完整读取，当前列表可能不完整。保留的旧作业已标记，请重试或在原网页核对。</p>${btn('重新读取作业', 'retry-course', `data-id="${esc(id)}"`)}</div>` : '';
+    const taskEmpty = incomplete ? '尚未读取到作业，不能确认是否为空。' : '没有符合条件的作业';
     const dueOrder = (a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity);
     const pending = tasks.filter(task => !submitted(task)).sort(dueOrder);
     const done = tasks.filter(submitted).sort(dueOrder);
@@ -586,19 +597,19 @@
       const filters = [['pending','待处理',pending.length],['completed','已提交 / 已完成',done.length],['all','全部作业',tasks.length]];
       const source = context.taskFilter === 'completed' ? done : context.taskFilter === 'all' ? [...pending,...done] : pending;
       const matching = source.filter(task => String(task.title).toLocaleLowerCase().includes(context.query.toLocaleLowerCase()));
-      body = `<div class="school-class-taskbar"><div class="school-class-filters">${filters.map(([key,label,count]) => `<button type="button" data-school-action="class-task-filter" data-filter="${key}" aria-pressed="${context.taskFilter === key}">${label} <span>${count}</span></button>`).join('')}</div><input type="search" data-school-field="class-query" value="${esc(context.query)}" placeholder="搜索作业" aria-label="搜索作业"></div><div class="school-task-list">${taskRows(matching,true) || '<div class="school-empty"><p>没有符合条件的作业</p></div>'}</div>`;
+      body = `<div class="school-class-taskbar"><div class="school-class-filters">${filters.map(([key,label,count]) => `<button type="button" data-school-action="class-task-filter" data-filter="${key}" aria-pressed="${context.taskFilter === key}">${label} <span>${count}</span></button>`).join('')}</div><input type="search" data-school-field="class-query" value="${esc(context.query)}" placeholder="搜索作业" aria-label="搜索作业"></div><div class="school-task-list">${taskRows(matching,true) || `<div class="school-empty"><p>${taskEmpty}</p></div>`}</div>`;
     }
     if (tab === 'files') body = `<h2>课程文件</h2>${(data.files || []).map(file => `<div class="school-file-row"><span>${esc(file.name)}</span>${originalButton(file.url)}</div>`).join('') || '<div class="school-empty"><p>暂未识别到文件。</p></div>'}`;
     if (tab === 'units') body = `<h2>单元与计划</h2><p class="school-prewrap">${esc(data.units || '暂未识别到单元与计划。')}</p>`;
     if (tab === 'calendar') body = `<h2>课程日历</h2>${(data.events || []).map(item => `<div class="school-file-row"><span>${esc(item.title)}</span><time>${esc(item.start)}</time></div>`).join('') || '<div class="school-empty"><p>暂未识别到日历事项。</p></div>'}`;
     if (tab === 'discussions') body = context.discussions ? discussionList(context.discussions) : context.discussionsError ? `<div class="school-error" role="alert">${esc(context.discussionsError)}</div>${btn('重试', 'retry-course-discussions')}` : '<p role="status">正在读取，请稍候…</p>';
-    return `<div class="school-class-workspace">${header}${nav}<section class="school-course-panel">${body}</section>${warnings(data)}</div>`;
+    return `<div class="school-class-workspace">${header}${nav}<section class="school-course-panel">${['overview', 'tasks'].includes(tab) ? taskNotice : ''}${body}</section>${warnings(data)}</div>`;
   }
   function taskRows(items, compact = false) {
     return items.map((task) => {
       const hidden = (prefs().hiddenTasks || []).includes(task.id);
       const status = taskState(task);
-      return `<article class="school-task-row ${hidden ? 'is-hidden-task' : ''}${compact ? ' is-compact' : ''}" data-task-status="${status}"><button type="button" class="school-task-main" data-school-action="task" data-course="${esc(task.courseId)}" data-id="${esc(String(task.id).split(':').at(-1))}"><span class="school-task-course">${esc(task.course || '课程作业')}</span><strong>${esc(task.title)}</strong><span class="school-task-due ${status === 'overdue' ? 'is-overdue' : ''}">${esc(task.dueAt ? stamp(task.dueAt) : task.dueText || '截止日期请查原网页')}${task.dueDateOnly ? ' · 当天结束（未提供具体时间）' : ''}${task.status ? ` · ${esc(task.status)}` : ''}</span>${soon(task) ? '<span class="school-task-urgency">24 小时内截止</span>' : ''}<span class="school-task-state is-${status}">${taskStateLabel(status)}</span></button>${task.score ? `<span class="school-score">${esc(task.score)}</span>` : ''}${compact ? '' : `<button type="button" class="school-text-button" data-school-action="hide-task" data-id="${esc(task.id)}" title="仅更改本地列表，不修改 ManageBac">${hidden ? '恢复' : '隐藏'}</button>`}</article>`;
+      return `<article class="school-task-row ${hidden ? 'is-hidden-task' : ''}${compact ? ' is-compact' : ''}" data-task-status="${status}"><button type="button" class="school-task-main" data-school-action="task" data-course="${esc(task.courseId)}" data-id="${esc(String(task.id).split(':').at(-1))}"><span class="school-task-course">${esc(task.course || '课程作业')}</span><strong>${esc(task.title)}</strong>${task.stale ? '<span class="school-task-cache-label">上次读取 · 尚未更新</span>' : ''}<span class="school-task-due ${status === 'overdue' ? 'is-overdue' : ''}">${esc(task.dueAt ? stamp(task.dueAt) : task.dueText || '截止日期请查原网页')}${task.dueDateOnly ? ' · 当天结束（未提供具体时间）' : ''}${task.status ? ` · ${esc(task.status)}` : ''}</span>${soon(task) ? '<span class="school-task-urgency">24 小时内截止</span>' : ''}<span class="school-task-state is-${status}">${taskStateLabel(status)}</span></button>${task.score ? `<span class="school-score">${esc(task.score)}</span>` : ''}${compact ? '' : `<button type="button" class="school-text-button" data-school-action="hide-task" data-id="${esc(task.id)}" title="仅更改本地列表，不修改 ManageBac">${hidden ? '恢复' : '隐藏'}</button>`}</article>`;
     }).join('');
   }
   // Negation and requested actions must win over positive words in school status text.
