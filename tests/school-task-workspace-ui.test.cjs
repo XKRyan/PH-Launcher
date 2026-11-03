@@ -436,3 +436,19 @@ test('session timetable slots automatically link an unnamed course; conflicts ne
  assert.equal(ui.calls.course.length,conflict?0:1);if(!conflict)assert.equal(ui.calls.course[0],'21');
  }
 });
+
+test('structured units render as separate cards; old flattened cache cannot leak into the page',async()=>{
+ for(const legacy of [false,true]){
+ const ui=harness({course:async id=>({id,name:'A long class name '.repeat(12),units:legacy?'Units Weekly Planner List View 0 Lessons 0 Tasks':[{id:'1',title:'Exploring truth',level:'SL',start:'Starts W1 Sep',duration:'3 Weeks',state:'current',tasks:0,lessons:0,url:'https://shph.managebac.cn/student/classes/21/units/1/presentations'},{id:'2',title:'Writing project',state:'completed'}],tasks:[],files:[],events:[]})});
+ await ui.open();ui.click('[data-course-tab="courses"]');ui.click('[data-school-action="course"][data-id="21"]');await settle();ui.click('[data-tab="units"]');
+ assert.equal(ui.document.querySelectorAll('.school-unit-card').length,legacy?0:2);assert.ok(!ui.document.querySelector('#schoolPage').textContent.includes('Weekly Planner'));
+ if(!legacy){ui.window.i18n.apply('en');assert.match(ui.document.querySelector('.school-unit-list').textContent,/Current unit/);assert.equal(ui.document.querySelector('.school-unit-card h3').textContent,'Exploring truth');}
+ }
+});
+
+test('a successful newer snapshot updates the open class task list without discarding its section',async()=>{
+ const ui=harness({course:async id=>({id,name:'Biology',fetchedAt:'2026-01-01T00:00:00Z',tasks:[{id:'old',courseId:id,title:'Old task',status:'Pending'}],units:[],files:[]})});
+ await ui.open();ui.click('[data-course-tab="courses"]');ui.click('[data-school-action="course"][data-id="21"]');await settle();ui.click('[data-tab="tasks"]');
+ const next=JSON.parse(JSON.stringify(ui.snapshot()));next.managebac={...next.managebac,fetchedAt:new Date().toISOString(),taskSyncedCourses:['21'],tasks:[{id:'new',courseId:'21',title:'New task',status:'Pending'}]};ui.setSnapshot(next);await ui.window.schoolUI.refresh();await settle();
+ assert.match(ui.document.querySelector('.school-course-panel').textContent,/New task/);assert.ok(!ui.document.querySelector('.school-course-panel').textContent.includes('Old task'));
+});

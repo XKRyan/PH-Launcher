@@ -70,6 +70,7 @@ function readUrl(site, raw, method = 'GET') {
         || ([...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))))) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks$/.test(path) && [...params.keys()].every(key => ['page', 'view'].includes(key) && params.getAll(key).length === 1) && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page'))) && (!params.has('view') || ['upcoming', 'past', 'overdue', 'all'].includes(params.get('view')))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
+    if(/^\/student\/classes\/\d+\/units\/\d+\/presentations$/.test(path)&&!url.search)return url.href;
     if(path==='/student/timetables' && (!url.search || [...url.searchParams].length===1 && validDate(url.searchParams.get('datepicker[start_date]')))) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
@@ -457,6 +458,8 @@ function taskAttachments(root, courseId, taskId) {
   return [...items.values()].slice(0, 30);
 }
 function richContent(node) {
+  node=node.cloneNode(true);
+  for(const item of node.querySelectorAll('nav,form,.recent-discussions,.title,.due-date,.assessment,[data-ec3-info]'))item.remove();
   const blocks=[]; let buffer='';
   const flush=()=>{const value=buffer.replace(/[^\S\n]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();if(value)blocks.push({type:'text',text:value.slice(0,12000)});buffer='';};
   function walk(n){
@@ -634,13 +637,32 @@ function parseDiscussionDetail(html, courseId, discussionId) {
   }
   return { title, main: discussionPost(mainNode, cid, did), comments };
 }
+function parseCourseUnits(html,courseId) {
+  const doc=htmlDocument(html),units=new Map();
+  for(const node of doc.querySelectorAll('.unit-component')) {
+    const link=node.querySelector('.unit-details .h4 a[href],.title-and-badge a[href]');
+    let url;try{url=new URL(link?.getAttribute('href'),ORIGINS.managebac);}catch{continue;}
+    const match=url.pathname.match(/^\/student\/classes\/(\d+)\/units\/(\d+)\/presentations$/);
+    if(url.origin!==ORIGINS.managebac||!match||match[1]!==String(courseId)||url.search)continue;
+    const title=text(link,null,240);if(!title)continue;
+    const number=selector=>{const raw=text(node,selector,20);return /^\d+$/.test(raw)?Number(raw):null;};
+    const progress=node.querySelector('.progress-wrapper')?.getAttribute('data-bs-title')||'';
+    units.set(match[2],{id:match[2],title,url:url.href,level:text(node,'.title-and-badge .badge-label',30),
+      start:text(node,'.label-start',80),duration:text(node,'.unit-duration',50),
+      state:node.classList.contains('completed')?'completed':/current unit/i.test(progress)?'current':'',
+      lessons:number('.lessons .number'),tasks:number('.tasks .number')});
+  }
+  const root=doc.querySelector('.units-list-tab,.units-tabs');
+  return {units:[...units.values()].slice(0,200),unitsStatus:units.size?'ready':root&&/No units|No results|暂无单元|没有单元/i.test(root.textContent||'')?'empty':'unavailable'};
+}
 function parseCoreOverview(html, kind) {
   const doc = htmlDocument(html);
   const selectors = kind === 'cas' ? ['.aims-and-goals', '.statuses-legend', '.card-body'] : ['.pbl-worksheet', '.js-core-project-documents'];
-  const sections = selectors.flatMap((selector) => [...doc.querySelectorAll(selector)].slice(0, 5)).map((node) => {
+  const candidates=[...new Set(selectors.flatMap(selector=>[...doc.querySelectorAll(selector)].slice(0,5)))];
+  const sections = candidates.filter(node=>!candidates.some(parent=>parent!==node&&parent.contains(node))).map((node) => {
     const copy = node.cloneNode(true);
     for (const field of copy.querySelectorAll('input,textarea,form,button,nav')) field.remove();
-    return text(copy, null, 3000);
+    return taskDescription(copy).slice(0,3000);
   }).filter(Boolean);
   if (!sections.length) fail('PAGE_CHANGED', '未识别到此项目的概览，请在原网页查看');
   return { title: text(doc, 'h1', 160) || (kind === 'cas' ? 'CAS' : 'Extended Essay'), sections };
@@ -955,13 +977,13 @@ class SchoolDataClient {
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
     const base = `/student/classes/${id}`;
-    const result = { id, name: '', grade: null, url: `${ORIGINS.managebac}${base}/units`, units: '', tasks: [], files: [], events: [], warnings: [], fetchedAt: this.now().toISOString() };
+    const result = { id, name: '', grade: null, url: `${ORIGINS.managebac}${base}/units`, units: [], unitsStatus:'loading', tasks: [], files: [], events: [], warnings: [], fetchedAt: this.now().toISOString() };
     const unitsRead = (async () => { try {
       const unitsHtml = await this.request('managebac', `${base}/units`, { timeoutMs: Math.min(this.timeoutMs, 15000) });
       const doc = htmlDocument(unitsHtml);
       result.name = text(doc, 'h1', 160);
       result.grade = parseManageBacGrade(unitsHtml).grade;
-      result.units = text(doc.querySelector('.units-list-tab, .units-tabs'), null, 6000);
+      Object.assign(result,parseCourseUnits(unitsHtml,id));
     } catch (error) {
       if (error.code === 'LOGIN_REQUIRED') throw error;
       result.warnings.push('课程概览暂时未能读取，其余栏目仍会继续加载');
@@ -1196,4 +1218,4 @@ class SchoolDataClient {
   }
 }
 
-module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows, parseNotificationMeta, parseDeadlineTiles, parseDueText };
+module.exports = { ORIGINS, SchoolDataClient, SchoolDataError, readUrl, safeSourceUrl, parseCourseUnits, parseManageBacCourses, parseManageBacGrade, parseManageBacTasks, parseManageBacDeadlines, parseCourseFiles, parseTaskDetail, parseManageBacDiscussions, parseDiscussionDetail, parseCoreOverview, parseEduPageIdentity, parseEduPageNonce, parseEduPageEnvelope, eduRows, parseNotificationMeta, parseDeadlineTiles, parseDueText };

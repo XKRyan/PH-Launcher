@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
+const rendererRoot = process.env.PHL_TEST_APP_ASAR || root;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-course-visual-'));
 app.setPath('userData', profile); app.setPath('sessionData', profile);
 app.disableHardwareAcceleration();
@@ -14,7 +15,7 @@ app.whenReady().then(async () => {
   win.webContents.on('console-message', (_event, ...details) => console.log('Renderer:', JSON.stringify(details)));
   const run = async code => { try { return await win.webContents.executeJavaScript(code); } catch (error) { console.error('Failed script:', code.slice(0, 180)); throw error; } };
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<html><body style="overflow:auto"><section id="schoolPage" class="page active"></section></body></html>'));
-  for (const file of ['styles.css', 'school.css', 'refinements.css', 'dialogs.css']) await win.webContents.insertCSS(fs.readFileSync(path.join(root, 'src', file), 'utf8'));
+  for (const file of ['styles.css', 'school.css', 'refinements.css', 'dialogs.css']) await win.webContents.insertCSS(fs.readFileSync(path.join(rendererRoot, 'src', file), 'utf8'));
   await run(`
     window.fixtureUploads = 0;
     const courses = [{id:'21',name:'Biology HL',grade:'6'},{id:'22',name:'English A',grade:'6'}];
@@ -31,7 +32,7 @@ app.whenReady().then(async () => {
       submitTaskUpload:async()=>{window.fixtureUploads++;return {verification:'unverified'}},cancelTaskUpload:async()=>({ok:true})}};
     window.openSite=async()=>{}; void 0;
   `);
-  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-selection-inference.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
+  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-selection-inference.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(rendererRoot, 'src', file), 'utf8') + '\n;void 0;');
   await run("window.i18n.mount('zh-CN'); window.schoolUI.open('courses')");
   const out = path.join(root, '.cache/v2-visual'); fs.mkdirSync(out, { recursive: true });
   const wait = () => new Promise(resolve => setTimeout(resolve, 150));
@@ -156,7 +157,14 @@ app.whenReady().then(async () => {
   await run("document.querySelector('dialog').close();document.querySelector('[data-school-action=calendar-task]').click()");await wait();
   assert.ok(await run("document.querySelector('dialog img.school-task-image')?.naturalWidth===1 && document.querySelector('dialog').textContent.includes('Worksheet.pdf')"));
   await capture('event-task-en');
-  await run("document.querySelector('dialog [data-school-action=close]').click();window.i18n.apply('zh-CN')");
+  await run("document.querySelector('dialog').close();window.ph.school.course=async id=>({id,name:'English language and literature — course title with a long descriptive name',units:[{id:'1',title:'Exploring Truth and Lies',level:'SL',start:'Starts W1 Sep',duration:'3 Weeks',state:'current',tasks:0,lessons:0},{id:'2',title:'The study of narrative, perspective and literary devices in extended creative writing',level:'HL',start:'Starts W2 Nov',duration:'6 Weeks',state:'completed',tasks:2,lessons:5}],tasks:[],files:[],events:[]});window.schoolUI.open('courses');void 0");
+  await run("document.querySelector('[data-course-tab=courses]').click();document.querySelector('[data-school-action=course]').click()");await wait();
+  await run("document.querySelector('[data-tab=units]').click()");await wait();
+  assert.ok(await run("document.querySelectorAll('.school-unit-card').length===2 && !document.querySelector('#schoolPage').textContent.includes('Weekly Planner')"));
+  await capture('structured-units-en');
+  await run("window.i18n.apply('zh-CN')");win.setSize(780,650);await wait();await capture('structured-units-compact-zh');await run("window.schoolUI.openTasks()");
+
+  await run("document.querySelector('dialog')?.close();window.i18n.apply('zh-CN')");
   win.setSize(780,650); await wait();
   assert.ok(await run("document.querySelector('#schoolPage').scrollWidth<=document.querySelector('#schoolPage').clientWidth+1"));
   await capture('unified-tasks-compact-zh');
@@ -167,9 +175,9 @@ app.whenReady().then(async () => {
   assert.ok(await run("document.querySelector('[data-course-tab=timetable]').getAttribute('aria-current')==='page'"));
   const savedSnapshot = await run('JSON.stringify(window.fixtureSnapshot)');
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<html><body><section id="schoolPage" class="page active"></section></body></html>'));
-  for (const file of ['styles.css', 'school.css', 'refinements.css', 'dialogs.css']) await win.webContents.insertCSS(fs.readFileSync(path.join(root, 'src', file), 'utf8'));
+  for (const file of ['styles.css', 'school.css', 'refinements.css', 'dialogs.css']) await win.webContents.insertCSS(fs.readFileSync(path.join(rendererRoot, 'src', file), 'utf8'));
   await run(`window.fixtureSnapshot=${savedSnapshot};window.ph={school:{get:async()=>window.fixtureSnapshot,preferences:async change=>{window.fixtureSnapshot.preferences={...window.fixtureSnapshot.preferences,...change};return window.fixtureSnapshot;}}};void 0;`);
-  for (const file of ['locales/en.js', 'i18n.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8')+'\n;void 0;');
+  for (const file of ['locales/en.js', 'i18n.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(rendererRoot, 'src', file), 'utf8')+'\n;void 0;');
   await run("window.i18n.mount('en');window.schoolUI.open('courses')");await wait();
   assert.ok(await run("document.querySelector('[data-course-tab=timetable]').getAttribute('aria-current')==='page'"));
   await capture('remembered-timetable-restart-en');

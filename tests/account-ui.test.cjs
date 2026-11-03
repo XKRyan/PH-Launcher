@@ -9,7 +9,7 @@
  *
  * 这里只做静态断言（界面本身由浏览器渲染验证），重点是三件事：
  *   1. 该有的界面元素与文案都在；
- *   2. PHL 与 PHL Lite 的那份 account-ui.js **字节完全相同**（共用一套）；
+ *   2. PHL 与 PHL Lite 的那份 account-ui.js **源码内容相同（允许平台换行差异）**（共用一套）；
  *   3. 宿主桥（account-bridge.js）把 CONTRACT 的每个方法都实现了。
  */
 
@@ -92,16 +92,14 @@ test('宿主桥把 CONTRACT 的每个方法都实现了', () => {
     'preload 要暴露单步执行');
 });
 
-test('PHL 与 PHL Lite 用的是同一份 account-ui.js（字节相同）', () => {
+test('PHL 与 PHL Lite 用的是同一份 account-ui.js（源码相同）', () => {
   const lite = liteCopy();
   if (!lite) {
     assert.fail('找不到 PHL Lite 的 ui/account-ui.js；'
       + '可用环境变量 PHL_LITE_DIR 指定 PHL Lite 仓库根目录');
   }
-  const a = fs.readFileSync(path.join(HERE, 'src/account-ui.js'));
-  const b = fs.readFileSync(lite);
-  assert.equal(a.length, b.length, `两份长度不同（${a.length} vs ${b.length}）—— 改了一边没同步另一边`);
-  assert.ok(a.equals(b), '两份内容不同 —— PHL 与 PHL Lite 必须共用同一套登录界面');
+  const canonical=file=>fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n');
+  assert.equal(canonical(path.join(HERE,'src/account-ui.js')),canonical(lite),'PHL 与 PHL Lite 必须共用同一套登录界面源码');
 });
 
 test('同步方向真的传到了同步引擎（prefer）', () => {

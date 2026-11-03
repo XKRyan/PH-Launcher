@@ -136,6 +136,13 @@
       state.weeks.set(incoming.weekStart, incoming);
     }
     state.snapshot = { ...state.snapshot, ...snapshot, preferences: snapshot.preferences || state.snapshot.preferences || {}, status: snapshot.status || state.snapshot.status || {} };
+    const fresh=snapshot.managebac;
+    if(courseDetail?.data && fresh?.taskSyncedCourses?.map(String).includes(String(courseDetail.id))
+      && Date.parse(fresh.fetchedAt)>=Date.parse(courseDetail.data.fetchedAt||0)) {
+      const tasks=(fresh.tasks||[]).filter(task=>String(task.courseId)===String(courseDetail.id));
+      courseDetail.data={...courseDetail.data,tasks,tasksStatus:tasks.length?'ready':'empty'};
+    }
+
     // 退回共用快照兜底时，课里可能没有 `groups`（共用那份用的是单数 `group`）——
     // 界面里到处 `lesson.groups.join(' / ')`，缺了就是一句
     // 「Cannot read properties of undefined (reading 'join')」，所以进门先补齐。
@@ -638,7 +645,7 @@
     const nav = `<nav class="school-class-tabs" aria-label="课程分区">${tabs.map(([key,label]) => `<button type="button" data-school-action="course-detail-tab" data-tab="${key}" aria-current="${tab === key ? 'page' : 'false'}" class="${tab === key ? 'active' : ''}">${label}${key === 'tasks' && pending.length ? ` <span>${pending.length}</span>` : ''}</button>`).join('')}</nav>`;
     let body = '';
     if (tab === 'overview') {
-      body = `<div class="school-class-overview"><section class="school-class-section"><div class="school-section-head"><h2>待处理任务</h2>${btn('查看全部任务', 'course-detail-tab', 'data-tab="tasks"')}</div>${taskRows([...upcoming, ...pending.filter(task => !upcoming.includes(task))].slice(0,5), true) || '<div class="school-empty"><p>暂无待处理任务</p></div>'}</section><aside class="school-class-summary"><h2>课程信息</h2><dl><dt>总评</dt><dd data-i18n-ignore>${esc(data.grade || selected?.grade || '—')}</dd><dt>待处理</dt><dd>${pending.length}</dd><dt>已完成 / 已结束</dt><dd>${done.length}</dd><dt>课程文件</dt><dd>${(data.files || []).length}</dd></dl></aside><section class="school-class-section"><div class="school-section-head"><h2>单元与计划</h2>${btn('查看单元', 'course-detail-tab', 'data-tab="units"')}</div><p class="school-prewrap school-unit-preview">${esc(data.units || '暂未识别到单元与计划。')}</p></section></div>`;
+      body = `<div class="school-class-overview"><section class="school-class-section"><div class="school-section-head"><h2>待处理任务</h2>${btn('查看全部任务', 'course-detail-tab', 'data-tab="tasks"')}</div>${taskRows([...upcoming, ...pending.filter(task => !upcoming.includes(task))].slice(0,5), true) || '<div class="school-empty"><p>暂无待处理任务</p></div>'}</section><aside class="school-class-summary"><h2>课程信息</h2><dl><dt>总评</dt><dd data-i18n-ignore>${esc(data.grade || selected?.grade || '—')}</dd><dt>待处理</dt><dd>${pending.length}</dd><dt>已完成 / 已结束</dt><dd>${done.length}</dd><dt>课程文件</dt><dd>${(data.files || []).length}</dd></dl></aside><section class="school-class-section"><div class="school-section-head"><h2>单元与计划</h2>${btn('查看单元', 'course-detail-tab', 'data-tab="units"')}</div>${unitRows(data,true)}</section></div>`;
     }
     if (tab === 'tasks') {
       const filters = [['pending','待处理',pending.length],['completed','已完成 / 已结束',done.length],['all','全部任务',tasks.length]];
@@ -647,11 +654,16 @@
       body = `<div class="school-class-taskbar"><div class="school-class-filters">${filters.map(([key,label,count]) => `<button type="button" data-school-action="class-task-filter" data-filter="${key}" aria-pressed="${context.taskFilter === key}">${label} <span>${count}</span></button>`).join('')}</div><input type="search" data-school-field="class-query" value="${esc(context.query)}" placeholder="搜索任务" aria-label="搜索任务"></div><div class="school-task-list">${taskRows(matching,true) || `<div class="school-empty"><p>${taskEmpty}</p></div>`}</div>`;
     }
     if (tab === 'files') body = `<h2>课程文件</h2>${(data.files || []).map(file => `<div class="school-file-row"><span>${esc(file.name)}</span>${originalButton(file.url)}</div>`).join('') || '<div class="school-empty"><p>暂未识别到文件。</p></div>'}`;
-    if (tab === 'units') body = `<h2>单元与计划</h2><p class="school-prewrap">${esc(data.units || '暂未识别到单元与计划。')}</p>`;
-    if (tab === 'calendar') body = `<h2>课程日历</h2>${(data.events || []).map(item => `<div class="school-file-row"><span>${esc(item.title)}</span><time>${esc(item.start)}</time></div>`).join('') || '<div class="school-empty"><p>暂未识别到日历事项。</p></div>'}`;
+    if (tab === 'units') body = `<h2>单元与计划</h2>${unitRows(data)}`;
+    if (tab === 'calendar') body = `<h2>课程日历</h2>${(data.events || []).map(item => `<div class="school-file-row"><span>${esc(item.title)}</span><time>${esc(item.allDay?String(item.start).slice(0,10):stamp(item.start)||item.start)}</time></div>`).join('') || '<div class="school-empty"><p>暂未识别到日历事项。</p></div>'}`;
     if (context.loading && ['files', 'units', 'calendar'].includes(tab)) body = '<p role="status">正在读取，请稍候…</p>';
     if (tab === 'discussions') body = context.discussions ? discussionList(context.discussions) : context.discussionsError ? `<div class="school-error" role="alert">${esc(context.discussionsError)}</div>${btn('重试', 'retry-course-discussions')}` : '<p role="status">正在读取，请稍候…</p>';
     return `<div class="school-class-workspace">${header}${nav}<section class="school-course-panel">${context.loading ? '<p role="status">正在更新课程；已有记录可先查看。</p>' : ''}${context.error ? `<div class="school-error" role="alert">${esc(context.error)} ${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}</div>` : ''}${['overview', 'tasks'].includes(tab) ? taskNotice : ''}${body}</section>${warnings(data)}</div>`;
+  }
+  function unitRows(data,preview=false){
+    const units=Array.isArray(data.units)?data.units:[];
+    if(!units.length)return `<div class="school-empty"><p>${data.unitsStatus==='empty'?'暂无单元与计划':'单元列表暂未读取，请刷新或在原网页查看。'}</p></div>`;
+    return `<div class="school-unit-list">${units.slice(0,preview?3:200).map(unit=>`<article class="school-unit-card"><div><h3 data-i18n-ignore>${esc(unit.title)}</h3><div class="school-unit-meta">${unit.state?`<span class="school-unit-state">${unit.state==='current'?'当前单元':'已结束'}</span>`:''}${unit.level?`<span data-i18n-ignore>${esc(unit.level)}</span>`:''}${unit.start?`<span data-i18n-ignore>${esc(unit.start)}</span>`:''}${unit.duration?`<span data-i18n-ignore>${esc(unit.duration)}</span>`:''}${unit.lessons>0?`<span>${unit.lessons} 节课</span>`:''}${unit.tasks>0?`<span>${unit.tasks} 项任务</span>`:''}</div></div>${preview?'':originalButton(unit.url)}</article>`).join('')}</div>`;
   }
   function taskRows(items, compact = false) {
     return items.map((task) => {

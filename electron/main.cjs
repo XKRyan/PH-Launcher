@@ -315,7 +315,7 @@ const DEFAULT_SHORTCUTS = {
   mail: { label: '打开学校邮箱', accelerator: 'CommandOrControl+Alt+1', enabled: false },
   managebac: { label: '打开 ManageBac', accelerator: 'CommandOrControl+Alt+2', enabled: false },
   edupage: { label: '打开 EduPage', accelerator: 'CommandOrControl+Alt+3', enabled: false },
-  dictionary: { label: '打开离线词典', accelerator: 'CommandOrControl+Alt+D', enabled: false },
+
   quickNote: { label: '快速笔记', accelerator: 'CommandOrControl+Alt+N', enabled: false },
   focus: { label: '开始或暂停专注', accelerator: 'CommandOrControl+Alt+P', enabled: false },
 };
@@ -2940,18 +2940,7 @@ async function executeAiTool(name, rawArgs, { onMailRevision, onLauncherRevision
         updatedAt: note.updatedAt || '',
       }));
   }
-  if (name === 'dictionary_lookup') {
-    const result = offlineDictionary.lookup(args.query);
-    return {
-      exact: result.exact ? {
-        word: result.exact.word,
-        phonetic: result.exact.phonetic,
-        translation: String(result.exact.translation || '').slice(0, 2_000),
-        definition: String(result.exact.definition || '').slice(0, 2_000),
-      } : null,
-      suggestions: (result.suggestions || []).slice(0, 8).map((item) => item.word),
-    };
-  }
+
   if (name === 'ib_command_lookup') {
     return listCommandTerms({ subjectId: args.subject, query: args.query })
       .slice(0, 60)
@@ -4781,12 +4770,12 @@ async function runCapture() {
     if (initialized) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (['today', 'plan', 'notes', 'dictionary', 'vocabulary', 'school', 'timetable', 'courses', 'calendar', 'mail', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
+  if (['today', 'plan', 'notes', 'vlmreader', 'vocabulary', 'school', 'timetable', 'courses', 'calendar', 'mail', 'psychology', 'ib', 'ai', 'settings'].includes(CAPTURE_ROUTE)) {
     await mainWindow.webContents.executeJavaScript(`navigate(${JSON.stringify(CAPTURE_ROUTE)})`);
     // The first-run onboarding dialog is modal and would hide every preview; it
     // is scheduled with a timer, so wait it out before dismissing.
     await new Promise((resolve) => setTimeout(resolve, 500));
-    await mainWindow.webContents.executeJavaScript(`(() => { try { state.onboardingPending = false; } catch {} const dialog = document.getElementById('onboardingDialog'); if (dialog && dialog.open) dialog.close(); return true; })()`);
+    await mainWindow.webContents.executeJavaScript(`(() => { try { state.onboardingPending = false; } catch {} const dialog = document.getElementById('onboardingDialog'); if (dialog && dialog.open) dialog.close(); if(window.AccountUI?._state)window.AccountUI._state.onFinish=null;window.AccountUI?.close();document.querySelectorAll('dialog[open]').forEach(d=>d.close());return true; })()`);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   if (CAPTURE_VARIANT === 'interface') {
@@ -4922,15 +4911,6 @@ async function runCapture() {
       ${CAPTURE_VARIANT === 'shared-session' ? SHARED_SESSION_CLICK : ''}
     })()`);
     await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  if (CAPTURE_ROUTE === 'dictionary' && CAPTURE_VARIANT) {
-    await mainWindow.webContents.executeJavaScript(`lookupDictionary(${JSON.stringify(CAPTURE_VARIANT)})`);
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      const ready = await mainWindow.webContents.executeJavaScript('Boolean(state.dictionaryResult?.exact && !state.dictionaryLoading)');
-      if (ready) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (CAPTURE_ROUTE === 'ib' && CAPTURE_VARIANT) {
     await mainWindow.webContents.executeJavaScript(`(() => {

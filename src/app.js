@@ -18,7 +18,6 @@ const ROUTE_META = {
   today: { title: '今天', eyebrow: 'PH LAUNCHER' },
   plan: { title: '计划', eyebrow: 'PLAN & FOCUS' },
   notes: { title: '笔记', eyebrow: 'LOCAL NOTES' },
-  dictionary: { title: '离线词典', eyebrow: 'OFFLINE DICTIONARY' },
   vocabulary: { title: '背单词', eyebrow: 'WORDS IN CONTEXT' },
   vlmreader: { title: 'VLMReader', eyebrow: 'READ · LEARN · REMEMBER' },
   timetable: { title: '我的课程', eyebrow: 'MY COURSES', page: 'school' },
@@ -66,10 +65,6 @@ const state = {
   noteFilter: 'all',
   noteSearch: '',
   selectedNoteId: null,
-  dictionaryInfo: null,
-  dictionaryResult: null,
-  dictionaryLoading: false,
-  dictionaryRequestId: 0,
   mailUnread: 0,
   hardware: null,
   hardwareLoading: false,
@@ -114,7 +109,6 @@ const state = {
 };
 
 let persistTimer = null;
-let dictionarySearchTimer = null;
 let vocabularyBadgeRequest = 0;
 let credentialSubmitInFlight = false;
 
@@ -402,7 +396,7 @@ function setTopbar(title, eyebrow) {
 }
 
 function navigate(route) {
-  if(route==='dictionary')route='vocabulary';
+  if(route==='dictionary')route='vlmreader';
   route = ROUTE_ALIASES[route] || route;
   if (!ROUTE_META[route]) return;
   state.route = route;
@@ -443,11 +437,7 @@ function navigate(route) {
     if (typeof window.xinlvUI?.refresh === 'function') window.xinlvUI.refresh();
     else window.xinlvUI?.mount?.();
   }
-  if (route === 'dictionary') {
-    renderDictionary();
-    loadDictionaryInfo();
-    setTimeout(() => $('#dictionarySearch')?.focus(), 30);
-  }
+
   if (route === 'ib') renderIbTools();
   if (route === 'ai') renderAi();
   if (route === 'settings') renderSettings();
@@ -889,149 +879,6 @@ function noteToTask() {
   if (!note) return;
   openTaskDialog({ title: note.title || '处理这条笔记', subject: note.subject, notes: note.body.slice(0, 500), estimateMinutes: 30, priority: 'normal' });
   $('#taskId').value = '';
-}
-
-function dictionaryText(value) {
-  return escapeHtml(String(value || '').replaceAll('\\n', '\n')).replaceAll('\n', '<br>');
-}
-
-function dictionaryPreview(value) {
-  return String(value || '').replaceAll('\\n', ' · ').replaceAll('\n', ' · ').replace(/\s+/g, ' ').trim();
-}
-
-function dictionaryTagLabel(tag) {
-  const labels = {
-    zk: '中考', gk: '高考', cet4: 'CET-4', cet6: 'CET-6', ky: '考研',
-    toefl: 'TOEFL', ielts: 'IELTS', gre: 'GRE', oxford: 'Oxford 3000',
-  };
-  return labels[String(tag || '').toLowerCase()] || String(tag || '').toUpperCase();
-}
-
-async function loadDictionaryInfo() {
-  if (state.dictionaryInfo) return;
-  try {
-    state.dictionaryInfo = await window.ph.dictionary.info();
-    renderDictionary();
-  } catch (error) {
-    state.dictionaryInfo = { error: error.message };
-    renderDictionary();
-  }
-}
-
-async function lookupDictionary(rawQuery) {
-  const query = String(rawQuery || '').trim();
-  const input = $('#dictionarySearch');
-  if (input && input.value !== query) input.value = query;
-  if (!query) {
-    state.dictionaryResult = null;
-    state.dictionaryLoading = false;
-    renderDictionary();
-    return;
-  }
-  const requestId = ++state.dictionaryRequestId;
-  state.dictionaryLoading = true;
-  renderDictionary();
-  try {
-    const result = await window.ph.dictionary.lookup(query);
-    if (requestId !== state.dictionaryRequestId) return;
-    state.dictionaryResult = result;
-  } catch (error) {
-    if (requestId !== state.dictionaryRequestId) return;
-    state.dictionaryResult = { query, exact: null, suggestions: [], error: error.message };
-  } finally {
-    if (requestId === state.dictionaryRequestId) {
-      state.dictionaryLoading = false;
-      renderDictionary();
-    }
-  }
-}
-
-function renderDictionary() {
-  const status = $('#dictionaryStatus');
-  if (!status) return;
-  if (state.dictionaryInfo?.error) status.textContent = '离线词库不可用';
-  else if (state.dictionaryInfo?.entryCount) status.textContent = `${Number(state.dictionaryInfo.entryCount).toLocaleString('zh-CN')} 个本地词条`;
-  else status.textContent = '正在准备离线词库…';
-
-  const suggestions = $('#dictionarySuggestions');
-  const resultPanel = $('#dictionaryResult');
-  const result = state.dictionaryResult;
-  if (state.dictionaryLoading) {
-    suggestions.innerHTML = '<div class="empty-row">正在本机词库中查找…</div>';
-  } else if (result?.suggestions?.length) {
-    suggestions.innerHTML = result.suggestions.map((item) => `
-      <button class="dictionary-suggestion${result.exact?.word?.toLowerCase() === item.word.toLowerCase() ? ' active' : ''}" data-dict-word="${escapeHtml(item.word)}">
-        <div><strong>${escapeHtml(item.word)}</strong>${item.phonetic ? `<span>[${escapeHtml(item.phonetic)}]</span>` : ''}</div>
-        <p>${escapeHtml(dictionaryPreview(item.translation) || '查看英文释义')}</p>
-      </button>`).join('');
-  } else if (result?.query) {
-    suggestions.innerHTML = '<div class="empty-row">没有找到相近词条</div>';
-  } else {
-    suggestions.innerHTML = '<div class="empty-row">输入单词开始查询</div>';
-  }
-
-  if (state.dictionaryLoading && !result?.exact) {
-    resultPanel.innerHTML = '<div class="empty-state"><div class="empty-icon">' + icon('i-search') + '</div><h3>正在查找</h3><p>查询只访问本机词库。</p></div>';
-    return;
-  }
-  if (result?.error) {
-    resultPanel.innerHTML = `<div class="empty-state"><div class="empty-icon">${icon('i-book')}</div><h3>词库暂时不可用</h3><p>${escapeHtml(result.error)}</p></div>`;
-    return;
-  }
-  const entry = result?.exact;
-  if (!entry) {
-    resultPanel.innerHTML = result?.suggestions?.length
-      ? '<div class="empty-state"><div class="empty-icon">' + icon('i-arrow') + '</div><h3>选择一个候选词</h3><p>左侧已列出相近词条。</p></div>'
-      : '<div class="empty-state"><div class="empty-icon">' + icon('i-book') + '</div><h3>随时查一个词</h3><p>支持英汉释义、英文定义、词形变化和系统语音朗读。</p></div>';
-    return;
-  }
-
-  const tags = [
-    ...(entry.collins ? [`${'★'.repeat(Math.min(5, Number(entry.collins)))} Collins`] : []),
-    ...(entry.oxford ? ['Oxford 3000'] : []),
-    ...(entry.tags || []).map(dictionaryTagLabel),
-  ];
-  const uniqueTags = [...new Set(tags)].slice(0, 9);
-  const frequency = [
-    entry.frq ? `当代词频 #${Number(entry.frq).toLocaleString('zh-CN')}` : '',
-    entry.bnc ? `BNC #${Number(entry.bnc).toLocaleString('zh-CN')}` : '',
-  ].filter(Boolean);
-  resultPanel.innerHTML = `
-    <div class="dictionary-entry-head">
-      <div><span class="section-kicker">HEADWORD</span><h3>${escapeHtml(entry.word)}</h3>${entry.phonetic ? `<p>[${escapeHtml(entry.phonetic)}]</p>` : ''}</div>
-      <button class="dictionary-speak" id="dictionarySpeak" aria-label="朗读 ${escapeHtml(entry.word)}">${icon('i-play')}<span>朗读</span></button>
-    </div>
-    ${uniqueTags.length ? `<div class="dictionary-tags">${uniqueTags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-    ${entry.translation ? `<section class="dictionary-definition primary"><span>中文释义</span><p>${dictionaryText(entry.translation)}</p></section>` : ''}
-    ${entry.definition ? `<section class="dictionary-definition"><span>英文释义</span><p lang="en">${dictionaryText(entry.definition)}</p></section>` : ''}
-    ${entry.exchange?.length ? `<section class="dictionary-forms"><span>词形变化</span><div>${entry.exchange.map((item) => `<button data-dict-word="${escapeHtml(item.word)}"><small>${escapeHtml(item.label)}</small><strong>${escapeHtml(item.word)}</strong></button>`).join('')}</div></section>` : ''}
-    ${frequency.length ? `<div class="dictionary-frequency">${frequency.map((item) => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
-    <div class="dictionary-actions"><button class="primary-button" id="dictionaryToVocabulary">${icon('i-plus')}加入词本</button><button class="secondary-button" id="dictionaryToNote">${icon('i-note')}保存到笔记</button><span>离线查询 · 不会发送搜索内容</span></div>`;
-}
-
-function speakDictionaryEntry() {
-  const word = state.dictionaryResult?.exact?.word;
-  if (!word || !('speechSynthesis' in window)) return toast('这台电脑没有可用的系统语音', 'error');
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(word);
-  utterance.lang = 'en-US';
-  utterance.rate = 0.88;
-  window.speechSynthesis.speak(utterance);
-}
-
-function saveDictionaryEntryToNote() {
-  const entry = state.dictionaryResult?.exact;
-  if (!entry) return;
-  const forms = (entry.exchange || []).map((item) => `${item.label}：${item.word}`).join('；');
-  const body = [
-    entry.phonetic ? `[${entry.phonetic}]` : '',
-    String(entry.translation || '').replaceAll('\\n', '\n'),
-    entry.definition ? `英文释义\n${String(entry.definition).replaceAll('\\n', '\n')}` : '',
-    forms ? `词形变化\n${forms}` : '',
-  ].filter(Boolean).join('\n\n');
-  createNote({ title: `词典 · ${entry.word}`, body, subject: 'English' });
-  navigate('notes');
-  toast('词条已保存为本地笔记');
 }
 
 function countWords(text) {
@@ -1533,7 +1380,6 @@ function renderAi() {
     renderAiControl();
     renderChat();
   }
-  const removedAiBadge = document.getElementById('aiNavBadge'); if(removedAiBadge)removedAiBadge.textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
 }
 
 /**
@@ -2898,7 +2744,6 @@ function renderAll() {
   renderTasks();
   renderSchedule();
   renderNotes();
-  if (state.route === 'dictionary') renderDictionary();
   renderIbTools();
   renderAi();
   renderSettings();
@@ -3410,12 +3255,7 @@ function handleBodyClick(event) {
   }
   const noteButton = event.target.closest('[data-note-id]');
   if (noteButton) { state.selectedNoteId = noteButton.dataset.noteId; renderNotes(); return; }
-  const dictionaryWord = event.target.closest('[data-dict-word]')?.dataset.dictWord;
-  if (dictionaryWord) { lookupDictionary(dictionaryWord); return; }
-  const dictionaryExample = event.target.closest('[data-dict-example]')?.dataset.dictExample;
-  if (dictionaryExample) { lookupDictionary(dictionaryExample); return; }
-  if (event.target.closest('#dictionarySpeak')) speakDictionaryEntry();
-  if (event.target.closest('#dictionaryToNote')) saveDictionaryEntryToNote();
+
 
   const settingsButton = event.target.closest('[data-settings-section]');
   if (settingsButton) {
@@ -3767,7 +3607,7 @@ function bindEvents() {
     if (mod && !event.shiftKey && event.key === '1') { event.preventDefault(); navigate('mail'); }
     if (mod && !event.shiftKey && event.key === '2') { event.preventDefault(); openSite('managebac'); }
     if (mod && !event.shiftKey && event.key === '3') { event.preventDefault(); openSite('edupage'); }
-    if (mod && !event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); navigate('vocabulary'); }
+    if (mod && !event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); navigate('vlmreader'); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'n') { event.preventDefault(); navigate('notes'); createNote(); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openTaskDialog(); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); toggleTimer(); }
@@ -3801,9 +3641,7 @@ async function init() {
     if (cardEl) cardEl.textContent = count == null ? '邮箱尚未同步' : `${count} 封未读`;
     updateMailBadge(state.route === 'mail' ? 0 : (count || 0));
   });
-  $('#dictionaryResult')?.addEventListener('click', (event) => {
-    if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
-  });
+
   try {
     const [appVersion, data, deployment, ibCommandCatalog, credentialStatus] = await Promise.all([
       window.ph.system.version(),
@@ -3921,7 +3759,7 @@ async function init() {
     if (action === 'school-tasks') { navigate('courses'); window.schoolUI.openTasks(); return; }
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
-    else if (action === 'dictionary') navigate('vocabulary');
+    else if (action === 'dictionary') navigate('vlmreader');
     else if (action === 'quickNote') { navigate('notes'); createNote(); }
     else if (action === 'focus') toggleTimer();
   });

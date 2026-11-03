@@ -258,7 +258,7 @@ const AI_TOOLS = [
         properties: {
           page: {
             type: 'string',
-            enum: ['today', 'plan', 'notes', 'dictionary', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'],
+            enum: ['today', 'plan', 'notes', 'vlmreader', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'],
           },
         },
         required: ['page'],
@@ -700,18 +700,13 @@ function sanitizeToolArguments(name, input, data = {}) {
     };
   }
   if (name === 'search_notes') return { query: cleanText(args.query, 80), limit: asInteger(args.limit, 6, 1, 10) };
-  if (name === 'dictionary_lookup') {
-    const query = cleanText(args.query, 80);
-    if (!query) throw new Error('查询内容不能为空');
-    return { query };
-  }
   if (name === 'ib_command_lookup') {
     const query = cleanText(args.query, 80);
     if (!query && !args.subject) throw new Error('请提供指令词或科目');
     return { query, subject: normalizeSubjectId(args.subject || 'all') };
   }
   if (name === 'open_launcher_page') {
-    const allowed = ['today', 'plan', 'notes', 'dictionary', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'];
+    const allowed = ['today', 'plan', 'notes', 'vlmreader', 'ib', 'ibdocs', 'ai', 'settings', 'mail', 'managebac', 'edupage'];
     if (!allowed.includes(args.page)) throw new Error('不支持的页面');
     return { page: args.page };
   }
