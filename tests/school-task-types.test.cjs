@@ -1,0 +1,59 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { SchoolDataClient, parseManageBacTasks, parseTaskDetail } = require('../electron/school-data.cjs');
+const { status, active } = require('../src/school-tasks.js');
+const { evaluate, pendingAlerts } = require('../electron/task-reminders.cjs');
+const now = Date.parse('2026-11-03T02:00:00Z');
+const card = (id, category, required) => `<article data-task-type="${category}"${required === null ? '' : ` data-submission-required="${required}"`}><a href="/student/classes/21/core_tasks/${id}">Synthetic ${id}</a></article>`;
+const events = [
+  { id: 'calendar-31', title: 'Exam copy', start: '2026-11-04T09:00:00+08:00', url: '/student/classes/21/core_tasks/31' },
+  { id: 'assembly', title: 'Assembly', start: '2026-11-04', end: '2026-11-05', description: '<p>Hall</p><script>unsafe()</script>', url: '/student/classes/21/events/7' },
+];
+const client = (calendar = JSON.stringify(events)) => new SchoolDataClient({ now: () => new Date(now), pause: async () => {}, fetch: async (_, url) => new Response(
+  url.includes('my?page=1') ? '<div id="classes"><a href="/student/classes/21">Synthetic class</a></div>' : url.includes('my?page=') ? '<div id="classes">No classes found</div>' :
+  url.endsWith('/units') ? '<h1>Synthetic class</h1>' : url.endsWith('/core_tasks') ? card(31, 'Assessment', true) + card(32, 'Coursework', false) : url.endsWith('/events.json') ? calendar : ''
+) });
+
+test('type and submission requirements are independent and unknown stays unknown', () => {
+  const tasks = parseManageBacTasks(card(1, 'Assessment', true) + card(2, 'Coursework', false) + card(3, 'Exam', null)).tasks;
+  assert.deepEqual(tasks.map(t => [t.category, t.submissionRequired]), [['Assessment', true], ['Coursework', false], ['Exam', null]]);
+  const detail = parseTaskDetail('<div class="core-task-show" data-submission-required="false"><h1 class="title">Reading</h1><p>No upload here</p></div>', '21', '2');
+  assert.equal(detail.submissionRequired, false); assert.equal(detail.uploadAvailable, false);
+});
+test('course and global task lists include events, deduplicate linked assessments and preserve their date', async () => {
+  const detail = await client().getCourseDetail('21');
+  assert.equal(detail.tasks.length, 3); assert.equal(detail.tasksStatus, 'ready');
+  const exam = detail.tasks.find(t => t.id === 'managebac:21:31');
+  assert.equal(exam.category, 'Assessment'); assert.equal(exam.submissionRequired, true);
+  assert.equal(exam.dueAt, '2026-11-04T09:00:00+08:00');
+  const event = detail.tasks.find(t => t.kind === 'event');
+  assert.equal(event.submissionRequired, false); assert.equal(event.description, 'Hall');
+  assert.match(event.url, /\/events\/7$/); assert.equal(event.dueAt, '2026-11-04T00:00:00+08:00');
+  const global = await client().syncManageBac({ refreshGrades: false });
+  assert.equal(global.tasks.length, 3); assert.deepEqual(global.taskSyncedCourses, ['21']);
+});
+test('calendar failure retains task results and reports partial sync instead of confirmed empty', async () => {
+  const result = await client('<main>Unknown calendar</main>').syncManageBac({ refreshGrades: false });
+  assert.equal(result.tasks.length, 2); assert.deepEqual(result.taskFailedCourses, ['21']);
+  assert.deepEqual(result.taskSyncedCourses, []);
+});
+test('no-submission work is not completed or overdue just because the date passed', () => {
+  const past = { dueAt: '2026-11-02T01:00:00Z', status: '' };
+  assert.equal(status({ ...past, submissionRequired: false }, now), 'review');
+  assert.equal(status({ ...past, submissionRequired: null }, now), 'review');
+  assert.equal(status({ ...past, submissionRequired: true, category: 'Assessment' }, now), 'overdue');
+  assert.equal(status({ ...past, status: 'Submitted' }, now), 'completed');
+  const event = { kind: 'event', start: '2026-11-03', dueAt: '2026-11-03T00:00:00+08:00', submissionRequired: false };
+  assert.equal(status(event, now), 'started'); assert.equal(active(event, now), true);
+  assert.equal(status(event, Date.parse('2026-11-03T16:00:00Z')), 'ended');
+});
+test('event reminders appear before the event and disappear when it ends without claiming submission', () => {
+  const task = { id: 'event-1', courseId: '21', kind: 'event', title: 'Exam', start: '2026-11-03T03:00:00Z', end: '2026-11-03T04:00:00Z', dueAt: '2026-11-03T03:00:00Z', submissionRequired: false };
+  const snapshot = { accountKey: 'a', tasks: [task], fetchedAt: new Date(now).toISOString(), taskSyncedCourses: ['21'] };
+  const initial = evaluate({ snapshot, accountKey: 'a', now });
+  assert.equal(initial.alerts.length, 1);
+  assert.equal(pendingAlerts(initial.state, snapshot, now).length, 1);
+  const ended = now + 3 * 3600000;
+  assert.equal(pendingAlerts(initial.state, snapshot, ended).length, 0);
+  assert.equal(Object.keys(evaluate({ state: initial.state, snapshot, accountKey: 'a', now: ended }).state.inbox).length, 0);
+});

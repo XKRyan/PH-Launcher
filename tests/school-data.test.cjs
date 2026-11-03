@@ -31,6 +31,7 @@ test('ManageBac keeps normalized Shanghai deadlines and tasks even when grade re
     if (url.includes('my?page=')) return response('<div id="classes">No classes found</div>');
     if (url.endsWith('/units')) return response('Unavailable', 503);
     if (url.endsWith('/core_tasks')) return response(tasksHtml);
+    if (url.endsWith('/events.json')) return response('[]');
     throw Error('Unexpected request');
   } });
   const result = await client.syncManageBac();
@@ -332,7 +333,7 @@ function schoolUiHarness(initialSnapshot) {
   const api = {
     get: async () => snapshot,
     sync: async () => { syncCalls += 1; return snapshot; },
-    preferences: async (change) => { preferenceWrites += 1; snapshot = { ...snapshot, preferences: { ...snapshot.preferences, ...change, accountKey: snapshot.edupage?.accountKey } }; return snapshot; },
+    preferences: async (change) => { if (!change.courseView) preferenceWrites += 1; snapshot = { ...snapshot, preferences: { ...snapshot.preferences, ...change, ...(Array.isArray(change.groups) ? { accountKey: snapshot.edupage?.accountKey } : {}) } }; return snapshot; },
   };
   const bridge = { school: api, system: { openUrl: async () => {} } };
   const context = { window: { ph: bridge, openSite: async () => {} }, document, Intl, Date, URL, setInterval: () => 0, console };
@@ -357,6 +358,7 @@ test('school UI renders without a refresh button and never touches an account th
   assert.equal(harness.syncCalls, 0, '没登录过 ManageBac 就不该发请求');
   assert.equal(harness.document.querySelector('[data-school-action="sync"]'), null, '没有刷新按钮');
   harness.context.window.schoolUI.open('courses'); await settleUi();
+  harness.click('[data-course-tab="courses"]');
   assert.equal(harness.syncCalls, 0);
   assert.equal(harness.document.querySelector('#schoolPage img'), null);
   assert.match(harness.document.querySelector('#schoolPage').textContent, /<img src=x onerror=evil\(\)>/);
@@ -504,7 +506,7 @@ test('course sections start together and blocked sections preserve successfully 
  }});
  const pending=client.getCourseDetail('21');await new Promise(resolve=>setImmediate(resolve));
  assert.equal(started.length,4);release();const result=await pending;
- assert.equal(result.tasksStatus,'ready');assert.equal(result.tasks.length,1);assert.equal(result.warnings.length,3);
+ assert.equal(result.tasksStatus,'partial');assert.equal(result.tasks.length,1);assert.equal(result.warnings.length,3);
 });
 test('pagination has one total deadline and preserves first-page tasks on timeout', async()=>{
  let count=0;

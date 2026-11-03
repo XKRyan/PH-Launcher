@@ -295,3 +295,14 @@
 @media(max-width:700px) { .school-class-workspace .school-task-main { grid-template-columns:minmax(0,1fr); } .school-class-workspace .school-task-state,.school-class-workspace .school-task-urgency { grid-column:1; grid-row:auto; justify-self:start; } .school-class-header select { max-width:220px; } }
 
 @media(max-width:900px) { .school-class-tabs { flex-wrap:wrap; gap:0; } .school-class-tabs button { padding:12px; font-size:.9rem; } }
+
+/* Task categories and submission requirements remain readable in both lists. */
+.school-task-main { flex-wrap:wrap; row-gap:4px; }
+.school-task-kind,.school-task-requirement { font-size:.75rem; color:var(--ink-2); overflow-wrap:anywhere; }
+.school-task-kind:empty { display:none; }
+.school-class-workspace .school-task-kind,.school-class-workspace .school-task-requirement { grid-column:1; }
+.school-task-state.is-scheduled { color:var(--green-700); background:var(--green-50); }
+.school-task-state.is-ended,.school-task-state.is-review { color:var(--ink-2); background:var(--ivory-100); }
+
+.school-task-header { flex-direction:row; flex-wrap:wrap; gap:8px 16px; }
+.school-task-header > div:first-child { margin-right:auto; }

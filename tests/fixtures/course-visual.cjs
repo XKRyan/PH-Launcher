@@ -24,9 +24,9 @@ app.whenReady().then(async () => {
       {id:'21:33',courseId:'21',course:'Biology HL',title:'Cell structure worksheet',status:'Submitted',dueAt:'2026-10-15T15:59:00Z'}];
     const snapshot = {managebac:{courses,tasks,fetchedAt:new Date().toISOString(),accountKey:'synthetic'},preferences:{},status:{},epochs:{managebac:1},accounts:{managebac:{saved:true}}};
     window.fixtureSnapshot=snapshot;
-    window.ph={school:{get:async()=>snapshot,sync:async()=>snapshot,preferences:async()=>snapshot,
+    window.ph={school:{get:async()=>snapshot,sync:async()=>snapshot,preferences:async change=>{snapshot.preferences={...snapshot.preferences,...change};return snapshot;},
       course:async id=>({id,name:courses.find(c=>c.id===id).name,grade:'6',tasks:tasks.filter(t=>t.courseId===id),files:[],events:[]}),
-      task:async(cid,id)=>({...tasks.find(t=>t.id===cid+':'+id),description:'Explain how temperature affects enzyme activity.\\n\\nInclude a graph, describe your method and evaluate the reliability of the results.',attachments:[{name:'Investigation guide.pdf',url:'https://shph.managebac.cn/attachments/10/download'}],url:'https://shph.managebac.cn/student/classes/'+cid+'/core_tasks/'+id}),
+      task:async(cid,id)=>({...tasks.find(t=>t.id===cid+':'+id),uploadAvailable:true,submissionRequired:true,description:'Explain how temperature affects enzyme activity.\\n\\nInclude a graph, describe your method and evaluate the reliability of the results.',attachments:[{name:'Investigation guide.pdf',url:'https://shph.managebac.cn/attachments/10/download'}],url:'https://shph.managebac.cn/student/classes/'+cid+'/core_tasks/'+id}),
       prepareTaskUpload:async()=>({token:'synthetic',filename:'Biology investigation.docx',size:18432,courseId:'21',taskId:'31'}),
       submitTaskUpload:async()=>{window.fixtureUploads++;return {verification:'unverified'}},cancelTaskUpload:async()=>({ok:true})}};
     window.openSite=async()=>{}; void 0;
@@ -72,7 +72,7 @@ app.whenReady().then(async () => {
   await capture('task-reminders-zh');
   await run("window.i18n.apply('en')");
   await capture('task-reminders-en');
-  assert.match(await run("document.querySelector('dialog').textContent"), /Task and assignment reminders/);
+  assert.match(await run("document.querySelector('dialog').textContent"), /Task reminders/);
   win.setSize(1040, 700);
   await run("document.documentElement.style.fontSize='24px'"); await wait();
   const reminderGeometry = await run(`(() => {
@@ -130,6 +130,8 @@ app.whenReady().then(async () => {
   await run("document.querySelector('.school-course-breadcrumb button').click()");await wait();
   assert.ok(await run("document.querySelector('[data-school-action=lesson]') !== null"));
   await run("window.schoolUI.open('courses')"); await wait();
+  assert.ok(await run("document.querySelector('[data-course-tab=timetable]').getAttribute('aria-current')==='page'"));
+  await run("document.querySelector('[data-course-tab=courses]').click()");
   await run("const picker=document.querySelector('[data-school-field=class-switch]');picker.value='22';picker.dispatchEvent(new Event('change',{bubbles:true}))"); await wait();
   await run("document.querySelector('[data-school-action=course-list]').click(); window.ph.school.course=()=>new Promise(()=>{}); document.querySelector('[data-school-action=course]').click()"); await wait();
   assert.ok(await run("document.querySelector('[data-tab=tasks]') !== null"));
@@ -138,5 +140,34 @@ app.whenReady().then(async () => {
   await capture('course-loading-cache-en');
   await run("document.querySelector('[data-school-action=course-list]').click()");
   assert.ok(await run("document.querySelector('.school-course-card') !== null"));
+  await run(`
+    window.fixtureSnapshot.managebac.tasks.push(
+      {id:'21:35',courseId:'21',course:'Biology HL',title:'Read the enzyme chapter',category:'Coursework',submissionRequired:false},
+      {id:'managebac:event:21:36',courseId:'21',course:'Biology HL',title:'Laboratory assessment',category:'Assessment',kind:'event',start:'2099-11-04',dueAt:'2099-11-04T00:00:00+08:00',submissionRequired:false,description:'Attend the practical assessment in the laboratory.'}
+    );
+    document.querySelector('[data-course-tab=tasks]').click();
+  `);
+  win.setSize(1280,900); await wait(); await capture('unified-tasks-en');
+  assert.ok(await run("document.querySelector('[data-course-tab=tasks]').textContent === 'Tasks'"));
+  await run("document.querySelector('[data-school-action=calendar-task]').click()");
+  assert.ok(await run("document.querySelector('dialog').textContent.includes('Attend the practical') && !document.querySelector('dialog [data-school-action=prepare-task-upload]')"));
+  await capture('event-task-en');
+  await run("document.querySelector('dialog [data-school-action=close]').click();window.i18n.apply('zh-CN')");
+  win.setSize(780,650); await wait();
+  assert.ok(await run("document.querySelector('#schoolPage').scrollWidth<=document.querySelector('#schoolPage').clientWidth+1"));
+  await capture('unified-tasks-compact-zh');
+  await run("document.querySelector('.school-task-list').scrollIntoView({block:'center'})"); await wait();
+  await capture('unified-tasks-compact-rows-zh');
+  await run("document.querySelector('[data-course-tab=timetable]').click()"); await wait();
+  await run("window.schoolUI.open('courses')"); await wait();
+  assert.ok(await run("document.querySelector('[data-course-tab=timetable]').getAttribute('aria-current')==='page'"));
+  const savedSnapshot = await run('JSON.stringify(window.fixtureSnapshot)');
+  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<html><body><section id="schoolPage" class="page active"></section></body></html>'));
+  for (const file of ['styles.css', 'school.css', 'refinements.css', 'dialogs.css']) await win.webContents.insertCSS(fs.readFileSync(path.join(root, 'src', file), 'utf8'));
+  await run(`window.fixtureSnapshot=${savedSnapshot};window.ph={school:{get:async()=>window.fixtureSnapshot,preferences:async change=>{window.fixtureSnapshot.preferences={...window.fixtureSnapshot.preferences,...change};return window.fixtureSnapshot;}}};void 0;`);
+  for (const file of ['locales/en.js', 'i18n.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8')+'\n;void 0;');
+  await run("window.i18n.mount('en');window.schoolUI.open('courses')");await wait();
+  assert.ok(await run("document.querySelector('[data-course-tab=timetable]').getAttribute('aria-current')==='page'"));
+  await capture('remembered-timetable-restart-en');
   console.log(JSON.stringify({success:true,geometry,out})); app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1)});

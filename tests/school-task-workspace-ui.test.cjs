@@ -7,6 +7,58 @@ const { parseHTML } = require('linkedom');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
+test('My courses remembers timetable on re-entry and a fresh renderer; explicit notifications still open tasks', async()=>{
+ const ui=harness();await ui.open();ui.click('[data-course-tab="timetable"]');await settle();await settle();
+ assert.equal(ui.snapshot().preferences.courseView.tab,'timetable');
+ await ui.window.schoolUI.open('courses');await settle();
+ assert.equal(ui.document.querySelector('[data-course-tab="timetable"]').getAttribute('aria-current'),'page');
+ const fresh=harness();fresh.setSnapshot(JSON.parse(JSON.stringify(ui.snapshot())));
+ fresh.window.schoolUI.open('courses');await settle();await settle();
+ assert.equal(fresh.document.querySelector('[data-course-tab="timetable"]').getAttribute('aria-current'),'page');
+ fresh.window.schoolUI.openTasks();await settle();
+ assert.equal(fresh.document.querySelector('[data-course-tab="tasks"]').getAttribute('aria-current'),'page');
+});
+test('course detail section restores on restart and a changed account does not reopen the old class', async()=>{
+ const ui=harness();await ui.open();ui.click('[data-course-tab="courses"]');ui.click('[data-school-action="course"][data-id="21"]');await settle();ui.click('[data-tab="files"]');await settle();await settle();
+ const saved=JSON.parse(JSON.stringify(ui.snapshot()));assert.equal(saved.preferences.courseView.section,'files');
+ for(const changed of [false,true]){
+   const next=harness();const snapshot=JSON.parse(JSON.stringify(saved));if(changed)snapshot.managebac.accountKey='other';next.setSnapshot(snapshot);
+   next.window.schoolUI.open('courses');await settle();await settle();
+   if(changed){assert.equal(next.calls.course.length,0);assert.ok(next.document.querySelector('.school-course-card'));}
+   else{assert.equal(next.document.querySelector('[data-tab="files"]').getAttribute('aria-current'),'page');assert.equal(next.calls.course[0],'21');}
+ }
+});
+
+test('unified Tasks displays event details without a submission request and keeps all types together', async () => {
+  const ui = harness();
+  ui.snapshot().managebac.tasks = [
+    { id:'21:11', courseId:'21', title:'Exam upload', category:'Assessment', submissionRequired:true },
+    { id:'21:12', courseId:'21', title:'Read chapter', category:'Coursework', submissionRequired:false },
+    { id:'managebac:event:21:13', courseId:'21', title:'Assembly', kind:'event', category:'Event', start:'2099-01-01', dueAt:'2099-01-01T00:00:00+08:00', submissionRequired:false, description:'Main hall' }
+  ];
+  await ui.open();
+  assert.equal(ui.document.querySelectorAll('.school-task-row').length,3);
+  assert.equal(ui.document.querySelector('[data-course-tab="tasks"]').textContent,'任务');
+  ui.window.i18n.apply('en');
+  assert.equal(ui.document.querySelector('[data-course-tab="tasks"]').textContent,'Tasks');
+  assert.match(ui.document.querySelector('#schoolPage').textContent,/Assessment.*Submission required/);
+  assert.match(ui.document.querySelector('#schoolPage').textContent,/Coursework.*No submission required/);
+  ui.click('[data-school-action="calendar-task"]');
+  assert.match(ui.document.querySelector('dialog').textContent,/Main hall/);
+  assert.equal(ui.document.querySelector('[data-school-action="prepare-task-upload"]'),null);
+  assert.equal(ui.calls.task.length,0);
+  ui.click('dialog [data-school-action="close"]');
+  assert.equal(ui.document.querySelectorAll('.school-task-row').length,3);
+});
+test('no-upload and unknown task details do not offer an unsupported file picker', async () => {
+  for (const submissionRequired of [false, null]) {
+    const ui=harness({task:async()=>({title:'Read chapter',submissionRequired,uploadAvailable:false,attachments:[]})});
+    await ui.open(); await ui.openTask();
+    assert.equal(ui.document.querySelector('[data-school-action="prepare-task-upload"]'),null);
+    assert.equal(ui.calls.prepare.length,0);
+  }
+});
+
 function harness(overrides = {}) {
   const { window } = parseHTML('<html><body><section id="schoolPage" class="page active"></section></body></html>');
   const document = window.document;
@@ -24,7 +76,7 @@ function harness(overrides = {}) {
   tasks.push({ id: '22:90', courseId: '22', course: 'Biology', title: 'Cells', status: 'Pending' });
   let snapshot = { managebac: { courses, tasks, accountKey: 'synthetic-a', fetchedAt: new Date().toISOString() }, edupage: null, preferences: {}, accounts: { managebac: { saved: true } }, epochs: { managebac: 1 }, status: {} };
   const calls = { prepare: [], submit: [], cancel: [], course: [], task: [] };
-  const detail = (courseId, taskId) => ({ courseId, taskId, title: '关闭', status: 'not submitted', description: '保存\n\nSecond paragraph <script>unsafe()</script>', attachments: [{ name: '<img src=x onerror=unsafe()>', url: 'https://shph.managebac.cn/files/42?name="quoted"' }, { name: 'Original attachment', url: 'https://shph.managebac.cn/student/classes/21/tasks/1', originalPage: true }], url: `https://shph.managebac.cn/student/classes/${courseId}/tasks/${taskId}` });
+  const detail = (courseId, taskId) => ({ uploadAvailable: true, submissionRequired: true, courseId, taskId, title: '关闭', status: 'not submitted', description: '保存\n\nSecond paragraph <script>unsafe()</script>', attachments: [{ name: '<img src=x onerror=unsafe()>', url: 'https://shph.managebac.cn/files/42?name="quoted"' }, { name: 'Original attachment', url: 'https://shph.managebac.cn/student/classes/21/tasks/1', originalPage: true }], url: `https://shph.managebac.cn/student/classes/${courseId}/tasks/${taskId}` });
   const school = {
     get: async () => snapshot, sync: async () => snapshot,
     preferences: async (change) => { snapshot.preferences = { ...snapshot.preferences, ...change }; return snapshot; },
@@ -77,7 +129,7 @@ test('reminder dialog saves user choices and English interface labels', async ()
   assert.equal(ui.snapshot().preferences.taskReminders.deadlines, false);
   ui.click('[data-school-action="task-reminders"]');
   ui.window.i18n.apply('en');
-  assert.match(dialog.textContent, /Task and assignment reminders/);
+  assert.match(dialog.textContent, /Task reminders/);
   assert.match(dialog.textContent, /Checks every 10 minutes/);
 });
 
@@ -129,7 +181,7 @@ test('requirements preserve paragraphs and escaped attachments; English UI prese
   assert.equal(attachments[0].querySelector('button').dataset.url, 'https://shph.managebac.cn/files/42?name="quoted"');
   assert.equal(attachments[1].querySelector('button').textContent, '在原网页查看');
   ui.window.i18n.apply('en');
-  assert.match(dialog.textContent, /Assignment requirements/);
+  assert.match(dialog.textContent, /Task requirements/);
   assert.equal(dialog.querySelector('h2').textContent, '关闭');
   assert.match(dialog.querySelector('.school-prewrap').textContent, /^保存/);
   assert.equal(ui.document.querySelector('[data-school-field="task-course"] option[value="21"]').textContent, '保存');
@@ -331,7 +383,7 @@ test('unreadable class with no cache never says there are no matching assignment
   ui.click('[data-school-action="course-detail-tab"][data-tab="tasks"]');
   assert.match(ui.document.querySelector('.school-course-panel').textContent,/不能确认是否为空/);
   ui.window.i18n.apply('en');
-  assert.match(ui.document.querySelector('.school-course-panel').textContent,/Assignments have not loaded/);
+  assert.match(ui.document.querySelector('.school-course-panel').textContent,/Tasks have not loaded/);
 });
 
 

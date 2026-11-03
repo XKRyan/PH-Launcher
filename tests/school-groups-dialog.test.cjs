@@ -158,6 +158,6 @@ test("saving keeps the chosen teaching groups", async () => {
   mathB.setAttribute("checked", "");
   click(ui.window, ui.document, '[data-school-action="save-groups"]');
   await settle();
-  assert.equal(ui.calls.preferences.length, 1);
-  assert.deepEqual([...ui.calls.preferences[0].groups].sort(), ["g-eng-native", "g-homeroom", "g-math-b"]);
+  assert.equal(ui.calls.preferences.filter(change => !change.courseView).length, 1);
+  assert.deepEqual([...ui.calls.preferences.filter(change => !change.courseView)[0].groups].sort(), ["g-eng-native", "g-homeroom", "g-math-b"]);
 });

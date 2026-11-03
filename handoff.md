@@ -1,5 +1,15 @@
 # 工作交接
 
+## 2.0.6 统一任务与课程位置记忆（2026-11-03）
+
+Assessment/Coursework 等 core_tasks 与课程 events.json 合并到“任务 / Tasks”，全局同步及单课列表使用同一合并规则；按来源 ID / core_tasks 链接去重，保留原类型，日历失败报告 partial 并保留旧记录。明确提交要求与类型分开，未知不推断；活动显示待参加、已开始、已结束，无需提交或要求未知的过期任务显示待核对，完成仍取网站状态。只在详情识别到对应 Dropbox 表单/链接且不明确禁止提交时显示上传入口。事件详情展示日程和描述，不调用作业提交接口。活动结束移出通知，提醒不累加。没有真实学校登录、提交或学校页面现场校验；来源未知字段仍需用户核对。
+
+新增 courseView 本地偏好：记忆顶部栏目、当前课程/详情分栏、周次和周末显示。切换到其他页面再返回或新渲染器启动恢复位置；任务通知仍直达任务。写入串行去重，避免旧 IPC 结果覆盖当前导航；绑定 EduPage/ManageBac 账号，校验缓存和共享数据身份，账号变化不重开旧课程。仅位置变更不触发提醒扫描。初次课表选择等旧测试改为区分位置写入与选课写入。
+
+验证：最终全量 1073 项中 1072 通过，唯一失败仍是既有 PHL/Lite account-ui.js 字节差异（27008 / 27663），未覆盖 Lite。真实 Electron 检查中英文、窄窗口任务行、活动详情、返回、重新进入与新页面恢复课表；打包自检 success:true 且 courseViewRemembered:true（实际 IPC 保存）。包内 7 个运行文件与源文件逐字节核对。证据 .cache/course-view-{full-final-tests,final-tests,visual,self-test,build}.log，以及 tests/school-task-types.test.cjs。
+
+检测程序退出后已替换 D:/PHLauncher/PH Launcher 的 exe 与 app.asar，个人资料哈希不变。备份 .cache/managebac-update-backup-2026-11-03T08-08-51.389Z。未推送或发布；等待用户实际学校数据试用。
+
 ## 2.0.5 课程读取超时（2026-11-03）
 
 修复课程概览、作业分页、文件、日历串行请求导致累计等待超过一分钟的问题：四类读取并行，单栏目最多 15 秒，作业分页共享 15 秒总预算；request 对 fetch 与 body read 都有超时 Promise，transport 忽略 abort 也能结束等待。课程立即显示已有缓存及导航，UI 25 秒兜底，不接受迟到结果覆盖当前页面。没有真实学校登录或提交操作，未声称学校网页数据已现场验证。

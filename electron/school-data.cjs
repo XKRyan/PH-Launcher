@@ -86,7 +86,7 @@ function safeSourceUrl(site, raw) {
   try {
     const url = new URL(raw, ORIGINS[site]);
     if (url.origin !== ORIGINS[site] || url.username || url.password) return '';
-    if (site === 'managebac' && !/^\/student\/classes\/\d+(?:\/(?:units|files|core_tasks)(?:\/\d+)?|discussions(?:\/\d+)?)?\/?$/.test(url.pathname)) return '';
+    if (site === 'managebac' && !/^\/student\/classes\/\d+(?:\/(?:units|files|core_tasks|events)(?:\/\d+)?|discussions(?:\/\d+)?)?\/?$/.test(url.pathname)) return '';
     url.search = ''; url.hash = ''; return url.href;
   } catch { return ''; }
 }
@@ -319,6 +319,45 @@ function exactDueDate(node) {
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return '';
 }
+function taskMetadata(node) {
+  const categoryNode = node.querySelector('[data-task-type], .task-type, .assignment-type, .category-label');
+  const category = clean(node.getAttribute('data-task-type') || categoryNode?.getAttribute('data-task-type') || text(categoryNode, null, 80) || [...node.querySelectorAll('.badge, .badge-label, .label')].map(item => text(item, null, 80)).find(value => /^(assessment|coursework|event|exam|test|quiz|homework)$/i.test(value)), 80);
+  const raw = node.getAttribute('data-submission-required') ?? node.querySelector('[data-submission-required]')?.getAttribute('data-submission-required');
+  const requirement = text(node, '.submission-requirement, .submission-type', 160);
+  const submissionRequired = /^(true|1)$/i.test(raw || '') ? true : /^(false|0)$/i.test(raw || '') || /no submission required|submission not required|无需提交/i.test(requirement) ? false : /submission required|需要提交/i.test(requirement) ? true : null;
+  return { category, submissionRequired };
+}
+function parseCourseEvents(body, course) {
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { fail('PAGE_CHANGED', '未识别到课程日历'); }
+  const events = Array.isArray(parsed) ? parsed : parsed?.events || parsed?.items;
+  if (!Array.isArray(events)) fail('PAGE_CHANGED', '未识别到课程日历');
+  return events.slice(0, 200).map(event => {
+    const url = safeSourceUrl('managebac', event.url);
+    const linked = url.match(/\/classes\/(\d+)\/core_tasks\/(\d+)\/?$/);
+    if (linked && linked[1] !== String(course.id)) return null;
+    const start = clean(event.start, 40), title = clean(event.title, 240);
+    const identity = clean(event.id, 80) || createHash('sha256').update(JSON.stringify([title, start, event.end])).digest('hex').slice(0, 24);
+    return { id: linked ? `managebac:${course.id}:${linked[2]}` : `managebac:event:${course.id}:${identity}`, kind: linked ? 'task' : 'event',
+      courseId: String(course.id), course: clean(course.name, 160), title, start, end: clean(event.end, 40),
+      dueAt: /^\d{4}-\d{2}-\d{2}$/.test(start) ? `${start}T00:00:00+08:00` : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(start) ? `${start}+08:00` : start,
+      dueDateOnly: /^\d{4}-\d{2}-\d{2}$/.test(start), allDay: event.allDay === true,
+      category: clean(event.category || event.type, 80) || (linked ? '' : 'Event'),
+      description: text(htmlDocument(`<div>${String(event.description || '')}</div>`).querySelector('div'), null, 8000),
+      submissionRequired: typeof event.submission_required === 'boolean' ? event.submission_required : linked ? null : false,
+      status: clean(event.status, 100), url: url || `${ORIGINS.managebac}/student/classes/${course.id}/units` };
+  }).filter(event => event?.title && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(event.start));
+}
+function mergeCourseTasks(tasks, events) {
+  const merged = new Map(events.map(event => [event.id, event]));
+  for (const task of tasks) {
+    const event = merged.get(task.id);
+    merged.set(task.id, { ...event, ...task, kind: 'task', category: task.category || event?.category || '',
+      dueAt: task.dueAt || event?.dueAt || '', dueText: task.dueText || event?.dueText || '',
+      submissionRequired: task.submissionRequired ?? event?.submissionRequired ?? null });
+  }
+  return [...merged.values()];
+}
 function parseManageBacTasks(html, course = {}, { reference = new Date() } = {}) {
   const doc = htmlDocument(html);
   const tasks = new Map();
@@ -368,7 +407,7 @@ function parseManageBacTasks(html, course = {}, { reference = new Date() } = {})
     const dueText = text(card, '.due-date', 160) || text(card, '.date-badge', 160) || text(card, '.f-tile__description span, time, [data-due-at], [data-due-date]', 160);
     const pastDue = Boolean(card.querySelector('.past-due'));
     tasks.set(id, {
-      id, title, courseId: ids[1], course: clean(course.name, 160), url,
+      id, title, courseId: ids[1], course: clean(course.name, 160), url, kind: 'task', ...taskMetadata(card),
       dueText,
       dueAt: inferDue(card, pastDue, dueText), status: text(card, '.badge[data-bs-title]', 80) || text(card, '.badge-label, .task-status, [data-status]', 80),
       score: text(card, '.assessment.task-score', 80),
@@ -431,7 +470,12 @@ function parseTaskDetail(html, courseId, taskId) {
   const dueText = text(head, '.due-date', 200);
   const dueAt = exactDueDate(head);
   const score = text(head, '.assessment', 120);
-  return { title, status, dueText, dueAt, score, description: taskDescription(root), attachments: taskAttachments(root, courseId, taskId) };
+  const uploadAvailable = Boolean(parseDropboxUploadForm(html, courseId, taskId)?.action || parseDropboxLinks(html, courseId, taskId).length);
+  const metadata = taskMetadata(root);
+  const headMetadata = taskMetadata(head);
+  metadata.category ||= headMetadata.category;
+  metadata.submissionRequired ??= headMetadata.submissionRequired;
+  return { title, status, dueText, dueAt, score, ...metadata, uploadAvailable, description: taskDescription(root), attachments: taskAttachments(root, courseId, taskId) };
 }
 function discussionAuthor(node) {
   if (!node) return { author: '', category: '' };
@@ -777,7 +821,12 @@ class SchoolDataClient {
         await this.pause(120);
       }
       try {
-        const parsed = await this.getCourseTasks(course);
+        const [parsed, calendar] = await Promise.all([this.getCourseTasks(course), this.getCourseEvents(course).then(events => ({ events }), error => {
+          if (error.code === 'LOGIN_REQUIRED') throw error;
+          return { events: [], failed: true };
+        })]);
+        parsed.tasks = mergeCourseTasks(parsed.tasks, calendar.events);
+        if (calendar.failed) { parsed.tasksStatus = parsed.tasks.length ? 'partial' : 'error'; warnings.push(`${course.name}：日历任务未能读取`); }
         if (['ready', 'empty'].includes(parsed.tasksStatus)) taskSyncedCourses.push(String(course.id));
         for (const task of parsed.tasks) tasks.set(task.id, task);
         if (['error', 'partial'].includes(parsed.tasksStatus)) { taskFailedCourses.push(String(course.id)); warnings.push(`${course.name}：作业未能完整读取，请在原网页核对`); }
@@ -895,18 +944,21 @@ class SchoolDataClient {
         const body = await this.request('managebac', `${base}/${section}`, { timeoutMs: Math.min(this.timeoutMs, 15000) });
         if (section === 'files') result.files = parseCourseFiles(body, id);
         if (section === 'events.json') {
-          let parsed;
-          try { parsed = JSON.parse(body); } catch { fail('PAGE_CHANGED', '未识别到课程日历'); }
-          const events = Array.isArray(parsed) ? parsed : parsed.events || parsed.items;
-          if (!Array.isArray(events)) fail('PAGE_CHANGED', '未识别到课程日历');
-          result.events = events.slice(0, 200).map((event) => ({ id: clean(event.id, 80), title: clean(event.title, 240), start: clean(event.start, 40), end: clean(event.end, 40), allDay: event.allDay === true, url: safeSourceUrl('managebac', event.url) })).filter((event) => event.title && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(event.start));
+          result.events = parseCourseEvents(body, { id, name: result.name });
         }
       } catch (error) {
         if (error.code === 'LOGIN_REQUIRED') throw error;
+        if (section === 'events.json') result.eventsFailed = true;
         result.warnings.push(`${section === 'files' ? '课程文件' : section === 'core_tasks' ? '课程作业' : '课程日历'}暂时未能读取，请在原网页查看`);
       }
     })]);
+    result.tasks = mergeCourseTasks(result.tasks, result.events).map(task => ({ ...task, course: result.name || task.course }));
+    if (result.eventsFailed) result.tasksStatus = result.tasks.length ? 'partial' : 'error';
+    else if (result.tasksStatus === 'error' && result.tasks.length) result.tasksStatus = 'partial';
     return result;
+  }
+  async getCourseEvents(course) {
+    return parseCourseEvents(await this.request('managebac', `/student/classes/${validatedId(course.id)}/events.json`, { timeoutMs: Math.min(this.timeoutMs, 15000) }), course);
   }
   async getTaskDetail(courseId, taskId) {
     const cid = validatedId(courseId); const tid = validatedId(taskId);

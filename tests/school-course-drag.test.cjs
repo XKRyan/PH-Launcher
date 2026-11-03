@@ -87,8 +87,8 @@ test('dragging a course above another persists the new order', async () => {
   const marked = drag(ui.window, ui.document, { from: 'c3', to: 'c1', below: false });
   assert.equal(marked, true, 'the drop target shows an insertion marker');
   await settle();
-  assert.equal(ui.calls.preferences.length, 1);
-  assert.equal(JSON.stringify(ui.calls.preferences[0].courseOrder), JSON.stringify(['c3', 'c1', 'c2']));
+  assert.equal(ui.calls.preferences.filter(change => !change.courseView).length, 1);
+  assert.equal(JSON.stringify(ui.calls.preferences.filter(change => !change.courseView)[0].courseOrder), JSON.stringify(['c3', 'c1', 'c2']));
   assert.equal(JSON.stringify(cardOrder(ui.document)), JSON.stringify(['c3', 'c1', 'c2']), 'DOM order updates immediately');
 });
 
@@ -98,7 +98,7 @@ test('dropping a course below another inserts it after the target', async () => 
   await settle();
   drag(ui.window, ui.document, { from: 'c1', to: 'c3', below: true });
   await settle();
-  assert.equal(JSON.stringify(ui.calls.preferences.at(-1).courseOrder), JSON.stringify(['c2', 'c3', 'c1']));
+  assert.equal(JSON.stringify(ui.calls.preferences.filter(change => !change.courseView).at(-1).courseOrder), JSON.stringify(['c2', 'c3', 'c1']));
 });
 
 test('dropping a course on itself changes nothing', async () => {
@@ -107,7 +107,7 @@ test('dropping a course on itself changes nothing', async () => {
   await settle();
   drag(ui.window, ui.document, { from: 'c2', to: 'c2', below: true });
   await settle();
-  assert.equal(ui.calls.preferences.length, 0, 'no write for a no-op drop');
+  assert.equal(ui.calls.preferences.filter(change => !change.courseView).length, 0, 'no write for a no-op drop');
   assert.equal(JSON.stringify(cardOrder(ui.document)), JSON.stringify(['c1', 'c2', 'c3']));
 });
 
@@ -118,5 +118,5 @@ test('dragging a filtered course retains the order entries of invisible courses'
   search.value = 'E'; search.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
   assert.equal(ui.document.querySelectorAll('[data-school-drag]').length, 2);
   drag(ui.window, ui.document, { from: 'c3', to: 'c2', below: false }); await settle();
-  assert.deepEqual(Array.from(ui.calls.preferences.at(-1).courseOrder), ['c1', 'c3', 'c2']);
+  assert.deepEqual(Array.from(ui.calls.preferences.filter(change => !change.courseView).at(-1).courseOrder), ['c1', 'c3', 'c2']);
 });

@@ -1431,7 +1431,7 @@ async function syncSchool(source, options = {}) {
   }));
   // 同步回来的这份课表现在是"当前课表"，共用选课要按它重新解析一次。
   if (source === 'edupage') { try { applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); } }
-  scheduleReminderTick();
+  if (Object.keys(input).some(key => key !== 'courseView')) scheduleReminderTick();
   return schoolSnapshot();
 }
 
@@ -1738,6 +1738,21 @@ function applySharedLessonSelection(target = null) {
 function updateSchoolPreferences(input) {
   const old = secureStore.data.settings.schoolPreferences || {};
   const next = { ...old };
+  if (Object.hasOwn(input, 'courseView')) {
+    const view = input.courseView;
+    // Validate against the same authoritative local/shared view the renderer sees.
+    const current = schoolSnapshot();
+    const edu = current.edupage || schoolCache.edupage;
+    const mb = current.managebac || schoolCache.managebac;
+    if (!view || !['timetable', 'courses', 'notifications', 'tasks', 'discussions', 'core'].includes(view.tab)
+      || !['overview', 'units', 'tasks', 'calendar', 'discussions', 'files'].includes(view.section)
+      || !/^\d{4}-\d{2}-\d{2}$/.test(view.week || '') || !Number.isFinite(Date.parse(view.week))
+      || typeof view.showWeekend !== 'boolean' || typeof view.courseId !== 'string'
+      || view.edupageAccount !== (edu?.accountKey || '') || view.managebacAccount !== (mb?.accountKey || '')
+      || (view.courseId && !mb?.courses?.some(course => String(course.id) === view.courseId))) throw new Error('课程位置或账号已变化，请重新选择');
+    next.courseView = { tab: view.tab, courseId: view.courseId, section: view.section, week: view.week, showWeekend: view.showWeekend,
+      edupageAccount: view.edupageAccount, managebacAccount: view.managebacAccount };
+  }
   if (Object.hasOwn(input, 'taskReminders')) {
     const value = input.taskReminders;
     if (!value || typeof value.newTasks !== 'boolean' || typeof value.deadlines !== 'boolean'
@@ -2480,11 +2495,11 @@ function checkTaskReminders() {
   const english = secureStore.data.settings.language === 'en';
   const body = alerts.slice(0, 6).map(item => {
     const date = item.dueAt ? new Date(item.dueAt).toLocaleString(english ? 'en-GB' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dueText;
-    const kind = Date.parse(item.dueAt) < Date.now() ? (english ? 'Overdue' : '已逾期') : item.type === 'new' ? (english ? 'New' : '新作业') : (english ? 'Due soon' : '即将截止');
+    const kind = Date.parse(item.dueAt) < Date.now() ? (item.kind === 'event' ? (english ? 'Started' : '已开始') : (english ? 'Date passed · Check status' : '日期已过 · 待核对')) : item.type === 'new' ? (english ? 'New' : '新任务') : (english ? 'Due / starting soon' : '即将到期 / 开始');
     return `${kind} · ${String(item.course || '').slice(0, 60)} · ${String(item.title || '').slice(0, 100)}${date ? ` · ${date}` : ''}`;
-  }).join('\n\n') + (alerts.length > 6 ? (english ? `\n\nView all ${alerts.length} assignments in the app.` : `\n\n在课程页面查看全部 ${alerts.length} 项作业。`) : '');
+  }).join('\n\n') + (alerts.length > 6 ? (english ? `\n\nView all ${alerts.length} tasks in the app.` : `\n\n在课程页面查看全部 ${alerts.length} 项任务。`) : '');
   reminderWindows?.upsert({ id: 'managebac-tasks', kind: 'task', accountKey: account,
-    title: english ? `${alerts.length} assignment reminders` : `${alerts.length} 项作业提醒`, body }, { open: result.alerts.length > 0 });
+    title: english ? `${alerts.length} task reminders` : `${alerts.length} 项任务提醒`, body }, { open: result.alerts.length > 0 });
 }
 
 let taskRefreshBusy = false;
@@ -5239,6 +5254,14 @@ async function runSelfTest() {
       && !document.querySelector('[data-route="class-timetable"]');
     navigate('courses');
     await window.schoolUI.refresh();
+    let savedCourseView;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      savedCourseView = (await window.ph.school.get()).preferences?.courseView;
+      if (savedCourseView?.tab === 'timetable') break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const courseViewRemembered = savedCourseView?.tab === 'timetable'
+      && document.querySelector('[data-course-tab="timetable"]')?.getAttribute('aria-current') === 'page';
     const coursesRendered = document.querySelector('#schoolPage h1')?.textContent === '我的课程'
       && ['courses', 'notifications', 'tasks', 'discussions', 'core'].every(tab => document.querySelector('#schoolPage [data-course-tab="' + tab + '"]'))
       && document.querySelector('.primary-nav .nav-item.active')?.dataset.route === 'courses';
@@ -5308,6 +5331,7 @@ async function runSelfTest() {
       schoolNavLabels,
       classTimetableRemoved,
       coursesRendered,
+      courseViewRemembered,
       nativeMailRendered,
       nativeXinlvRendered,
       aiWorkspaceReady,

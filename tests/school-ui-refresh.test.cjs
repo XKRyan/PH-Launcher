@@ -165,7 +165,7 @@ test('my timetable only shows the selected teaching groups; the old class route 
   assert.equal(ui.document.querySelector('#schoolPage h1').textContent, '我的课程');
   assert.equal(ui.document.querySelectorAll('.school-lesson').length, 1);
   assert.equal(ui.calls.sync.length, 0, 'local route changes must not imply network consent');
-  assert.equal(ui.calls.preferences.length, 0);
+  assert.ok(ui.calls.preferences.every(change => Object.keys(change).length === 1 && change.courseView), 'only workspace position is saved, never inferred course selections');
 });
 
 test('course workspace owns its course/notification/task/core sections without aggregate school tabs', async () => {

@@ -1,6 +1,6 @@
 'use strict';
 const { createHash } = require('node:crypto');
-const { submitted, dueTime } = require('../src/school-tasks.js');
+const { active, dueTime } = require('../src/school-tasks.js');
 const MINUTE = 60000;
 const OPTIONS = [60, 180, 1440, 2880];
 const key = value => createHash('sha256').update(value).digest('hex').slice(0, 32);
@@ -34,7 +34,7 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
     const entry = { seen: now, deadline, stages: old?.deadline === deadline ? [...(old.stages || [])] : [] };
     // Retain first-seen ids across temporarily missing/partial lists and restarts.
     const isNew = !old && initialized.has(String(task.courseId));
-    const eligible = !submitted(task) && !hidden.has(task.id);
+    const eligible = active(task, now) && !hidden.has(task.id);
     let type = '';
     if (fresh && eligible && isNew && prefs.newTasks && (deadline === null || due > now)) type = 'new';
     if (fresh && eligible && prefs.deadlines && due > now) {
@@ -46,7 +46,7 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
     }
     if (!eligible || (old && old.deadline !== deadline) || (!prefs.newTasks && !prefs.deadlines)) delete next.inbox[id];
     if (type) next.inbox[id] = type;
-    if (type) alerts.push({ type, taskId: String(task.id), courseId: String(task.courseId), title: String(task.title || 'ManageBac'), course: String(task.course || ''), dueAt: task.dueAt || '', dueText: task.dueText || '' });
+    if (type) alerts.push({ type, taskId: String(task.id), courseId: String(task.courseId), title: String(task.title || 'ManageBac'), course: String(task.course || ''), dueAt: task.dueAt || '', dueText: task.dueText || '', kind: task.kind });
     // Avoid rewriting storage every timer tick for unchanged data.
     if (old && old.deadline === entry.deadline && JSON.stringify(old.stages) === JSON.stringify(entry.stages)) entry.seen = old.seen;
     next.entries[id] = entry;
@@ -58,12 +58,12 @@ function evaluate({ state, snapshot, accountKey, settings, hiddenTasks = [], now
   next.entries = Object.fromEntries(entries.slice(0, 10000));
   return { state: next, alerts, changed: JSON.stringify(previous) !== JSON.stringify(next) };
 }
-function pendingAlerts(state, snapshot) {
+function pendingAlerts(state, snapshot, now = Date.now()) {
   if (!state || state.accountKey !== snapshot?.accountKey) return [];
   const unique = new Map();
   for (const task of snapshot.tasks || []) {
     const type = state.inbox?.[key(String(task.id))];
-    if (type && !task.stale && !submitted(task)) unique.set(String(task.id), { ...task, type });
+    if (type && !task.stale && active(task, now)) unique.set(String(task.id), { ...task, type });
   }
   return [...unique.values()];
 }
