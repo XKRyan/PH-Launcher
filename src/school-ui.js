@@ -46,7 +46,7 @@
     return message || fallback;
   };
   const TTL = { edupage: 120000, managebac: 180000 };
-  const state = { snapshot: { edupage: null, managebac: null, preferences: {}, status: {} }, notifications: null, notificationsBusy: false, discussions: null, discussionsBusy: false, exportMenu: false, exportBusy: false, weeks: new Map(), epochs: {}, route: 'timetable', courseTab: 'courses', week: monday(), showWeekend: false, busy: new Set(), error: '', notice: '', query: '', courseSort: 'manual', taskSort: 'due', showHidden: false, consent: new Set(), refreshId: 0, syncIds: { edupage: 0, managebac: 0 }, autoTimer: null };
+  const state = { snapshot: { edupage: null, managebac: null, preferences: {}, status: {} }, notifications: null, notificationsBusy: false, discussions: null, discussionsBusy: false, exportMenu: false, exportBusy: false, weeks: new Map(), epochs: {}, route: 'timetable', courseTab: 'courses', week: monday(), showWeekend: false, busy: new Set(), error: '', notice: '', query: '', courseSort: 'manual', taskSort: 'newest', showHidden: false, consent: new Set(), refreshId: 0, syncIds: { edupage: 0, managebac: 0 }, autoTimer: null };
   let root;
   let modal;
   let timeLineObserver;
@@ -158,10 +158,10 @@
   function syncSummary(source) {
     const remote = statusFor(source); const data = source === 'edupage' ? currentWeek() : state.snapshot.managebac;
     const last = checkedAt(source) || data?.fetchedAt;
-    if (!last && !remote.error) return '';
+
     const stale = remote.state === 'stale' || Boolean(remote.error) || isStale(source);
     const note = remote.error ? ' · 稍后自动重试' : stale ? ' · 正在自动更新' : '';
-    return `<div class="school-data-stamp" role="status">当前数据：${esc(stamp(last) || '读取中…')}${note}</div>`;
+    return `<div class="school-data-stamp" role="status">当前数据：${esc(stamp(last) || '读取中…')}${note}${btn(state.busy.has(source) ? '刷新中…' : '刷新', 'manual-refresh', `data-source="${source}" ${state.busy.has(source) ? 'disabled' : ''}`)}</div>`;
   }
   const selections = () => { const data = currentWeek(); return data && prefs().accountKey === data.accountKey && Array.isArray(prefs().groups) ? prefs().groups : null; };
   // A missing choice is not evidence of enrolment. Personal timetable stays empty
@@ -621,7 +621,7 @@
     const courses = state.snapshot.managebac?.courses || [];
     const selected = courses.find(course => String(course.id) === id);
     const name = data?.name || selected?.name || '课程';
-    const header = `<div class="school-course-breadcrumb">${context.lesson ? btn('返回课表', 'course-tab', 'data-course-tab="timetable"') : btn('全部课程', 'course-list')}<span aria-hidden="true">/</span><span data-i18n-ignore>${esc(name)}</span></div><header class="school-class-header"><div><span class="section-kicker">MY CLASS</span><h1 data-i18n-ignore>${esc(name)}</h1></div><div class="school-actions"><label class="school-inline-label"><span>切换课程</span><select data-school-field="class-switch" aria-label="切换课程">${courses.map(course => `<option data-i18n-ignore value="${esc(course.id)}" ${String(course.id) === id ? 'selected' : ''}>${esc(course.name)}</option>`).join('')}</select></label>${context.lesson ? btn('更改课程关联', 'relink-course') : ''}${originalButton(data?.url)}</div></header>`;
+    const header = `<div class="school-course-breadcrumb">${context.lesson ? btn('返回课表', 'course-tab', 'data-course-tab="timetable"') : btn('全部课程', 'course-list')}<span aria-hidden="true">/</span><span data-i18n-ignore>${esc(name)}</span></div><header class="school-class-header"><div><span class="section-kicker">MY CLASS</span><h1 data-i18n-ignore>${esc(name)}</h1></div><div class="school-actions"><label class="school-inline-label"><span>切换课程</span><select data-school-field="class-switch" aria-label="切换课程">${courses.map(course => `<option data-i18n-ignore value="${esc(course.id)}" ${String(course.id) === id ? 'selected' : ''}>${esc(course.name)}</option>`).join('')}</select></label>${context.lesson ? btn('更改课程关联', 'relink-course') : ''}${btn(context.loading ? '刷新中…' : '刷新', 'manual-refresh', `data-source="managebac" ${context.loading ? 'disabled' : ''}`)}${originalButton(data?.url)}</div></header>`;
 
     if (context.error && !data) return header + `<div class="school-error" role="alert">${esc(context.error)}</div>${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}`;
     if (!data) return header;
@@ -630,7 +630,7 @@
     const incomplete = ['error', 'partial'].includes(data.tasksStatus);
     const taskNotice = incomplete ? `<div class="school-error" role="alert"><p>任务未能完整读取，当前列表可能不完整。保留的旧任务已标记，请重试或在原网页核对。</p>${btn('重新读取任务', 'retry-course', `data-id="${esc(id)}"`)}</div>` : '';
     const taskEmpty = context.loading ? '正在读取，请稍候…' : incomplete ? '尚未读取到任务，不能确认是否为空。' : '没有符合条件的任务';
-    const dueOrder = (a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity);
+    const dueOrder = (window.schoolTasks?.newest || ((a,b)=>(Date.parse(b.dueAt)||0)-(Date.parse(a.dueAt)||0)));
     const pending = tasks.filter(task => activeTask(task)).sort(dueOrder);
     const done = tasks.filter(task => !activeTask(task)).sort(dueOrder);
     const upcoming = pending.filter(task => !(Date.parse(task.dueAt) < Date.now()));
@@ -642,7 +642,7 @@
     }
     if (tab === 'tasks') {
       const filters = [['pending','待处理',pending.length],['completed','已完成 / 已结束',done.length],['all','全部任务',tasks.length]];
-      const source = context.taskFilter === 'completed' ? done : context.taskFilter === 'all' ? [...pending,...done] : pending;
+      const source = context.taskFilter === 'completed' ? done : context.taskFilter === 'all' ? [...pending,...done].sort(dueOrder) : pending;
       const matching = source.filter(task => String(task.title).toLocaleLowerCase().includes(context.query.toLocaleLowerCase()));
       body = `<div class="school-class-taskbar"><div class="school-class-filters">${filters.map(([key,label,count]) => `<button type="button" data-school-action="class-task-filter" data-filter="${key}" aria-pressed="${context.taskFilter === key}">${label} <span>${count}</span></button>`).join('')}</div><input type="search" data-school-field="class-query" value="${esc(context.query)}" placeholder="搜索任务" aria-label="搜索任务"></div><div class="school-task-list">${taskRows(matching,true) || `<div class="school-empty"><p>${taskEmpty}</p></div>`}</div>`;
     }
@@ -697,6 +697,7 @@
       && (!state.taskCourse || String(task.courseId) === state.taskCourse)
       && (state.taskStatus === 'all' || (state.taskStatus === 'soon' ? soon(task) : state.taskStatus === 'pending' ? activeTask(task) : taskState(task) === state.taskStatus)));
     items.sort((a, b) => {
+      if (state.taskSort === 'newest') return (window.schoolTasks?.newest || ((a,b)=>(Date.parse(b.dueAt)||0)-(Date.parse(a.dueAt)||0)))(a,b);
       if (state.taskSort === 'name') return a.title.localeCompare(b.title, 'zh-CN');
       const now = Date.now();
       const tsA = a.dueAt ? Date.parse(a.dueAt) : Infinity;
@@ -709,13 +710,13 @@
     // 未提交的在上、已提交的在下，中间一条分割线；已提交那一组灰显（和网页端一样）。
     const pending = items.filter((task) => activeTask(task));
     const done = items.filter((task) => !activeTask(task));
-    const list = taskRows(pending);
-    const doneBlock = done.length
+    const list = taskRows(state.taskSort === 'newest' ? items : pending);
+    const doneBlock = state.taskSort !== 'newest' && done.length
       ? `<div class="school-list-sep"><span>已完成 / 已结束</span><span>${done.length}</span></div><div class="school-task-list is-done">${taskRows(done)}</div>`
       : '';
     const courseOptions = (data.courses || []).map((course) => `<option value="${esc(course.id)}" ${state.taskCourse === String(course.id) ? 'selected' : ''}>${esc(course.name)}</option>`).join('');
     const statusOptions = [['all', '全部状态'], ['pending', '待处理'], ['soon', '24 小时内到期 / 开始'], ['overdue', '已逾期'], ['completed', '已提交 / 已完成'], ['ended', '已结束']].map(([value, label]) => `<option value="${value}" ${state.taskStatus === value ? 'selected' : ''}>${label}</option>`).join('');
-    return `${syncSummary('managebac')}${taskOverview(data.tasks)}<div class="school-section-head school-task-header"><div><span class="section-kicker">TASKS & DEADLINES</span><h2>${state.showHidden ? '已隐藏' : '课程任务'} <small>${items.length}</small></h2></div>${btn('提醒设置', 'task-reminders')}<button type="button" class="school-text-button" data-school-action="toggle-hidden">${state.showHidden ? '返回任务列表' : `查看已隐藏 (${data.tasks.filter((task) => hidden.has(task.id)).length})`}</button></div><div class="school-task-filters"><input type="search" value="${esc(state.query)}" data-school-field="query" placeholder="搜索任务或课程" aria-label="搜索任务或课程"/><select data-school-field="task-course" aria-label="筛选课程"><option value="">全部课程</option>${courseOptions}</select><select data-school-field="task-status" aria-label="筛选任务状态">${statusOptions}</select><select data-school-field="task-sort" aria-label="任务排序"><option value="due" ${state.taskSort === 'due' ? 'selected' : ''}>明确截止时间优先</option><option value="name" ${state.taskSort === 'name' ? 'selected' : ''}>任务名称</option></select>${btn('清除筛选', 'clear-task-filters')}</div><p class="school-footnote">显示已同步的任务；完整记录和最新提交状态请查原网页。</p><div class="school-task-list">${items.length ? list : '<div class="school-empty"><h3>没有符合条件的任务</h3><p>调整课程、状态或关键词，或在原网页核对最新安排。</p></div>'}</div>${doneBlock}`;
+    return `${syncSummary('managebac')}${taskOverview(data.tasks)}<div class="school-section-head school-task-header"><div><span class="section-kicker">TASKS & DEADLINES</span><h2>${state.showHidden ? '已隐藏' : '课程任务'} <small>${items.length}</small></h2></div>${btn('提醒设置', 'task-reminders')}<button type="button" class="school-text-button" data-school-action="toggle-hidden">${state.showHidden ? '返回任务列表' : `查看已隐藏 (${data.tasks.filter((task) => hidden.has(task.id)).length})`}</button></div><div class="school-task-filters"><input type="search" value="${esc(state.query)}" data-school-field="query" placeholder="搜索任务或课程" aria-label="搜索任务或课程"/><select data-school-field="task-course" aria-label="筛选课程"><option value="">全部课程</option>${courseOptions}</select><select data-school-field="task-status" aria-label="筛选任务状态">${statusOptions}</select><select data-school-field="task-sort" aria-label="任务排序"><option value="newest" ${state.taskSort === 'newest' ? 'selected' : ''}>最新任务优先</option><option value="due" ${state.taskSort === 'due' ? 'selected' : ''}>明确截止时间优先</option><option value="name" ${state.taskSort === 'name' ? 'selected' : ''}>任务名称</option></select>${btn('清除筛选', 'clear-task-filters')}</div><p class="school-footnote">显示已同步的任务；完整记录和最新提交状态请查原网页。</p><div class="school-task-list">${items.length ? list : '<div class="school-empty"><h3>没有符合条件的任务</h3><p>调整课程、状态或关键词，或在原网页核对最新安排。</p></div>'}</div>${doneBlock}`;
   }
   function core() {
     return `<div class="school-section-head"><div><span class="section-kicker">IB CORE</span><h2>把长期项目放在心上</h2></div></div><div class="school-core-grid"><article><span class="section-kicker">EXPERIENCES & REFLECTIONS</span><h3>CAS</h3><p>查看活动目标与进度，回到原网页整理证据、完成反思。</p>${btn('读取 CAS 概览', 'core', 'data-kind="cas"', true)}</article><article><span class="section-kicker">EXTENDED ESSAY</span><h3>EE</h3><p>查看论文工作表与项目摘要，让下一步有据可查。</p>${btn('读取 EE 概览', 'core', 'data-kind="ee"', true)}</article></div><div class="school-callout">这些内容不会自动交给 AI，也不会代你提交任何表单。</div>${btn('登录 ManageBac 账号', 'account', 'data-site="managebac"')}`;
@@ -898,6 +899,7 @@
     modal.innerHTML = `<div class="modal-head"><h3 id="schoolDialogTitle">${esc(title)}</h3><button type="button" data-school-action="close" aria-label="关闭" autofocus>×</button></div><div class="school-dialog-content">${body}</div><div class="school-dialog-footer">${footer || btn('关闭', 'close')}</div>`;
     protectSchoolContent(modal);
     window.i18n?.refresh?.(modal);
+    for(const button of modal.querySelectorAll('[data-school-action="load-image"]'))void loadImage(button);
     if (!modal.open) modal.showModal();
     else if (focusedAction) {
       const replacement = [...modal.querySelectorAll('[data-school-action]')].find((node) => node.dataset.schoolAction === focusedAction && !node.disabled);
@@ -1058,6 +1060,17 @@
     catch (error) { if (modal.open && modal.schoolLoadToken === token) showDialog(title, `<div class="school-error" role="alert">${esc(userError(error, '读取失败'))}</div>${btn('登录学校账号', 'account', `data-site="${source}"`)}`); }
   }
   function originalButton(url) { return url ? btn('在原网页查看', 'original', `data-url="${esc(url)}"`) : ''; }
+  function contentRows(data) {
+    const blocks=Array.isArray(data.content)&&data.content.length?data.content:[{type:'text',text:data.description||''}];
+    return `<div class="school-rich-content" data-i18n-ignore>${blocks.map(block=>block.type==='image'
+      ? `<figure><button type="button" class="school-image-load" data-school-action="load-image" data-url="${esc(block.url)}" data-page-url="${esc(data.url||'')}">${esc(block.alt||'加载图片')}</button><figcaption>${esc(block.alt||'')}</figcaption></figure>`
+      : `<p class="school-prewrap">${esc(block.text)}</p>`).join('')}</div>`;
+  }
+  async function loadImage(button) {
+    if(button.disabled)return;button.disabled=true;
+    try { const src=await api().resource(button.dataset.url);if(!button.isConnected)return;const img=document.createElement('img');img.src=src;img.alt=button.textContent;img.className='school-task-image';button.replaceChildren(img);button.disabled=false;button.onclick=()=>img.classList.toggle('is-expanded');button.removeAttribute('data-school-action'); }
+    catch { button.disabled=false;button.textContent='图片暂时无法加载，点击在原网页查看';button.dataset.schoolAction='original';button.dataset.url=button.dataset.pageUrl||button.dataset.url; }
+  }
   function attachmentRows(items) {
     return (items || []).map((item) => `<div class="school-file-row"><span>${esc(item.name)}</span>${item.url ? btn(item.originalPage ? '在原网页查看' : '打开附件', 'original', `data-url="${esc(item.url)}"`) : ''}</div>`).join('');
   }
@@ -1081,7 +1094,7 @@
     const confirmation = pending ? `<section class="school-upload-confirm" tabindex="-1" aria-label="确认上传文件"><h4>确认上传文件</h4><dl><dt>课程</dt><dd>${esc(courseName)}</dd><dt>任务</dt><dd>${esc(data.title)}</dd><dt>文件</dt><dd>${esc(pending.filename)}</dd><dt>大小</dt><dd>${esc(Number(pending.size).toLocaleString())} bytes</dd></dl><p>确认后会将此文件发送到这项 ManageBac 任务。选择文件本身不会上传。</p><div class="school-actions">${btn('取消选择', 'cancel-task-upload')}${btn('确认并上传', 'confirm-task-upload', '', true)}</div></section>` : '';
     const picker = data.uploadAvailable === true && data.submissionRequired !== false && typeof api().prepareTaskUpload === 'function' && typeof api().submitTaskUpload === 'function'
       ? btn(context.picking ? '正在选择文件…' : '选择要上传的文件', 'prepare-task-upload', locked || pending ? 'disabled' : '', true) : '';
-    const body = `<h2>${esc(data.title)}</h2><div class="school-detail-meta"><span data-i18n-ignore>${esc(courseName)}</span><span>${esc(data.dueAt ? stamp(data.dueAt) : data.dueText || '截止时间未提供')}</span><span class="school-task-state is-${status}">${taskStateLabel(status)}</span>${data.status ? `<span data-i18n-ignore>${esc(data.status)}</span>` : ''}${data.score ? `<span data-i18n-ignore>${esc(data.score)}</span>` : ''}</div><p class="school-task-requirement">${data.submissionRequired === true ? '需要提交' : data.submissionRequired === false ? '无需提交' : '提交要求请查详情'}</p><h4>任务要求</h4>${data.description ? `<p class="school-prewrap">${esc(data.description)}</p>` : '<p>请在原网页查看任务要求。</p>'}<h4>任务附件</h4>${attachmentRows(data.attachments) || '<p>未读取到附件，请在原网页核对。</p>'}<div class="school-dialog-actions">${originalButton(data.url)}</div>${picker || pending || outcome ? '<h4>上传任务文件</h4>' : `<p>${data.submissionRequired === false ? '无需提交' : '未确认可在线提交，请在原网页核对任务要求。'}</p>`}${uploadNote}${confirmation}${context.error ? `<p class="school-error" role="alert">${esc(context.error)}</p>` : ''}${picker}${picker || pending || outcome ? '<p class="school-footnote">上传后仍需核对学校网站的接收结果；这里不会擅自标记为已提交。</p>' : ''}`;
+    const body = `<h2>${esc(data.title)}</h2><div class="school-detail-meta"><span data-i18n-ignore>${esc(courseName)}</span><span>${esc(data.dueAt ? stamp(data.dueAt) : data.dueText || '截止时间未提供')}</span><span class="school-task-state is-${status}">${taskStateLabel(status)}</span>${data.status ? `<span data-i18n-ignore>${esc(data.status)}</span>` : ''}${data.score ? `<span data-i18n-ignore>${esc(data.score)}</span>` : ''}</div><p class="school-task-requirement">${data.submissionRequired === true ? '需要提交' : data.submissionRequired === false ? '无需提交' : '提交要求请查详情'}</p><h4>任务要求</h4>${contentRows(data)}<h4>任务附件</h4>${attachmentRows(data.attachments) || '<p>未读取到附件，请在原网页核对。</p>'}<div class="school-dialog-actions">${originalButton(data.url)}</div>${picker || pending || outcome ? '<h4>上传任务文件</h4>' : `<p>${data.submissionRequired === false ? '无需提交' : '未确认可在线提交，请在原网页核对任务要求。'}</p>`}${uploadNote}${confirmation}${context.error ? `<p class="school-error" role="alert">${esc(context.error)}</p>` : ''}${picker}${picker || pending || outcome ? '<p class="school-footnote">上传后仍需核对学校网站的接收结果；这里不会擅自标记为已提交。</p>' : ''}`;
     showDialog('任务详情', body, `${btn('返回课程', 'course', `data-id="${esc(context.courseId)}"`)}${btn('刷新任务详情', 'refresh-task-detail', outcome?.state === 'uploading' || context.picking ? 'disabled' : '')}${btn('返回列表', 'close')}`, context);
     if (pending) modal.querySelector('.school-upload-confirm')?.focus();
   }
@@ -1217,7 +1230,18 @@
         state.linkingLesson = lesson;
         const saved = prefs().courseLinks;
         const linked = saved?.edupageAccount === currentWeek()?.accountKey && saved?.managebacAccount === state.snapshot.managebac?.accountKey ? courses.find(course => String(course.id) === saved.items?.[lesson.groupKey]) : null;
-        const matches = linked ? [linked] : window.schoolSelectionInference?.matchingCourses(lesson, courses) || [];
+        let timed=[],timeConflict=false;
+        if(action!=='relink-course'&&!linked&&api().timetable){
+          const account=state.snapshot.managebac?.accountKey;
+          try{
+            let calendar=state.snapshot.managebac?.timetable;
+            if(calendar?.requestedWeek!==state.week || Date.now()-Date.parse(calendar.fetchedAt)>180000){calendar={...await api().timetable(state.week),requestedWeek:state.week};if(account!==state.snapshot.managebac?.accountKey)return;state.snapshot.managebac.timetable=calendar;}
+            const ids=new Set((calendar.slots||[]).filter(slot=>slot.date===lesson.date&&slot.start>=lesson.start&&slot.start<lesson.end).map(slot=>String(slot.courseId)));
+            timeConflict=ids.size>0;
+            if(ids.size===1)timed=courses.filter(course=>ids.has(String(course.id)));
+          }catch{/* A missing/expired timetable cannot override a saved association. */}
+        }
+        const matches = linked ? [linked] : timed.length ? timed : timeConflict ? [] : window.schoolSelectionInference?.matchingCourses(lesson, courses) || [];
         if (matches.length === 1 && action !== 'relink-course') {
           state.route = 'courses'; window.navigate?.('courses'); await openCourse(matches[0].id);
           if (courseDetail?.id === String(matches[0].id)) { courseDetail.lesson = lesson; courseDetail.tab = 'tasks'; render(); } return;
@@ -1238,9 +1262,11 @@
       if (action === 'original') await original(button.dataset.url);
       if (action === 'course') consent('managebac', () => openCourse(button.dataset.id));
       if (action === 'course-detail-tab' && courseDetail) { courseDetail.tab = button.dataset.tab; render(); if (courseDetail.tab === 'discussions') void loadCourseDiscussions(); }
+      if (action === 'manual-refresh') { await sync(button.dataset.source, {force:true}); if (courseDetail) await openCourse(courseDetail.id, {force:true}); }
+      if (action === 'load-image') await loadImage(button);
       if (action === 'calendar-task') {
         const event = [...(courseDetail?.data?.tasks || []), ...(state.snapshot.managebac?.tasks || [])].find(task => task.id === button.dataset.id && task.kind === 'event');
-        if (event) showDialog('任务详情', `<h2 data-i18n-ignore>${esc(event.title)}</h2><p data-i18n-ignore>${esc(event.category || 'Event')} · ${esc(event.start || event.dueText || '')}${event.end ? ' — ' + esc(event.end) : ''}</p><p>${taskStateLabel(taskState(event))}</p><p>${event.submissionRequired === true ? '需要提交' : '无需提交'}</p><p class="school-prewrap" data-i18n-ignore>${esc(event.description || '')}</p>${originalButton(event.url)}`, btn('返回列表', 'close'));
+        if (event) showDialog('任务详情', `<h2 data-i18n-ignore>${esc(event.title)}</h2><p data-i18n-ignore>${esc(event.category || 'Event')} · ${esc(event.allDay ? String(event.start || '').slice(0,10) + ' · ' + (window.i18n?.locale?.() === 'en' ? 'All day' : '全天') : stamp(event.start) || event.dueText || '')}${event.end && !event.allDay ? ' — ' + esc(event.allDay ? '' : stamp(event.end)) : ''}</p><p>${taskStateLabel(taskState(event))}</p><p>${event.submissionRequired === true ? '需要提交' : '无需提交'}</p>${contentRows(event)}${attachmentRows(event.attachments)}${originalButton(event.url)}`, btn('返回列表', 'close'));
       }
       if (action === 'class-task-filter' && courseDetail) { courseDetail.taskFilter = button.dataset.filter; render(); }
       if (action === 'retry-course') void openCourse(button.dataset.id, { force: true });

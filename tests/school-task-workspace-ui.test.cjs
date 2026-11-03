@@ -78,6 +78,7 @@ function harness(overrides = {}) {
   const calls = { prepare: [], submit: [], cancel: [], course: [], task: [] };
   const detail = (courseId, taskId) => ({ uploadAvailable: true, submissionRequired: true, courseId, taskId, title: '关闭', status: 'not submitted', description: '保存\n\nSecond paragraph <script>unsafe()</script>', attachments: [{ name: '<img src=x onerror=unsafe()>', url: 'https://shph.managebac.cn/files/42?name="quoted"' }, { name: 'Original attachment', url: 'https://shph.managebac.cn/student/classes/21/tasks/1', originalPage: true }], url: `https://shph.managebac.cn/student/classes/${courseId}/tasks/${taskId}` });
   const school = {
+    timetable:overrides.timetable,
     get: async () => snapshot, sync: async () => snapshot,
     preferences: async (change) => { snapshot.preferences = { ...snapshot.preferences, ...change }; return snapshot; },
     task: async (courseId, taskId) => { calls.task.push([courseId, taskId]); return overrides.task ? overrides.task(courseId, taskId) : detail(courseId, taskId); },
@@ -424,4 +425,14 @@ test('slow course reads leave navigation and cache usable; timeout ignores late 
  expire();await settle();assert.match(ui.document.querySelector('.school-error').textContent,/超时/);
  assert.ok(ui.document.querySelector('[data-school-action="retry-course"]'));
  request.resolve({id:'21',name:'Late result',tasks:[]});await settle();assert.doesNotMatch(ui.document.querySelector('h1').textContent,/Late result/);
+});
+
+test('session timetable slots automatically link an unnamed course; conflicts never guess',async()=>{
+ for(const conflict of [false,true]){
+ const ui=harness({timetable:async()=>({slots:[{courseId:'21',date:week,start:'08:00',end:'08:40'},...(conflict?[{courseId:'22',date:week,start:'08:00',end:'08:40'}]:[])],fetchedAt:new Date().toISOString()})});
+ const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));const week=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+ ui.snapshot().edupage={accountKey:'edu',weekStart:week,lessons:[{id:'lesson',groupKey:'g',course:'Unmatched title',date:week,start:'08:00',end:'08:40',groups:[]}],options:[]};ui.snapshot().preferences={accountKey:'edu',groups:['g']};
+ await ui.open();ui.click('[data-course-tab="timetable"]');await settle();ui.click('[data-school-action="lesson"]');await settle();await settle();
+ assert.equal(ui.calls.course.length,conflict?0:1);if(!conflict)assert.equal(ui.calls.course[0],'21');
+ }
 });

@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
   await run(`
     window.fixtureSnapshot.managebac.tasks.push(
       {id:'21:35',courseId:'21',course:'Biology HL',title:'Read the enzyme chapter',category:'Coursework',submissionRequired:false},
-      {id:'managebac:event:21:36',courseId:'21',course:'Biology HL',title:'Laboratory assessment',category:'Assessment',kind:'event',start:'2099-11-04',dueAt:'2099-11-04T00:00:00+08:00',submissionRequired:false,description:'Attend the practical assessment in the laboratory.'}
+      {id:'managebac:event:21:36',courseId:'21',course:'Biology HL',title:'Laboratory assessment',category:'Assessment',kind:'event',start:'2099-11-04',dueAt:'2099-11-04T00:00:00+08:00',submissionRequired:false,allDay:true,description:'Attend the practical assessment in the laboratory.',content:[{type:'text',text:'Attend the practical assessment in the laboratory.\\nBring a calculator.'},{type:'image',url:'https://shph.managebac.cn/attachments/99/image.png',alt:'Exercise image'}],attachments:[{name:'Worksheet.pdf',url:'https://shph.managebac.cn/attachments/100/download'}]}
     );
     document.querySelector('[data-course-tab=tasks]').click();
   `);
@@ -151,6 +151,10 @@ app.whenReady().then(async () => {
   assert.ok(await run("document.querySelector('[data-course-tab=tasks]').textContent === 'Tasks'"));
   await run("document.querySelector('[data-school-action=calendar-task]').click()");
   assert.ok(await run("document.querySelector('dialog').textContent.includes('Attend the practical') && !document.querySelector('dialog [data-school-action=prepare-task-upload]')"));
+  await run("window.ph.school.resource=async()=> 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5moAAAAASUVORK5CYII=';document.querySelector('dialog [data-school-action=original]').dataset.url='https://shph.managebac.cn/attachments/99/image.png';window.ph.school.openUrl=async()=>({ok:true});void 0");
+  // The first request ran before the mock existed; retry its fallback through a new modal.
+  await run("document.querySelector('dialog').close();document.querySelector('[data-school-action=calendar-task]').click()");await wait();
+  assert.ok(await run("document.querySelector('dialog img.school-task-image')?.naturalWidth===1 && document.querySelector('dialog').textContent.includes('Worksheet.pdf')"));
   await capture('event-task-en');
   await run("document.querySelector('dialog [data-school-action=close]').click();window.i18n.apply('zh-CN')");
   win.setSize(780,650); await wait();

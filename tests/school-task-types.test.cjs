@@ -57,3 +57,20 @@ test('event reminders appear before the event and disappear when it ends without
   assert.equal(pendingAlerts(initial.state, snapshot, ended).length, 0);
   assert.equal(Object.keys(evaluate({ state: initial.state, snapshot, accountKey: 'a', now: ended }).state.inbox).length, 0);
 });
+
+test('a published grade including zero completes an old quiz despite a stale submission label',()=>{
+ for(const score of ['7 30 / 35 pts','0 / 10 pts','6'])assert.equal(status({score,status:'Not submitted',pastDue:true,submissionRequired:true},now),'completed');
+ assert.equal(status({score:'—',status:'Not submitted',pastDue:true},now),'overdue');
+ assert.equal(status({score:'7',status:'Resubmit',pastDue:true,submissionRequired:true},now),'overdue');
+});
+test('event requirements retain line breaks and images as inert content',async()=>{
+ const data=JSON.stringify([{id:'img',title:'Image homework',start:'2026-11-03',allDay:true,description:'<p>Exercise 15F</p><p>9; 15; 16; 20</p><img src="/attachments/99/page.png" onerror="alert(1)"><script>bad()</script><a href="/attachments/100/download">Worksheet.pdf</a>'}]);
+ const result=await client(data).getCourseDetail('21');const event=result.tasks.find(t=>t.kind==='event');
+ assert.match(event.description,/15F\n9;/);assert.ok(event.content.some(b=>b.type==='image'&&b.url.endsWith('/page.png')));
+ assert.ok(!JSON.stringify(event.content).includes('onerror'));assert.equal(event.attachments[0].name,'Worksheet.pdf');
+});
+
+test('ManageBac timetable uses each session response and supplies course ids and 24-hour slots',async()=>{
+ const c=new SchoolDataClient({fetch:async(_site,url)=>{assert.match(url,/datepicker%5Bstart_date%5D=2026-11-02/);return new Response('<table class="f-timetable"><a class="f-timetable-item" data-bs-content-url="/student/timetables/popup?date=2026-11-03&amp;ib_class_id=21"><small>1:00 PM - 1:40 PM</small></a></table>');}});
+ const result=await c.getTimetable('2026-11-02');assert.deepEqual(result.slots,[{courseId:'21',date:'2026-11-03',start:'13:00',end:'13:40'}]);
+});

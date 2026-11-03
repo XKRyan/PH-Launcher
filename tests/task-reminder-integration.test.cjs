@@ -15,24 +15,26 @@ function harness() {
   const tasks = [{ id: 'managebac:21:31', courseId: '21', course: 'Biology', title: 'Lab', status: 'Pending', dueAt: new Date(Date.now() + 1800000).toISOString() }];
   const snapshot = { accountKey: account, fetchedAt: new Date().toISOString(), courses: [{ id: '21' }], tasks, taskSyncedCourses: ['21'] };
   schoolState.current.managebac = snapshot;
-  const notifications = []; const events = []; let saves = 0; let fetches = 0; let failSave = false;
+  const nativeNotifications=[]; const notifications = []; const events = []; let saves = 0; let fetches = 0; let failSave = false;
   const context = {
     createHash, taskReminders, IS_HEADLESS: false,
     secureStore: { data, save() { if (failSave) throw Error('Disk full'); saves++; } },
     schoolCache: schoolState.current, schoolState, schoolSessionMutations: new Set(), taskUploadInFlight: false,
     credentialVault: { getForFill: () => ({ username }) },
     schoolClient: { async syncManageBac(options) { fetches++; assert.equal(options.refreshGrades, false); return { ...snapshot }; } },
+    clearSystemNotification:()=>{},
+    showNotification:(...args)=>nativeNotifications.push(args),
     publishSchoolSnapshot() {},
     reminderWindows: { upsert(item, options) { assert.ok(saves > 0, 'persist before delivery'); if (options.open) notifications.push(item); }, remove(id) { events.push(['removed', id]); } },
     sendToRenderer: (...args) => events.push(args),
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('function managebacReminderAccount()'), source.indexOf('function runCommand(')), context);
-  return { context, data, schoolState, snapshot, notifications, events, switchAccount: () => { username = 'another-student'; }, failSave: () => { failSave = true; }, fetches: () => fetches };
+  return { nativeNotifications, context, data, schoolState, snapshot, notifications, events, switchAccount: () => { username = 'another-student'; }, failSave: () => { failSave = true; }, fetches: () => fetches };
 }
 test('integration persists popup delivery and removes it after submission or account change', () => {
   const h = harness(); h.context.checkTaskReminders();
-  assert.equal(h.notifications.length, 1);
+  assert.equal(h.notifications.length, 1); assert.equal(h.nativeNotifications.length,1);
   h.context.checkTaskReminders(); assert.equal(h.notifications.length, 1);
   assert.equal(h.notifications[0].kind, 'task');
   h.snapshot.tasks[0].status = 'Submitted'; h.context.checkTaskReminders();

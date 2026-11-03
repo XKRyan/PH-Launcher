@@ -69,19 +69,6 @@ const AI_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'dictionary_lookup',
-      description: '使用 PH Launcher 离线英汉词典查词。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string', minLength: 1, maxLength: 80 } },
-        required: ['query'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'ib_command_lookup',
       description: '按学科查询 IB 指令词的含义与答题动作。用户提到具体科目时应传入 subject。',
       parameters: {

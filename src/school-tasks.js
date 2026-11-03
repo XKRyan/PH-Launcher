@@ -5,7 +5,9 @@
 })(typeof window === 'object' ? window : globalThis, function () {
   'use strict';
   function submitted(task) {
+    const score = String(task?.score ?? '').trim();
     const status = String(task?.status || '').trim().toLowerCase();
+    if (score && !/^(?:[-—–]|n\/?a|pending|ungraded|not graded|待批|未评分)$/i.test(score) && /\d/.test(score) && !/resubmit|resubmission|重新提交/.test(status)) return true;
     if (/\b(?:not(?:\s+\w+){0,2}\s+(?:submitted|completed|complete|done)|unsubmitted|incomplete|missing|resubmit|resubmission)\b|未提交|未完成|未交|待提交|待完成|重新提交|尚未/.test(status)) return false;
     if (/\bsubmitted\b|已提交|已交/.test(status)) return true;
     if (/\b(?:not(?:\s+\w+){0,2}\s+(?:graded|assessed)|pending|overdue|awaiting|ungraded|unassessed)\b|未批|待批/.test(status)) return false;
@@ -41,5 +43,9 @@
     }
     return result;
   }
-  return { submitted, dueTime, status, summary, active };
+  function newest(a,b) {
+    const time=t=>Date.parse(t.publishedAt || t.createdAt || t.dueAt || t.start || '') || 0;
+    return time(b)-time(a) || String(b.id||'').localeCompare(String(a.id||''));
+  }
+  return { newest, submitted, dueTime, status, summary, active };
 });

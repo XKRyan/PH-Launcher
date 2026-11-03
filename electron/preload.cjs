@@ -124,10 +124,6 @@ contextBridge.exposeInMainWorld('ph', {
     pick: () => ipcRenderer.invoke('ai-attachments:pick'),
     remove: (id) => ipcRenderer.invoke('ai-attachments:remove', id),
   },
-  dictionary: {
-    info: () => ipcRenderer.invoke('dictionary:info'),
-    lookup: (query) => ipcRenderer.invoke('dictionary:lookup', query),
-  },
   vocabulary: {
     configureAdvisor: (input) => ipcRenderer.invoke('vocabulary:configure-advisor', input),
     coach: (input) => ipcRenderer.invoke('vocabulary:coach', input),
@@ -179,6 +175,8 @@ contextBridge.exposeInMainWorld('ph', {
     ibOverview: (kind) => ipcRenderer.invoke('school:ib-overview', kind),
     // 通知 / 待办（ManageBac）：未读数 + 待办条目（与网页端同一口径）
     notifications: () => ipcRenderer.invoke('school:notifications'),
+    timetable: week => ipcRenderer.invoke('school:timetable', week),
+    resource: (url) => ipcRenderer.invoke('school:resource', url),
     openUrl: (url) => ipcRenderer.invoke('school:open-url', url),
     // 导出课表（CSV 文本 / PNG dataURL）：主进程弹保存对话框再落盘。
     exportTimetable: (input) => ipcRenderer.invoke('school:export-timetable', input),

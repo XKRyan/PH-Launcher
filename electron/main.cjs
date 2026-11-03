@@ -1296,7 +1296,7 @@ function publishCredentialChange() {
 function vocabularySnapshot(subject = '') {
   return { ...vocabulary.snapshot(secureStore.data.vocabulary, new Date(), String(subject || '').slice(0, 60)), packs: starterPacks(),
     advisor: vocabularyStudy?.status() || { provider: 'local', localAvailable: false, apiAvailable: false, apiConsented: false },
-    catalog: [{ id: 'ph-contexts', name: '语境填空练习词', description: '60 个词配原创场景例句，含 30 个进阶词；离线即可练习填空。', levels: ['foundation', 'intermediate', 'advanced'], count: vocabularyContexts.length, source: 'PH Launcher 原创例句，释义来自 ECDICT', license: 'GPL-3.0-or-later / ECDICT MIT', sourceUrl: 'https://github.com/XKRyan/PH-Launcher' }, ...vocabularyCatalog.catalog(offlineDictionary.databasePath)],
+    catalog: [{ id: 'ph-contexts', name: '语境填空练习词', description: '60 个词配原创场景例句，含 30 个进阶词；离线即可练习填空。', levels: ['foundation', 'intermediate', 'advanced'], count: vocabularyContexts.length, source: 'PH Launcher 原创例句，释义来自 ECDICT', license: 'GPL-3.0-or-later / ECDICT MIT', sourceUrl: 'https://github.com/XKRyan/PH-Launcher' }, ...(fs.existsSync(offlineDictionary.databasePath) ? vocabularyCatalog.catalog(offlineDictionary.databasePath) : [])],
     placement: { level: secureStore.data.vocabulary.settings.level || '', questions: vocabularyPlacement.questions() } };
 }
 
@@ -1431,7 +1431,7 @@ async function syncSchool(source, options = {}) {
   }));
   // 同步回来的这份课表现在是"当前课表"，共用选课要按它重新解析一次。
   if (source === 'edupage') { try { applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); } }
-  if (Object.keys(input).some(key => key !== 'courseView')) scheduleReminderTick();
+  scheduleReminderTick();
   return schoolSnapshot();
 }
 
@@ -2442,7 +2442,10 @@ function sendShortcutRoute(action) {
   sendToRenderer('shortcut:action', action);
 }
 
-function showNotification(title, body, onClick) {
+const systemNotifications = new Map();
+function clearSystemNotification(key){systemNotifications.get(key)?.close();systemNotifications.delete(key);}
+function showNotification(title, body, onClick, key) {
+  if(key)clearSystemNotification(key);
   if (!Notification.isSupported()) return false;
   const notification = new Notification({ title, body, silent: false });
   notification.on('click', () => {
@@ -2450,6 +2453,7 @@ function showNotification(title, body, onClick) {
     mainWindow?.focus();
     onClick?.();
   });
+  if(key)systemNotifications.set(key,notification);
   notification.show();
   return true;
 }
@@ -2479,7 +2483,7 @@ function checkTaskReminders() {
   if (IS_HEADLESS || !secureStore || schoolSessionMutations.has('managebac') || taskUploadInFlight) return;
   const account = managebacReminderAccount();
   if (!account || schoolCache.managebac?.accountKey !== account) {
-    reminderWindows?.remove('managebac-tasks'); return;
+    reminderWindows?.remove('managebac-tasks');clearSystemNotification('managebac-tasks'); return;
   }
   const previous = secureStore.data.taskReminderState;
   const prefs = secureStore.data.settings.schoolPreferences || {};
@@ -2491,13 +2495,16 @@ function checkTaskReminders() {
     catch { secureStore.data.taskReminderState = previous; return; }
   }
   const alerts = taskReminders.pendingAlerts(result.state, schoolCache.managebac);
-  if (!alerts.length) { reminderWindows?.remove('managebac-tasks'); return; }
+  if (!alerts.length) { reminderWindows?.remove('managebac-tasks');clearSystemNotification('managebac-tasks'); return; }
   const english = secureStore.data.settings.language === 'en';
   const body = alerts.slice(0, 6).map(item => {
     const date = item.dueAt ? new Date(item.dueAt).toLocaleString(english ? 'en-GB' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dueText;
     const kind = Date.parse(item.dueAt) < Date.now() ? (item.kind === 'event' ? (english ? 'Started' : '已开始') : (english ? 'Date passed · Check status' : '日期已过 · 待核对')) : item.type === 'new' ? (english ? 'New' : '新任务') : (english ? 'Due / starting soon' : '即将到期 / 开始');
     return `${kind} · ${String(item.course || '').slice(0, 60)} · ${String(item.title || '').slice(0, 100)}${date ? ` · ${date}` : ''}`;
   }).join('\n\n') + (alerts.length > 6 ? (english ? `\n\nView all ${alerts.length} tasks in the app.` : `\n\n在课程页面查看全部 ${alerts.length} 项任务。`) : '');
+  if(result.alerts.length)showNotification(english ? `${result.alerts.length} new task reminders` : `${result.alerts.length} 项任务提醒`, body, () => {
+    void mainWindow?.webContents.executeJavaScript("window.schoolUI?.openTasks()").catch(()=>{});
+  }, 'managebac-tasks');
   reminderWindows?.upsert({ id: 'managebac-tasks', kind: 'task', accountKey: account,
     title: english ? `${alerts.length} task reminders` : `${alerts.length} 项任务提醒`, body }, { open: result.alerts.length > 0 });
 }
@@ -4192,6 +4199,7 @@ function registerIpc() {
   registerPhixIpc();
   schoolHandle('preferences', (input) => updateSchoolPreferences(input || {}));
   schoolHandle('import-plan', importSchoolPlan);
+  schoolHandle('timetable', week => readSchoolDetail(() => schoolClient.getTimetable(week)));
   schoolHandle('course', (id) => readSchoolDetail(() => schoolClient.getCourseDetail(id)));
   schoolHandle('discussions', (id) => readSchoolDetail(() => schoolClient.getCourseDiscussions(id)));
   schoolHandle('discussion', (courseId, id) => readSchoolDetail(() => schoolClient.getDiscussionDetail(courseId, id)));
@@ -4214,6 +4222,19 @@ function registerIpc() {
     const result = await readSchoolDetail(() => schoolClient.getNotifications());
     try { sharedSchool.updateSchool(dataRoot().school, { notifications: result }); } catch { /* 共用文件写不进去不影响本机 */ }
     return result;
+  });
+  schoolHandle('resource', async value => {
+    let url=new URL(String(value));
+    const allowed=u=>u.protocol==='https:'&&!u.username&&!u.password&&(u.hostname==='shph.managebac.cn'||/(?:^|\.)(?:managebac\.com|managebac\.cn|amazonaws\.com)$/.test(u.hostname));
+    if(url.protocol!=='https:'||url.username||url.password||!(url.hostname==='shph.managebac.cn'||/(?:^|\.)(?:managebac\.com|managebac\.cn|amazonaws\.com)$/.test(url.hostname)))throw new Error('Unsupported school image host');
+    let response;const signal=AbortSignal.timeout(15000);
+    for(let redirects=0;redirects<=3;redirects++){if(!allowed(url))throw new Error('Unsupported school image host');response=await session.fromPartition(SITES.managebac.partition).fetch(url.href,{redirect:'manual',signal});if(![301,302,303,307,308].includes(response.status))break;await response.body?.cancel();url=new URL(response.headers.get('location'),url);}
+    if(!response||response.status>=300&&response.status<400)throw new Error('Too many image redirects');
+    const type=(response.headers.get('content-type')||'').split(';')[0];
+    if(!response.ok||!/^image\/(?:png|jpeg|gif|webp)$/.test(type)||Number(response.headers.get('content-length'))>8*1024*1024)throw new Error('Invalid school image');
+    const reader=response.body.getReader(),parts=[];let size=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8*1024*1024)throw new Error('School image too large');parts.push(Buffer.from(value));}}finally{await reader.cancel();}
+    return `data:${type};base64,${Buffer.concat(parts).toString('base64')}`;
   });
   schoolHandle('open-url', async (raw) => {
     const url = new URL(String(raw || ''));
@@ -4304,7 +4325,7 @@ function registerIpc() {
   vocabHandle('check-expression', (input) => vocabularyCoachBridge.run({ ...input, kind: 'expression' }));
   vocabHandle('catalog-words', (id, limit) => changeVocabulary((data) => {
     if (id === 'ph-contexts') return vocabulary.addCards(data, enrichVocabularyEntries(vocabularyContexts.map((entry) => ({ word: entry.word, level: entry.level, context: entry.sentence, contextSource: 'PH Launcher 原创例句', subject: '语境填空练习词', source: 'PH Launcher 原创例句 / ECDICT' }))));
-    const book = vocabularyCatalog.catalog(offlineDictionary.databasePath).find((item) => item.id === id);
+    const book = (fs.existsSync(offlineDictionary.databasePath) ? vocabularyCatalog.catalog(offlineDictionary.databasePath) : []).find((item) => item.id === id);
     if (!book) throw new Error('未知词书');
     const words = vocabularyCatalog.words(id, limit, offlineDictionary.databasePath, { excludeWords: data.cards.map((card) => card.word) });
     return vocabulary.addCards(data, enrichVocabularyEntries(words.map((word) => ({ word, subject: book.name, source: 'ECDICT' }))));
@@ -4591,8 +4612,7 @@ function registerIpc() {
     shell.showItemInFolder(logPath);
     return true;
   });
-  ipcMain.handle('dictionary:info', () => offlineDictionary.info());
-  ipcMain.handle('dictionary:lookup', (_event, query) => offlineDictionary.lookup(query));
+
   ipcMain.handle('ib:command-catalog', () => commandTermCatalog());
   ipcMain.handle('system:version', () => app.getVersion());
   // 用户在更新卡片上的选择：'cancel'（这次先不选）/ 'skip'（跳过本版本）/ 'update'（开始更新）
@@ -5163,9 +5183,7 @@ async function runSelfTest() {
     setTimerPreset(25, 5);
     await persistData(true);
     renderAll();
-    navigate('dictionary');
-    await lookupDictionary('analyze');
-    const dictionaryRendered = document.querySelector('#dictionaryResult')?.textContent.includes('分析');
+    const dictionaryRendered = !document.querySelector('[data-route=\"dictionary\"]');
     await window.ph.vocabulary.addStarter('学术表达');
     const vocabBefore = await window.ph.vocabulary.get();
     const firstWord = vocabBefore.cards.find((c) => c.id === vocabBefore.queueIds[0]);
@@ -5196,15 +5214,11 @@ async function runSelfTest() {
     await window.vocabularyUI.refresh();
     const vocabularyRendered = document.querySelector('#vocabularyPage')?.textContent.includes('学术表达');
     const placement = await window.ph.vocabulary.placementSubmit({ exam: 'ielts', score: 7.5 });
-    const catalog1 = await window.ph.vocabulary.catalogWords('ecdict-oxford-core', 2);
-    const catalog2 = await window.ph.vocabulary.catalogWords('ecdict-oxford-core', 2);
     await persistData(true);
     const vocabularySaved = await window.ph.vocabulary.get();
     const placementSaved = placement.result.recommendedLevel === 'advanced' && vocabularySaved.settings.level === 'advanced'
       && !Object.hasOwn(vocabularySaved.settings.placement, 'score');
-    const catalogImported = catalog1.snapshot.cards.length === vocabBefore.cards.length + 2
-      && catalog2.snapshot.cards.length === vocabBefore.cards.length + 4
-      && catalog2.snapshot.cards.filter((c) => c.source === 'ECDICT').every((c) => c.meaning.length > 0);
+    const catalogRemoved = vocabularySaved.catalog.every(book=>!book.id.startsWith('ecdict-'));
     state.data.settings.appearance = { ...state.data.settings.appearance, fontSize: 24 };
     await persistData(true);
     window.appearanceUI.apply(state.data.settings.appearance);
@@ -5320,7 +5334,7 @@ async function runSelfTest() {
       newWordIntroduced,
       recallAfterIntroduction,
       placementSaved,
-      catalogImported,
+      catalogRemoved,
       fontPreferenceSaved,
       calendarSaved,
       calendarRendered,
@@ -5353,8 +5367,7 @@ async function runSelfTest() {
   const restoredHistory = new AiHistoryStore(historyOptions).load();
   checks.aiHistoryStored = fs.readFileSync(historyPath, 'utf8').startsWith('PHAIH1:') && !fs.readFileSync(historyPath, 'utf8').includes('Explain a study idea');
   checks.aiHistoryReloaded = restoredHistory.sessions[0]?.messages.length === 2 && restoredHistory.memories[0]?.text === 'I prefer concise examples.';
-  const dictionaryResult = offlineDictionary.lookup('analyze');
-  checks.dictionaryLookup = dictionaryResult.exact?.word === 'analyze' && Boolean(dictionaryResult.exact.translation);
+  checks.dictionaryRemoved = !fs.readFileSync(path.join(__dirname,'../src/index.html'),'utf8').includes('data-route="dictionary"');
   // The shared layout: the data root must be the profile-scoped folder during a
   // headless run, and every shared file must be reachable from it.
   const layout = dataRoot();
@@ -5803,10 +5816,7 @@ app.whenReady().then(() => {
     const record = credentialVault.getForFill(siteId, { allowDisabled: true });
     return record ? { ...record, autoLogin: true } : null;
   } });
-  const dictionaryPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'dictionary', 'ecdict.db')
-    : path.join(__dirname, '..', 'assets', 'dictionary', 'ecdict.db');
-  offlineDictionary = new OfflineDictionary(dictionaryPath);
+  offlineDictionary = new OfflineDictionary(path.join(app.getPath('userData'), 'removed-dictionary.db'));
   vocabularyStudy = createVocabularyStudy({ getData: () => secureStore.data.vocabulary, getConfig: () => secureStore.data.settings.ai,
     getConsent: () => secureStore.data.vocabularyApiConsent || '',
     saveConsent: (key) => {

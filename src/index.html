@@ -82,10 +82,9 @@
           <div class="nav-label">学习</div>
           <button class="nav-item" id="planNav" data-route="plan" aria-label="计划"><svg><use href="#i-check"/></svg><span>计划</span><b class="nav-count-badge hidden" id="navTaskCount" aria-hidden="true"></b></button>
           <button class="nav-item" data-route="notes"><svg><use href="#i-note"/></svg><span>笔记</span></button>
-          <button class="nav-item" data-route="dictionary"><svg><use href="#i-book"/></svg><span>离线词典</span></button>
           <button class="nav-item" id="vlmReaderNav" data-route="vlmreader" aria-label="VLMReader"><svg><use href="#i-book"/></svg><span>VLMReader</span></button>
           <button class="nav-item" data-route="ib"><svg><use href="#i-flask"/></svg><span>IB 工具</span></button>
-          <button class="nav-item ai-nav" data-route="ai"><svg><use href="#i-spark"/></svg><span>AI 学习助手</span><em id="aiNavBadge">可选</em></button>
+          <button class="nav-item ai-nav" data-route="ai"><svg><use href="#i-spark"/></svg><span>AI 学习助手</span></button>
         </nav>
 
         <div class="sidebar-bottom">
@@ -216,22 +215,6 @@
         <section class="page" data-page="vlmreader" id="vlmReaderPage"></section>
         <section class="page" data-page="mail" id="mailPage"></section>
         <section class="page" data-page="psychology" id="xinlvPage"></section>
-
-        <section class="page" data-page="dictionary">
-          <div class="page-intro"><div><span class="section-kicker">OFFLINE DICTIONARY</span><h2>离线英汉词典</h2><p>释义、音标与词形全部保存在电脑中，断网也能查询。</p></div><span class="offline-badge"><i></i>完全离线</span></div>
-          <div class="dictionary-layout">
-            <aside class="dictionary-search-pane">
-              <div class="dictionary-search-box"><svg><use href="#i-search"/></svg><input id="dictionarySearch" autocomplete="off" spellcheck="false" placeholder="输入英文单词或中文释义"/><kbd>Enter</kbd></div>
-              <div class="dictionary-meta"><span id="dictionaryStatus">正在准备离线词库…</span><button id="dictionaryClear" class="text-button">清除</button></div>
-              <div class="dictionary-examples"><span>试试</span><button data-dict-example="analyze">analyze</button><button data-dict-example="evidence">evidence</button><button data-dict-example="photosynthesis">photosynthesis</button></div>
-              <div class="dictionary-suggestions" id="dictionarySuggestions"><div class="empty-row">输入单词开始查询</div></div>
-              <p class="dictionary-source">词库：ECDICT · MIT License</p>
-            </aside>
-            <article class="dictionary-result" id="dictionaryResult">
-              <div class="empty-state"><div class="empty-icon"><svg><use href="#i-book"/></svg></div><h3>随时查一个词</h3><p>支持英汉释义、英文定义、词形变化和系统语音朗读。</p></div>
-            </article>
-          </div>
-        </section>
 
         <section class="page" data-page="ib">
           <div class="page-intro"><div><span class="section-kicker">IB TOOLKIT</span><h2>IB 工具</h2><p>用于拆解与核对，不替代任课教师和最新学科指南。</p></div></div>

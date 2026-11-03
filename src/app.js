@@ -402,6 +402,7 @@ function setTopbar(title, eyebrow) {
 }
 
 function navigate(route) {
+  if(route==='dictionary')route='vocabulary';
   route = ROUTE_ALIASES[route] || route;
   if (!ROUTE_META[route]) return;
   state.route = route;
@@ -1181,7 +1182,6 @@ const FOCUS_ROUTE_TARGETS = [
   ['courses', '我的课程'],
   ['timetable', '我的课表'],
   ['calendar', '我的日程'],
-  ['dictionary', '离线词典'],
   ['ib', 'IB 工具'],
 ];
 
@@ -1533,7 +1533,7 @@ function renderAi() {
     renderAiControl();
     renderChat();
   }
-  $('#aiNavBadge').textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
+  const removedAiBadge = document.getElementById('aiNavBadge'); if(removedAiBadge)removedAiBadge.textContent = enabled ? (ai.provider === 'local' ? '本地' : 'API') : '可选';
 }
 
 /**
@@ -2824,7 +2824,6 @@ function commandCatalog() {
     { id: 'vlmreader', label: 'VLMReader', description: '打开本机阅读器，或下载安装', icon: 'i-book', shortcut: '' },
     { id: 'new-task', label: '新建任务', description: '快速添加待办', icon: 'i-check', shortcut: 'Ctrl Shift A' },
     { id: 'new-note', label: '新建笔记', description: '创建一条本地笔记', icon: 'i-note', shortcut: 'Ctrl Shift N' },
-    { id: 'dictionary', label: '打开离线词典', description: '本机英汉释义、音标与词形', icon: 'i-book', shortcut: 'Ctrl D' },
     { id: 'focus', label: '开始或暂停专注', description: '控制当前计时器', icon: 'i-clock', shortcut: 'Ctrl Shift P' },
     { id: 'timetable', label: '打开我的课表', description: '查看自己的教学组课表', icon: 'i-calendar', shortcut: '' },
     { id: 'calendar', label: '打开我的日程', description: '管理个人日程', icon: 'i-calendar', shortcut: '' },
@@ -3468,25 +3467,6 @@ function bindEvents() {
   $('#deleteLesson').addEventListener('click', () => deleteLesson($('#lessonId').value));
   $('#taskSearch').addEventListener('input', (event) => { state.taskSearch = event.target.value; renderTasks(); });
   $('#noteSearch').addEventListener('input', (event) => { state.noteSearch = event.target.value; renderNotes(); });
-  $('#dictionarySearch').addEventListener('input', (event) => {
-    clearTimeout(dictionarySearchTimer);
-    const query = event.target.value.trim();
-    if (!query) return lookupDictionary('');
-    dictionarySearchTimer = setTimeout(() => lookupDictionary(query), 180);
-  });
-  $('#dictionarySearch').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      clearTimeout(dictionarySearchTimer);
-      lookupDictionary(event.target.value);
-    }
-  });
-  $('#dictionaryClear').addEventListener('click', () => {
-    clearTimeout(dictionarySearchTimer);
-    $('#dictionarySearch').value = '';
-    lookupDictionary('');
-    $('#dictionarySearch').focus();
-  });
   $('#commandSubject').addEventListener('change', (event) => {
     state.commandSubject = event.target.value;
     renderCommandTerms();
@@ -3787,7 +3767,7 @@ function bindEvents() {
     if (mod && !event.shiftKey && event.key === '1') { event.preventDefault(); navigate('mail'); }
     if (mod && !event.shiftKey && event.key === '2') { event.preventDefault(); openSite('managebac'); }
     if (mod && !event.shiftKey && event.key === '3') { event.preventDefault(); openSite('edupage'); }
-    if (mod && !event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); navigate('dictionary'); }
+    if (mod && !event.shiftKey && event.key.toLowerCase() === 'd') { event.preventDefault(); navigate('vocabulary'); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'n') { event.preventDefault(); navigate('notes'); createNote(); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openTaskDialog(); }
     if (mod && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); toggleTimer(); }
@@ -3821,7 +3801,7 @@ async function init() {
     if (cardEl) cardEl.textContent = count == null ? '邮箱尚未同步' : `${count} 封未读`;
     updateMailBadge(state.route === 'mail' ? 0 : (count || 0));
   });
-  $('#dictionaryResult').addEventListener('click', (event) => {
+  $('#dictionaryResult')?.addEventListener('click', (event) => {
     if (event.target.closest('#dictionaryToVocabulary') && state.dictionaryResult?.exact) window.vocabularyUI?.addDictionaryEntry(state.dictionaryResult.exact);
   });
   try {
@@ -3941,7 +3921,7 @@ async function init() {
     if (action === 'school-tasks') { navigate('courses'); window.schoolUI.openTasks(); return; }
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
-    else if (action === 'dictionary') navigate('dictionary');
+    else if (action === 'dictionary') navigate('vocabulary');
     else if (action === 'quickNote') { navigate('notes'); createNote(); }
     else if (action === 'focus') toggleTimer();
   });

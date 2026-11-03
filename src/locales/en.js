@@ -5,6 +5,7 @@
   // content is intentionally absent from this catalog.
   root.PH_EN = {
     exact: {
+      '刷新': 'Refresh', '刷新中…': 'Refreshing…', '最新任务优先': 'Newest first', '加载图片': 'Load image', '全天': 'All day', '图片暂时无法加载，点击在原网页查看': 'Image unavailable. Open original page',
       '正在更新课程；已有记录可先查看。': 'Updating this class; previously loaded records are available.',
       '读取超时，请重试或在原网页查看。': 'Loading timed out. Retry or view on the original site.',
       '返回课表': 'Back to timetable',

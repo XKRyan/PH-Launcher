@@ -70,6 +70,7 @@ function readUrl(site, raw, method = 'GET') {
         || ([...params.keys()].length === 1 && ['upcoming', 'past', 'overdue'].includes(params.get('view'))))) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks$/.test(path) && [...params.keys()].every(key => ['page', 'view'].includes(key) && params.getAll(key).length === 1) && (!params.has('page') || /^[1-9]\d?$/.test(params.get('page'))) && (!params.has('view') || ['upcoming', 'past', 'overdue', 'all'].includes(params.get('view')))) return url.href;
     if (/^\/student\/classes\/\d+\/(units|files|events\.json|core_tasks(?:\/\d+)?)$/.test(path) && !url.search) return url.href;
+    if(path==='/student/timetables' && (!url.search || [...url.searchParams].length===1 && validDate(url.searchParams.get('datepicker[start_date]')))) return url.href;
     if (/^\/student\/classes\/\d+\/core_tasks\/\d+\/dropbox(?:\/[a-z_]+)*$/.test(path) && !url.search) return url.href;
     if (/^\/student\/classes\/\d+\/discussions(?:\/\d+)?$/.test(path) && !url.search) return url.href;
     if ((/^\/student\/classes\/\d+\/discussions\/\d+\/attachments\/\d+(?:\/[A-Za-z0-9._~-]+)?\/?$/.test(path) || /^\/attachments\/\d+(?:\/(?:download|[A-Za-z0-9._~-]+))?\/?$/.test(path)) && !url.search) return url.href;
@@ -343,7 +344,9 @@ function parseCourseEvents(body, course) {
       dueAt: /^\d{4}-\d{2}-\d{2}$/.test(start) ? `${start}T00:00:00+08:00` : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(start) ? `${start}+08:00` : start,
       dueDateOnly: /^\d{4}-\d{2}-\d{2}$/.test(start), allDay: event.allDay === true,
       category: clean(event.category || event.type, 80) || (linked ? '' : 'Event'),
-      description: text(htmlDocument(`<div>${String(event.description || '')}</div>`).querySelector('div'), null, 8000),
+      description: taskDescription(htmlDocument(`<div>${String(event.description || '')}</div>`).querySelector('div')),
+      content: richContent(htmlDocument(`<div>${String(event.description || '')}</div>`).querySelector('div')),
+      attachments: taskAttachments(htmlDocument(`<div>${String(event.description || '')}</div>`).querySelector('div'),course.id,''),
       submissionRequired: typeof event.submission_required === 'boolean' ? event.submission_required : linked ? null : false,
       status: clean(event.status, 100), url: url || `${ORIGINS.managebac}/student/classes/${course.id}/units` };
   }).filter(event => event?.title && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(event.start));
@@ -453,6 +456,22 @@ function taskAttachments(root, courseId, taskId) {
   }
   return [...items.values()].slice(0, 30);
 }
+function richContent(node) {
+  const blocks=[]; let buffer='';
+  const flush=()=>{const value=buffer.replace(/[^\S\n]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();if(value)blocks.push({type:'text',text:value.slice(0,12000)});buffer='';};
+  function walk(n){
+    if(blocks.length>=60)return;
+    if(n.nodeType===3){buffer+=n.textContent;return;}
+    if(n.nodeType!==1)return;
+    const tag=n.tagName.toLowerCase();
+    if(['script','style','iframe','form','button','input','textarea'].includes(tag))return;
+    if(tag==='img'){flush();try{const url=new URL(n.getAttribute('src')||n.getAttribute('data-src'),ORIGINS.managebac);if(url.protocol==='https:'&&!url.username&&!url.password)blocks.push({type:'image',url:url.href,alt:clean(n.getAttribute('alt'),180)});}catch{}return;}
+    if(tag==='br'){buffer+='\n';return;}
+    const block=/^(p|div|li|h[1-6]|tr|section|blockquote)$/.test(tag);
+    if(block)buffer+='\n';for(const child of n.childNodes)walk(child);if(block)buffer+='\n';
+  }
+  walk(node);flush();return blocks;
+}
 function taskDescription(node) {
   const copy = node.cloneNode(true);
   for (const item of copy.querySelectorAll('form,input,textarea,button,.recent-discussions,.title,.badge-label,.due-date,.assessment,[data-ec3-info]')) item.remove();
@@ -475,7 +494,7 @@ function parseTaskDetail(html, courseId, taskId) {
   const headMetadata = taskMetadata(head);
   metadata.category ||= headMetadata.category;
   metadata.submissionRequired ??= headMetadata.submissionRequired;
-  return { title, status, dueText, dueAt, score, ...metadata, uploadAvailable, description: taskDescription(root), attachments: taskAttachments(root, courseId, taskId) };
+  return { title, status, dueText, dueAt, score, ...metadata, uploadAvailable, description: taskDescription(root), content: richContent(root.querySelector('.fr-view, .task-description, .description') || root), attachments: taskAttachments(root, courseId, taskId) };
 }
 function discussionAuthor(node) {
   if (!node) return { author: '', category: '' };
@@ -918,6 +937,20 @@ class SchoolDataClient {
     if (queue.length) incomplete = true;
     const values = [...tasks.values()];
     return { tasks: values, tasksStatus: incomplete ? (values.length ? 'partial' : 'error') : (values.length ? 'ready' : 'empty') };
+  }
+  async getTimetable(weekStart) {
+    const query=weekStart&&validDate(weekStart)?`?datepicker%5Bstart_date%5D=${weekStart}`:'';
+    const doc=htmlDocument(await this.request('managebac','/student/timetables'+query,{timeoutMs:15000}));
+    if(!doc.querySelector('table.f-timetable'))fail('PAGE_CHANGED','未识别到 ManageBac 课表');
+    const slots=[];
+    const clock=value=>{const m=value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);if(!m)return '';const h=Number(m[1])%12+(m[3].toLowerCase()==='pm'?12:0);return `${String(h).padStart(2,'0')}:${m[2]}`;};
+    for(const item of doc.querySelectorAll('.f-timetable-item[data-bs-content-url]')) {
+      const url=new URL(item.getAttribute('data-bs-content-url'),ORIGINS.managebac),courseId=url.searchParams.get('ib_class_id'),date=url.searchParams.get('date');
+      if(!/^\d+$/.test(courseId||'')||!validDate(date))continue;
+      const times=text(item.querySelector('small'),null,100).split(/\s*[-–—]\s*/);const start=clock(times[0]||''),end=clock(times[1]||'');
+      if(start&&end&&end>start)slots.push({courseId,date,start,end});
+    }
+    return {slots,fetchedAt:this.now().toISOString(),weekStart:weekStart||slots.map(s=>s.date).sort()[0]||''};
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);
