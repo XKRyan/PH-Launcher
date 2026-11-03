@@ -5,6 +5,22 @@
   // content is intentionally absent from this catalog.
   root.PH_EN = {
     exact: {
+      '作业概览': 'Task overview',
+      '24 小时内截止': 'Due within 24 hours',
+      '提醒设置': 'Reminder settings',
+      '任务与作业提醒': 'Task and assignment reminders',
+      '新任务 / 作业提醒': 'New tasks and assignments',
+      '临近截止提醒': 'Upcoming deadlines',
+      '提前提醒': 'Remind me before the deadline',
+      '1 小时': '1 hour',
+      '3 小时': '3 hours',
+      '24 小时': '24 hours',
+      '48 小时': '48 hours',
+      '启动器运行时每 10 分钟检查更新，最小化到托盘也可提醒。完全退出后不能提醒；系统通知需允许 PH Launcher。': 'Checks every 10 minutes while the launcher is running, including in the tray. Reminders stop when you quit. Allow PH Launcher notifications in system settings.',
+      '首次同步不通知历史作业。已提交、已隐藏的作业不提醒；同一截止时间的每档提醒只通知一次。': 'The first sync does not announce existing work. Submitted and hidden tasks are excluded. Each reminder stage is sent once per deadline.',
+      '保存提醒设置': 'Save reminders',
+      '请至少选择一个提前提醒时间': 'Choose at least one reminder time.',
+      '作业提醒设置已保存。': 'Task reminders saved.',
       '已提交 / 已完成': 'Submitted / completed',
       '已逾期 · 待处理': 'Overdue · needs attention',
       '待处理': 'Needs attention',
@@ -411,6 +427,7 @@
       '这个任务没有可用的网上提交入口，可能已截止或需要老师开放；请到 ManageBac 网页确认': 'This task has no usable upload entry point; it may be past due or still closed by the teacher. Check the ManageBac website.'
     },
     patterns: [
+      ['^(\\d+) 项待处理作业$', '$1 tasks pending'],
       // AI proposal cards for actions that leave the launcher.
       ['^只有确认后才会执行；邮件、提交和回复发布后无法撤回$', 'Nothing runs until you confirm. Email, submissions, and replies cannot be recalled once sent.'],
       ['^只有确认后才会执行；邮件、提交和回复发布后无法撤回，发送前还会再弹出一次系统确认$', 'Nothing runs until you confirm. Email, submissions, and replies cannot be recalled once sent, and email asks for one more system confirmation.'],

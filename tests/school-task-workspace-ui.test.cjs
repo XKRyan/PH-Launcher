@@ -36,7 +36,7 @@ function harness(overrides = {}) {
   };
   window.ph = { school, system: { openUrl: async () => {} } };
   const context = { window, document, Intl, Date, URL, setInterval: () => 0, queueMicrotask, console };
-  for (const file of ['school-ui.js', 'locales/en.js', 'i18n.js']) vm.runInNewContext(fs.readFileSync(require.resolve(`../src/${file}`), 'utf8'), context);
+  for (const file of ['school-tasks.js', 'school-ui.js', 'locales/en.js', 'i18n.js']) vm.runInNewContext(fs.readFileSync(require.resolve(`../src/${file}`), 'utf8'), context);
   const click = selector => { const node = document.querySelector(selector); assert.ok(node, `missing ${selector}`); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
   const field = (name, value, type = 'change') => { const node = document.querySelector(`[data-school-field="${name}"]`); Object.defineProperty(node, 'value', { configurable: true, writable: true, value }); node.focus(); node.dispatchEvent(new window.Event(type, { bubbles: true })); };
   const open = async () => { window.schoolUI.open('courses'); await settle(); click('[data-course-tab="tasks"]'); await settle(); };
@@ -51,6 +51,34 @@ test('task completion rejects negation and action labels; completed late work is
   for (const id of ['2', '3', '4', '5', '9']) assert.equal(statusOf(id), 'pending');
   for (const id of ['6', '7', '8', '10']) assert.equal(statusOf(id), 'completed');
   assert.equal(ui.document.querySelector('[data-id="6"] .is-overdue'), null);
+});
+
+test('task overview filters urgent work and notification navigation clears unrelated filters', async () => {
+  const ui = harness();
+  ui.snapshot().managebac.tasks.push({ id: '22:91', courseId: '22', title: 'Urgent', status: 'Pending', dueAt: new Date(Date.now() + 3600000).toISOString() });
+  await ui.open();
+  ui.click('[data-school-action="task-filter"][data-status="soon"]');
+  assert.ok(ui.document.querySelector('[data-id="91"]'));
+  assert.equal(ui.document.querySelector('[data-school-action="task"][data-id="1"]'), null);
+  ui.field('query', 'does not exist', 'input');
+  ui.window.schoolUI.openTasks(); await settle();
+  assert.ok(ui.document.querySelector('[data-id="91"]'));
+  assert.equal(ui.document.querySelector('[data-school-field="query"]').value, '');
+});
+test('reminder dialog saves user choices and English interface labels', async () => {
+  const ui = harness(); await ui.open();
+  ui.click('[data-school-action="task-reminders"]');
+  const dialog = ui.document.querySelector('dialog');
+  assert.ok(dialog.querySelector('[name="task-new"]').hasAttribute('checked'));
+  dialog.querySelector('[name="task-new"]').checked = false;
+  dialog.querySelector('[name="task-deadline"]').checked = false;
+  ui.click('[data-school-action="save-task-reminders"]'); await settle();
+  assert.equal(ui.snapshot().preferences.taskReminders.newTasks, false);
+  assert.equal(ui.snapshot().preferences.taskReminders.deadlines, false);
+  ui.click('[data-school-action="task-reminders"]');
+  ui.window.i18n.apply('en');
+  assert.match(dialog.textContent, /Task and assignment reminders/);
+  assert.match(dialog.textContent, /Checks every 10 minutes/);
 });
 
 test('unknown and negated statuses stay pending while submitted ungraded work stays completed', async () => {

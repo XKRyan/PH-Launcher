@@ -30,13 +30,41 @@ app.whenReady().then(async () => {
       submitTaskUpload:async()=>{window.fixtureUploads++;return {verification:'unverified'}},cancelTaskUpload:async()=>({ok:true})}};
     window.openSite=async()=>{}; void 0;
   `);
-  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
+  for (const file of ['locales/en.js', 'i18n.js', 'course-order.js', 'school-tasks.js', 'school-ui.js']) await run(fs.readFileSync(path.join(root, 'src', file), 'utf8') + '\n;void 0;');
   await run("window.schoolUI.open('courses')");
   const out = path.join(root, '.cache/v2-visual'); fs.mkdirSync(out, { recursive: true });
   const wait = () => new Promise(resolve => setTimeout(resolve, 150));
-  const capture = async name => { await wait(); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
+  const capture = async name => {
+    win.showInactive();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      win.webContents.invalidate();
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const image = await win.webContents.capturePage(undefined, { stayAwake: true });
+      const pixels = image.toBitmap(); const colors = new Set();
+      for (let i = 0; i + 4 <= pixels.length; i += 400) colors.add(pixels.readUInt32LE(i));
+      if (colors.size > 20) { fs.writeFileSync(path.join(out, name + '.png'), image.toPNG()); return; }
+    }
+    throw new Error('Blank renderer capture: ' + name);
+  };
   await run("document.querySelector('[data-course-tab=tasks]').click()");
   await capture('tasks-zh');
+  assert.equal(await run("document.querySelectorAll('.school-task-overview button').length"), 3);
+  await run("document.querySelector('[data-school-action=task-reminders]').click()");
+  await capture('task-reminders-zh');
+  await run("window.i18n.apply('en')");
+  await capture('task-reminders-en');
+  assert.match(await run("document.querySelector('dialog').textContent"), /Task and assignment reminders/);
+  win.setSize(1040, 700);
+  await run("document.documentElement.style.fontSize='24px'"); await wait();
+  const reminderGeometry = await run(`(() => {
+    const box = document.querySelector('.school-dialog').getBoundingClientRect();
+    const content = document.querySelector('.school-dialog-content');
+    return { inside: box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight, horizontal: content.scrollWidth <= content.clientWidth + 1 };
+  })()`);
+  assert.equal(reminderGeometry.inside, true); assert.equal(reminderGeometry.horizontal, true);
+  await capture('task-reminders-compact-en');
+  await run("document.querySelector('dialog').close(); document.documentElement.style.fontSize='16px'; window.i18n.apply('zh-CN')");
+  win.setSize(1280, 900);
   await run("document.querySelector('[data-school-action=task][data-id=\"31\"]').click()");
   await capture('task-detail-zh');
   await run("document.querySelector('[data-school-action=prepare-task-upload]').click()"); await wait();

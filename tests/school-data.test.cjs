@@ -23,6 +23,27 @@ const tasksHtml = `<div class="fusion-card-item short-assignment"><h4 class="tit
 const fixedNow = () => new Date('2026-09-06T01:02:03Z');
 const response = (body, status = 200, headers = {}) => new Response(body, { status, headers });
 
+test('ManageBac keeps normalized Shanghai deadlines and tasks even when grade reading fails', async () => {
+  const requests = [];
+  const client = new SchoolDataClient({ now: fixedNow, pause: async () => {}, fetch: async (_site, url) => {
+    requests.push(url);
+    if (url.includes('my?page=1')) return response(classesHtml);
+    if (url.includes('my?page=')) return response('<div id="classes">No classes found</div>');
+    if (url.endsWith('/units')) return response('Unavailable', 503);
+    if (url.endsWith('/core_tasks')) return response(tasksHtml);
+    throw Error('Unexpected request');
+  } });
+  const result = await client.syncManageBac();
+  assert.equal(result.tasks[0].dueAt, '2026-09-12T15:59:00.000Z');
+  assert.deepEqual(result.taskSyncedCourses, ['21']);
+  assert.match(result.warnings.join(), /总评/);
+  requests.length = 0;
+  const background = await client.syncManageBac({ refreshGrades: false, previousCourses: [{ id: '21', grade: '6' }] });
+  assert.equal(background.courses[0].grade, '6');
+  assert.equal(requests.some(url => url.endsWith('/units')), false);
+  assert.equal(background.tasks[0].dueAt, result.tasks[0].dueAt);
+});
+
 test('school transport allowlist rejects off-origin and write-like paths', () => {
   assert.equal(readUrl('managebac', '/student/classes/my?page=1'), 'https://shph.managebac.cn/student/classes/my?page=1');
   for (const value of ['https://shph.managebac.cn.evil.test/student/classes/my', 'http://shph.managebac.cn/student/classes/my', 'https://a:b@shph.managebac.cn/student/classes/my', '/student/classes/21/leave', '/sessions', '/student/classes/my?action=delete', '/student/classes/21/core_tasks/31?submit=1']) {

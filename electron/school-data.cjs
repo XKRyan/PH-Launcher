@@ -739,8 +739,9 @@ class SchoolDataClient {
       fail(abort.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR', abort.signal.aborted ? '读取学校数据超时，请稍后刷新' : '暂时无法读取学校网站，请检查网络后刷新');
     } finally { clearTimeout(timer); }
   }
-  async syncManageBac() {
+  async syncManageBac({ refreshGrades = true, previousCourses = [] } = {}) {
     const courses = new Map(); const tasks = new Map(); const warnings = [];
+    const taskSyncedCourses = [];
     let capped = false;
     for (let page = 1; page <= 8; page += 1) {
       const result = parseManageBacCourses(await this.request('managebac', `/student/classes/my?page=${page}`));
@@ -753,12 +754,21 @@ class SchoolDataClient {
     }
     if (capped || courses.size > 30) warnings.push('课程较多，本次最多显示 30 门课；其余请在原网页查看');
     for (const course of [...courses.values()].slice(0, 30)) {
-      try {
-        const grade = parseManageBacGrade(await this.request('managebac', `/student/classes/${course.id}/units`));
-        course.grade = grade.grade;
-        if (!grade.recognized) warnings.push(`${course.name}：暂时无法识别总评`);
+      if (!refreshGrades) course.grade = previousCourses.find(previous => String(previous.id) === String(course.id))?.grade ?? null;
+      if (refreshGrades) {
+        try {
+          const grade = parseManageBacGrade(await this.request('managebac', `/student/classes/${course.id}/units`));
+          course.grade = grade.grade;
+          if (!grade.recognized) warnings.push(`${course.name}：暂时无法识别总评`);
+        } catch (error) {
+          if (error.code === 'LOGIN_REQUIRED') throw error;
+          warnings.push(`${course.name}：总评没有同步成功`);
+        }
         await this.pause(120);
+      }
+      try {
         const parsed = parseManageBacTasks(await this.request('managebac', `/student/classes/${course.id}/core_tasks`), course);
+        if (parsed.recognized) taskSyncedCourses.push(String(course.id));
         for (const task of parsed.tasks) tasks.set(task.id, task);
         if (!parsed.recognized) warnings.push(`${course.name}：未识别到作业列表，请在原网页核对`);
       } catch (error) {
@@ -787,10 +797,13 @@ class SchoolDataClient {
       let hour = match[3] ? parseInt(match[3], 10) % 12 : 23;
       const minute = match[4] ? parseInt(match[4], 10) : 59;
       if (match[5] && match[5].toUpperCase() === 'PM') hour += 12;
-      const dayStart = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
-      const candidates = [reference.getFullYear() - 1, reference.getFullYear(), reference.getFullYear() + 1]
-        .map((year) => new Date(year, month - 1, day, hour, minute, 0, 0))
-        .filter((dt) => dt.getMonth() === month - 1 && dt.getDate() === day);
+      if (day < 1 || day > 31 || minute > 59 || (match[3] && (+match[3] < 1 || +match[3] > 12))) return null;
+      const shanghai = new Date(reference.getTime() + 8 * 3600000);
+      const year = shanghai.getUTCFullYear();
+      const dayStart = Date.UTC(year, shanghai.getUTCMonth(), shanghai.getUTCDate()) - 8 * 3600000;
+      const candidates = [year - 1, year, year + 1]
+        .map(y => new Date(Date.UTC(y, month - 1, day, hour, minute) - 8 * 3600000))
+        .filter(dt => new Date(dt.getTime() + 8 * 3600000).getUTCDate() === day);
       if (!candidates.length) return null;
       const sorted = candidates.sort((a, b) => a - b);
       if (task.pastDue) {
@@ -803,10 +816,14 @@ class SchoolDataClient {
     const filteredTasks = [...tasks.values()].filter((task) => {
       const resolved = resolveTaskDue(task);
       if (!resolved) return true; // unparseable: keep, never silently drop work
+      if (!task.dueAt) {
+        task.dueAt = resolved.toISOString();
+        task.dueDateOnly = !/\d{1,2}:\d{2}/.test(task.dueText || '');
+      }
       const ts = resolved.getTime();
       return ts >= cutoff && ts <= futureLimit;
     });
-    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), warnings: warnings.slice(0, 30) };
+    return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), taskSyncedCourses, warnings: warnings.slice(0, 30) };
   }
   async getCourseDetail(courseId) {
     const id = validatedId(courseId);

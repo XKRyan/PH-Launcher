@@ -3938,6 +3938,7 @@ async function init() {
     if (route && (ROUTE_META[route] || ROUTE_ALIASES[route])) navigate(route);
   });
   window.ph.shortcuts.onAction((action) => {
+    if (action === 'school-tasks') { navigate('courses'); window.schoolUI.openTasks(); return; }
     if (typeof action === 'string' && action.startsWith('site:') && SITE_META[action.slice(5)]) openSite(action.slice(5));
     else if (SITE_META[action]) openSite(action);
     else if (action === 'dictionary') navigate('dictionary');

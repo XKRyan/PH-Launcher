@@ -12,6 +12,8 @@ function fixture(authenticate = async () => {}) {
   const attempts = [];
   const context = vm.createContext({
     taskUploadInFlight: false,
+    managebacReminderAccount: () => 'synthetic-account',
+    scheduleReminderTick: () => {},
     rememberSchoolAttempt: (site) => attempts.push(site),
     SchoolAuthError, SchoolDataError, schoolSessionMutations: new Set(),
     invalidateSchoolSnapshots: () => calls.push('invalidate'),

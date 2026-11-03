@@ -159,6 +159,7 @@ const calendar = require('./calendar.cjs');
 const { ReminderScheduler } = require('./reminders.cjs');
 const { createReminderWindowManager } = require('./reminder-window.cjs');
 const { courseReminders, COURSE_REMINDER_OPTIONS } = require('./course-reminders.cjs');
+const taskReminders = require('./task-reminders.cjs');
 let reminderScheduler = null;
 let reminderWindows = null;
 const { createMailController } = require('./mail-controller.cjs');
@@ -1422,6 +1423,7 @@ async function syncSchool(source, options = {}) {
   await schoolAuthenticator.withSession(source, () => schoolState.sync(source, options, async () => {
     const result = source === 'managebac'
       ? await schoolClient.syncManageBac() : await schoolClient.syncEduPage({ weekStart: options.weekStart });
+    if (source === 'managebac') result.accountKey = managebacReminderAccount();
     siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
     publishSchoolSnapshot(source, result);
     return result;
@@ -1669,6 +1671,7 @@ async function loginSchoolAccount(source, options = {}) {
     await schoolState.sync(source, { weekStart: options.weekStart, force: true }, async () => {
       const result = source === 'edupage'
         ? await schoolClient.syncEduPage({ weekStart: options.weekStart }) : await schoolClient.syncManageBac();
+      if (source === 'managebac') result.accountKey = managebacReminderAccount();
       siteStoragePersistence.schedule(session.fromPartition(SITES[source].partition));
       // 自动登录（启动时或点了"登录并同步"）也要把结果写进共用文件，
       // 否则同步确实成功了，但另一个程序打开还是看不到新数据。
@@ -1676,6 +1679,7 @@ async function loginSchoolAccount(source, options = {}) {
       return result;
     });
     try { if (source === 'edupage') applySharedLessonSelection(); } catch (error) { console.warn('Shared lessons apply skipped:', error.message); }
+    scheduleReminderTick();
     return { ok: true, snapshot: schoolSnapshot(options) };
   } catch (error) {
     const known = error instanceof SchoolAuthError || error instanceof SchoolDataError;
@@ -1733,6 +1737,12 @@ function applySharedLessonSelection(target = null) {
 function updateSchoolPreferences(input) {
   const old = secureStore.data.settings.schoolPreferences || {};
   const next = { ...old };
+  if (Object.hasOwn(input, 'taskReminders')) {
+    const value = input.taskReminders;
+    if (!value || typeof value.newTasks !== 'boolean' || typeof value.deadlines !== 'boolean'
+      || !Array.isArray(value.minutes) || value.minutes.some(n => !taskReminders.TASK_REMINDER_OPTIONS.includes(n))) throw new Error('请选择有效的作业提醒设置');
+    next.taskReminders = taskReminders.preferences(value);
+  }
   if (Object.hasOwn(input, 'courseReminderMinutes')) {
     const minutes = input.courseReminderMinutes;
     if (minutes !== null && !COURSE_REMINDER_OPTIONS.includes(minutes)) throw new Error('请选择有效的上课提醒时间');
@@ -2409,12 +2419,13 @@ function sendShortcutRoute(action) {
   sendToRenderer('shortcut:action', action);
 }
 
-function showNotification(title, body) {
+function showNotification(title, body, onClick) {
   if (!Notification.isSupported()) return false;
   const notification = new Notification({ title, body, silent: false });
   notification.on('click', () => {
     mainWindow?.show();
     mainWindow?.focus();
+    onClick?.();
   });
   notification.show();
   return true;
@@ -2433,6 +2444,63 @@ function scheduleReminderTick() {
   reminderScheduler.syncGroup('course:', courseReminders({ schedule: data.schedule, preferences: data.settings.schoolPreferences || {},
     defaultMinutes: data.settings.defaultReminderMinutes ?? 10,
     schoolWeeks: [...schoolState.entries.values()].map((entry) => entry.data) }));
+  checkTaskReminders();
+}
+
+function managebacReminderAccount() {
+  const record = credentialVault?.getForFill('managebac', { allowDisabled: true });
+  return record?.username ? createHash('sha256').update(`managebac:${record.username.trim().toLowerCase()}`).digest('hex') : '';
+}
+
+function checkTaskReminders() {
+  if (IS_HEADLESS || !secureStore || schoolSessionMutations.has('managebac') || taskUploadInFlight) return;
+  const previous = secureStore.data.taskReminderState;
+  const prefs = secureStore.data.settings.schoolPreferences || {};
+  const result = taskReminders.evaluate({ state: previous, snapshot: schoolCache.managebac,
+    accountKey: managebacReminderAccount(), settings: prefs.taskReminders, hiddenTasks: prefs.hiddenTasks });
+  if (!result.changed) return;
+  secureStore.data.taskReminderState = result.state;
+  try { secureStore.save(); }
+  catch { secureStore.data.taskReminderState = previous; return; }
+  const english = secureStore.data.settings.language === 'en';
+  for (const kind of ['new', 'due']) {
+    const alerts = result.alerts.filter(item => kind === 'new' ? item.type === 'new' : item.type !== 'new');
+    if (!alerts.length) continue;
+    const title = english ? `${alerts.length} ${kind === 'new' ? 'new ManageBac tasks' : 'tasks due soon'}`
+      : `${alerts.length} 项${kind === 'new' ? '新任务 / 作业' : '作业即将截止'}`;
+    const body = alerts.slice(0, 3).map(item => {
+      const date = item.dueAt ? new Date(item.dueAt).toLocaleString(english ? 'en-GB' : 'zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dueText;
+      return `${item.course.slice(0, 60)} · ${item.title.slice(0, 90)}${date ? ` · ${date}` : ''}`;
+    }).join('\n');
+    const account = result.state.accountKey;
+    showNotification(title, body, () => {
+      if (managebacReminderAccount() !== account) return;
+      sendToRenderer('shortcut:action', 'school-tasks');
+    });
+  }
+}
+
+let taskRefreshBusy = false;
+async function refreshTaskReminders() {
+  if (IS_HEADLESS || !schoolClient || !secureStore || taskRefreshBusy || taskUploadInFlight || schoolSessionMutations.has('managebac')) return;
+  const prefs = taskReminders.preferences(secureStore.data.settings.schoolPreferences?.taskReminders);
+  if (!prefs.newTasks && !prefs.deadlines) return;
+  const account = managebacReminderAccount();
+  // Only reuse a verified session. No automatic credential submission/retry.
+  if (!account || schoolCache.managebac?.accountKey !== account || schoolState.status.managebac?.state === 'syncing') return;
+  taskRefreshBusy = true;
+  try {
+    await schoolState.sync('managebac', { force: false }, async () => {
+      const result = await schoolClient.syncManageBac({ refreshGrades: false, previousCourses: schoolCache.managebac?.courses || [] });
+      result.accountKey = account;
+      return result;
+    });
+    if (managebacReminderAccount() !== account) return;
+    publishSchoolSnapshot('managebac', schoolCache.managebac);
+    checkTaskReminders();
+    sendToRenderer('school:synced', { synced: ['managebac'], failed: [] });
+  } catch { sendToRenderer('school:synced', { synced: [], failed: ['managebac'] }); }
+  finally { taskRefreshBusy = false; }
 }
 
 function runCommand(file, args, timeout = 8_000) {
@@ -5804,6 +5872,7 @@ app.whenReady().then(() => {
   if (!IS_HEADLESS) registerShortcuts();
   if (!IS_HEADLESS) applyLoginItemSetting();
   setInterval(scheduleReminderTick, 15_000).unref();
+  if (!IS_HEADLESS) setInterval(refreshTaskReminders, 10 * 60_000).unref();
   // 自动化用：到点自己优雅退出（走 will-quit → 托盘正常注销，不留幽灵图标）。
   if (QUIT_AFTER_MS > 0) {
     setTimeout(() => {
