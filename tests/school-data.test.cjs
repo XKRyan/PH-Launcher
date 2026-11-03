@@ -490,3 +490,25 @@ test('shared containers and task-id anchors do not drop assignment links', () =>
   const parsed = parseManageBacTasks('<div><a href="/student/classes/21/core_tasks/1">One</a><a href="/student/classes/21/core_tasks/2">Two</a></div><a data-task-id="3" href="/student/classes/21/core_tasks/3">Three</a>', {id:'21'});
   assert.deepEqual(parsed.tasks.map(t=>t.title),['One','Two','Three']);
 });
+
+
+test('request timeout settles even when transport ignores abort', async () => {
+ const client = new SchoolDataClient({timeoutMs:25,fetch:async()=>new Promise(()=>{})});
+ await assert.rejects(client.request('managebac','/student/classes/21/units'),{code:'TIMEOUT'});
+});
+test('course sections start together and blocked sections preserve successfully read work', async () => {
+ const started=[];let release;const gate=new Promise(resolve=>{release=resolve});
+ const client=new SchoolDataClient({timeoutMs:50,fetch:async(_,url)=>{
+   started.push(url);if(url.endsWith('core_tasks')){await gate;return response(tasksHtml);}
+   return new Promise(()=>{});
+ }});
+ const pending=client.getCourseDetail('21');await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(started.length,4);release();const result=await pending;
+ assert.equal(result.tasksStatus,'ready');assert.equal(result.tasks.length,1);assert.equal(result.warnings.length,3);
+});
+test('pagination has one total deadline and preserves first-page tasks on timeout', async()=>{
+ let count=0;
+ const client=new SchoolDataClient({pause:async()=>{},fetch:async()=>++count===1?response(tasksHtml+'<a href="?page=2">Next</a>'):new Promise(()=>{})});
+ const result=await client.getCourseTasks({id:'21'},{budgetMs:30});
+ assert.equal(count,2);assert.equal(result.tasks.length,1);assert.equal(result.tasksStatus,'partial');
+});

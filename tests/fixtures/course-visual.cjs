@@ -129,5 +129,14 @@ app.whenReady().then(async () => {
   await capture('linked-assignments-compact-en');
   await run("document.querySelector('.school-course-breadcrumb button').click()");await wait();
   assert.ok(await run("document.querySelector('[data-school-action=lesson]') !== null"));
+  await run("window.schoolUI.open('courses')"); await wait();
+  await run("const picker=document.querySelector('[data-school-field=class-switch]');picker.value='22';picker.dispatchEvent(new Event('change',{bubbles:true}))"); await wait();
+  await run("document.querySelector('[data-school-action=course-list]').click(); window.ph.school.course=()=>new Promise(()=>{}); document.querySelector('[data-school-action=course]').click()"); await wait();
+  assert.ok(await run("document.querySelector('[data-tab=tasks]') !== null"));
+  await run("document.querySelector('[data-tab=tasks]').click()");
+  assert.ok(await run("document.querySelector('.school-task-cache-label') !== null"));
+  await capture('course-loading-cache-en');
+  await run("document.querySelector('[data-school-action=course-list]').click()");
+  assert.ok(await run("document.querySelector('.school-course-card') !== null"));
   console.log(JSON.stringify({success:true,geometry,out})); app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1)});

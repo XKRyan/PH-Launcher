@@ -5,6 +5,8 @@
   // content is intentionally absent from this catalog.
   root.PH_EN = {
     exact: {
+      '正在更新课程；已有记录可先查看。': 'Updating this class; previously loaded records are available.',
+      '读取超时，请重试或在原网页查看。': 'Loading timed out. Retry or view on the original site.',
       '返回课表': 'Back to timetable',
       '更改课程关联': 'Change linked class',
       '选择对应课程，查看作业与资料。': 'Choose the matching class to view assignments and resources.',

@@ -1,6 +1,6 @@
 {
   "name": "ph-launcher",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "PH Launcher - a student-first desktop workspace for Pinghe IB students",
   "main": "electron/main.cjs",
   "author": "XKRyan and PH Launcher contributors",

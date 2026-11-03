@@ -692,7 +692,7 @@ class SchoolDataClient {
     if (typeof fetch !== 'function') throw new TypeError('SchoolDataClient requires an injected session fetch');
     this.fetch = fetch; this.now = now; this.timeoutMs = timeoutMs; this.pause = pause;
   }
-  async request(site, raw, { method = 'GET', body, contentType, headers } = {}) {
+  async request(site, raw, { method = 'GET', body, contentType, headers, timeoutMs = this.timeoutMs } = {}) {
     let url = readUrl(site, raw, method);
     if (method === 'POST') {
       if (site === 'edupage') {
@@ -702,10 +702,13 @@ class SchoolDataClient {
       } else assertWriteBody(site, url, body, contentType);
     }
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    let rejectTimeout;
+    const expired = new Promise((_, reject) => { rejectTimeout = reject; });
+    const timer = setTimeout(() => { abort.abort(); rejectTimeout(new SchoolDataError('TIMEOUT', '学校读取超时，请稍后重试')); }, Math.max(1, timeoutMs));
+    const bounded = operation => Promise.race([operation, expired]);
     try {
       for (let redirect = 0; redirect < 4; redirect += 1) {
-        const response = await this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': contentType || 'application/x-www-form-urlencoded' } : {}), ...(headers || {}) } });
+        const response = await bounded(this.fetch(site, url, { method, body, redirect: 'manual', credentials: 'include', cache: 'no-store', signal: abort.signal, headers: { Accept: 'text/html,application/json', ...(method === 'POST' ? { 'Content-Type': contentType || 'application/x-www-form-urlencoded' } : {}), ...(headers || {}) } }));
         if (response.status === 401 || response.status === 403) fail('LOGIN_REQUIRED', '登录已过期或没有读取权限，请在内置网页重新登录');
         if (response.status >= 300 && response.status < 400) {
           const destination = new URL(response.headers.get('location') || '', url);
@@ -733,9 +736,9 @@ class SchoolDataClient {
         let result;
         if (response.body?.getReader) {
           const reader = response.body.getReader(); const chunks = []; let size = 0;
-          for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.byteLength; if (size > MAX_HTML_BYTES) { await reader.cancel(); fail('PAGE_TOO_LARGE', '学校页面过大'); } chunks.push(Buffer.from(chunk.value)); }
+          for (;;) { const chunk = await bounded(reader.read()); if (chunk.done) break; size += chunk.value.byteLength; if (size > MAX_HTML_BYTES) { await reader.cancel(); fail('PAGE_TOO_LARGE', '学校页面过大'); } chunks.push(Buffer.from(chunk.value)); }
           result = Buffer.concat(chunks).toString('utf8');
-        } else result = await response.text();
+        } else result = await bounded(response.text());
         if (Buffer.byteLength(result) > MAX_HTML_BYTES) fail('PAGE_TOO_LARGE', '学校页面过大');
         return result;
       }
@@ -833,17 +836,18 @@ class SchoolDataClient {
     });
     return { source: 'managebac', fetchedAt: this.now().toISOString(), courses: [...courses.values()].slice(0, 30), tasks: filteredTasks.slice(0, 1000), taskSyncedCourses, taskFailedCourses, warnings: warnings.slice(0, 30) };
   }
-  async getCourseTasks(course) {
+  async getCourseTasks(course, { budgetMs = 15000 } = {}) {
+    const deadline = Date.now() + budgetMs;
     const id = validatedId(course.id);
     const base = `/student/classes/${id}/core_tasks`;
     const queue = [base], seen = new Set(), tasks = new Map();
     let incomplete = false;
-    while (queue.length && seen.size < 10) {
+    while (queue.length && seen.size < 10 && Date.now() < deadline) {
       const raw = queue.shift(); const url = readUrl('managebac', raw);
       if (seen.has(url)) continue;
       seen.add(url);
       try {
-        const html = await this.request('managebac', url);
+        const html = await this.request('managebac', url, { timeoutMs: Math.min(this.timeoutMs, deadline - Date.now()) });
         const parsed = parseManageBacTasks(html, course, { reference: this.now() });
         if (!parsed.recognized || parsed.truncated) incomplete = true;
         for (const task of parsed.tasks) tasks.set(task.id, task);
@@ -859,7 +863,7 @@ class SchoolDataClient {
         if (queue.length) await this.pause(120);
       } catch (error) {
         if (error.code === 'LOGIN_REQUIRED') throw error;
-        incomplete = true;
+        incomplete = true; break;
       }
     }
     if (queue.length) incomplete = true;
@@ -870,8 +874,8 @@ class SchoolDataClient {
     const id = validatedId(courseId);
     const base = `/student/classes/${id}`;
     const result = { id, name: '', grade: null, url: `${ORIGINS.managebac}${base}/units`, units: '', tasks: [], files: [], events: [], warnings: [], fetchedAt: this.now().toISOString() };
-    try {
-      const unitsHtml = await this.request('managebac', `${base}/units`);
+    const unitsRead = (async () => { try {
+      const unitsHtml = await this.request('managebac', `${base}/units`, { timeoutMs: Math.min(this.timeoutMs, 15000) });
       const doc = htmlDocument(unitsHtml);
       result.name = text(doc, 'h1', 160);
       result.grade = parseManageBacGrade(unitsHtml).grade;
@@ -880,15 +884,15 @@ class SchoolDataClient {
       if (error.code === 'LOGIN_REQUIRED') throw error;
       result.warnings.push('课程概览暂时未能读取，其余栏目仍会继续加载');
     }
-    for (const section of ['core_tasks', 'files', 'events.json']) {
-      await this.pause(120);
+    })();
+    await Promise.all([unitsRead, ...['core_tasks', 'files', 'events.json'].map(async section => {
       try {
         if (section === 'core_tasks') {
           Object.assign(result, await this.getCourseTasks({ id, name: result.name }));
           if (['error', 'partial'].includes(result.tasksStatus)) result.warnings.push('课程作业未能完整读取，请重试或在原网页核对');
-          continue;
+          return;
         }
-        const body = await this.request('managebac', `${base}/${section}`);
+        const body = await this.request('managebac', `${base}/${section}`, { timeoutMs: Math.min(this.timeoutMs, 15000) });
         if (section === 'files') result.files = parseCourseFiles(body, id);
         if (section === 'events.json') {
           let parsed;
@@ -901,7 +905,7 @@ class SchoolDataClient {
         if (error.code === 'LOGIN_REQUIRED') throw error;
         result.warnings.push(`${section === 'files' ? '课程文件' : section === 'core_tasks' ? '课程作业' : '课程日历'}暂时未能读取，请在原网页查看`);
       }
-    }
+    })]);
     return result;
   }
   async getTaskDetail(courseId, taskId) {

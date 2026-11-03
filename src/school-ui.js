@@ -537,12 +537,16 @@
     if (!courseDetail) state.courseListScroll = document.getElementById('content')?.scrollTop || 0;
     const previous = force && courseDetail?.id === id ? courseDetail : null;
     const context = { id, data: null, tab: previous?.tab || 'overview', taskFilter: previous?.taskFilter || 'pending', query: previous?.query || '', loading: true, error: '', discussions: previous?.discussions || null };
+    const selected = state.snapshot.managebac?.courses?.find(course => String(course.id) === id);
+    context.data = previous?.data || { id, name: selected?.name || '', tasks: (state.snapshot.managebac?.tasks || []).filter(task => String(task.courseId) === id).map(task => ({ ...task, stale: true })), files: [], events: [], units: '', warnings: [] };
     courseDetail = context; render();
     const scroller = document.getElementById('content'); if (scroller) scroller.scrollTop = 0;
     const account = state.snapshot.managebac?.accountKey;
     const epoch = state.epochs.managebac;
+    let timer;
     try {
-      const data = await api().course(id);
+      const pending = api().course(id);
+      const data = typeof setTimeout === 'function' ? await Promise.race([pending, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('读取超时，请重试或在原网页查看。')), 25000); })]) : await pending;
       if (courseDetail !== context || state.snapshot.managebac?.accountKey !== account || state.epochs.managebac !== epoch) return;
       if (['error', 'partial'].includes(data.tasksStatus)) {
         const merged = new Map((data.tasks || []).map(task => [task.id, task]));
@@ -555,7 +559,7 @@
     } catch (error) {
       if (courseDetail !== context) return;
       context.loading = false; context.error = userError(error, '读取失败'); render();
-    }
+    } finally { if (timer) clearTimeout(timer); }
   }
   async function loadCourseDiscussions() {
     const context = courseDetail;
@@ -575,14 +579,14 @@
     const selected = courses.find(course => String(course.id) === id);
     const name = data?.name || selected?.name || '课程';
     const header = `<div class="school-course-breadcrumb">${context.lesson ? btn('返回课表', 'course-tab', 'data-course-tab="timetable"') : btn('全部课程', 'course-list')}<span aria-hidden="true">/</span><span data-i18n-ignore>${esc(name)}</span></div><header class="school-class-header"><div><span class="section-kicker">MY CLASS</span><h1 data-i18n-ignore>${esc(name)}</h1></div><div class="school-actions"><label class="school-inline-label"><span>切换课程</span><select data-school-field="class-switch" aria-label="切换课程">${courses.map(course => `<option data-i18n-ignore value="${esc(course.id)}" ${String(course.id) === id ? 'selected' : ''}>${esc(course.name)}</option>`).join('')}</select></label>${context.lesson ? btn('更改课程关联', 'relink-course') : ''}${originalButton(data?.url)}</div></header>`;
-    if (context.loading) return header + '<div class="school-empty" role="status">正在读取，请稍候…</div>';
-    if (context.error) return header + `<div class="school-error" role="alert">${esc(context.error)}</div>${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}`;
+
+    if (context.error && !data) return header + `<div class="school-error" role="alert">${esc(context.error)}</div>${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}`;
     if (!data) return header;
     const hidden = new Set(prefs().hiddenTasks || []);
     const tasks = (data.tasks || []).filter(task => !hidden.has(task.id));
     const incomplete = ['error', 'partial'].includes(data.tasksStatus);
     const taskNotice = incomplete ? `<div class="school-error" role="alert"><p>作业未能完整读取，当前列表可能不完整。保留的旧作业已标记，请重试或在原网页核对。</p>${btn('重新读取作业', 'retry-course', `data-id="${esc(id)}"`)}</div>` : '';
-    const taskEmpty = incomplete ? '尚未读取到作业，不能确认是否为空。' : '没有符合条件的作业';
+    const taskEmpty = context.loading ? '正在读取，请稍候…' : incomplete ? '尚未读取到作业，不能确认是否为空。' : '没有符合条件的作业';
     const dueOrder = (a, b) => (Date.parse(a.dueAt) || Infinity) - (Date.parse(b.dueAt) || Infinity);
     const pending = tasks.filter(task => !submitted(task)).sort(dueOrder);
     const done = tasks.filter(submitted).sort(dueOrder);
@@ -602,8 +606,9 @@
     if (tab === 'files') body = `<h2>课程文件</h2>${(data.files || []).map(file => `<div class="school-file-row"><span>${esc(file.name)}</span>${originalButton(file.url)}</div>`).join('') || '<div class="school-empty"><p>暂未识别到文件。</p></div>'}`;
     if (tab === 'units') body = `<h2>单元与计划</h2><p class="school-prewrap">${esc(data.units || '暂未识别到单元与计划。')}</p>`;
     if (tab === 'calendar') body = `<h2>课程日历</h2>${(data.events || []).map(item => `<div class="school-file-row"><span>${esc(item.title)}</span><time>${esc(item.start)}</time></div>`).join('') || '<div class="school-empty"><p>暂未识别到日历事项。</p></div>'}`;
+    if (context.loading && ['files', 'units', 'calendar'].includes(tab)) body = '<p role="status">正在读取，请稍候…</p>';
     if (tab === 'discussions') body = context.discussions ? discussionList(context.discussions) : context.discussionsError ? `<div class="school-error" role="alert">${esc(context.discussionsError)}</div>${btn('重试', 'retry-course-discussions')}` : '<p role="status">正在读取，请稍候…</p>';
-    return `<div class="school-class-workspace">${header}${nav}<section class="school-course-panel">${['overview', 'tasks'].includes(tab) ? taskNotice : ''}${body}</section>${warnings(data)}</div>`;
+    return `<div class="school-class-workspace">${header}${nav}<section class="school-course-panel">${context.loading ? '<p role="status">正在更新课程；已有记录可先查看。</p>' : ''}${context.error ? `<div class="school-error" role="alert">${esc(context.error)} ${btn('重试', 'retry-course', `data-id="${esc(id)}"`)}</div>` : ''}${['overview', 'tasks'].includes(tab) ? taskNotice : ''}${body}</section>${warnings(data)}</div>`;
   }
   function taskRows(items, compact = false) {
     return items.map((task) => {

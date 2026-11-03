@@ -35,7 +35,7 @@ function harness(overrides = {}) {
     cancelTaskUpload: async token => { calls.cancel.push(token); }
   };
   window.ph = { school, system: { openUrl: async () => {} } };
-  const context = { window, document, Intl, Date, URL, setInterval: () => 0, queueMicrotask, console };
+  const context = { window, document, Intl, Date, URL, setInterval: () => 0, queueMicrotask, console, ...(overrides.clock || {}) };
   for (const file of ['school-selection-inference.js', 'school-tasks.js', 'school-ui.js', 'locales/en.js', 'i18n.js']) vm.runInNewContext(fs.readFileSync(require.resolve(`../src/${file}`), 'utf8'), context);
   const click = selector => { const node = document.querySelector(selector); assert.ok(node, `missing ${selector}`); node.dispatchEvent(new window.Event('click', { bubbles: true })); };
   const field = (name, value, type = 'change') => { const node = document.querySelector(`[data-school-field="${name}"]`); Object.defineProperty(node, 'value', { configurable: true, writable: true, value }); node.focus(); node.dispatchEvent(new window.Event(type, { bubbles: true })); };
@@ -360,4 +360,16 @@ test('saved course association survives a new renderer and is ignored for anothe
   if(!changed)assert.equal(ui.calls.course[0],'22');
   else assert.ok(ui.document.querySelector('[data-school-action="linked-course"]'));
  }
+});
+
+
+test('slow course reads leave navigation and cache usable; timeout ignores late results', async()=>{
+ let expire;const request=deferred();
+ const ui=harness({course:()=>request.promise,clock:{setTimeout:cb=>{expire=cb;return 1},clearTimeout:()=>{}}});
+ await ui.open();ui.click('[data-course-tab="courses"]');ui.click('[data-school-action="course"][data-id="21"]');await settle();
+ assert.ok(ui.document.querySelector('[data-school-action="course-list"]'));
+ ui.click('[data-tab="tasks"]');assert.ok(ui.document.querySelector('.school-task-cache-label'));
+ expire();await settle();assert.match(ui.document.querySelector('.school-error').textContent,/超时/);
+ assert.ok(ui.document.querySelector('[data-school-action="retry-course"]'));
+ request.resolve({id:'21',name:'Late result',tasks:[]});await settle();assert.doesNotMatch(ui.document.querySelector('h1').textContent,/Late result/);
 });
