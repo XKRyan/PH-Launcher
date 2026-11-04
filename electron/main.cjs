@@ -4212,19 +4212,7 @@ function registerIpc() {
     try { sharedSchool.updateSchool(dataRoot().school, { notifications: result }); } catch { /* 共用文件写不进去不影响本机 */ }
     return result;
   });
-  schoolHandle('resource', async value => {
-    let url=new URL(String(value));
-    const allowed=u=>u.protocol==='https:'&&!u.username&&!u.password&&(u.hostname==='shph.managebac.cn'||/(?:^|\.)(?:managebac\.com|managebac\.cn|amazonaws\.com)$/.test(u.hostname));
-    if(url.protocol!=='https:'||url.username||url.password||!(url.hostname==='shph.managebac.cn'||/(?:^|\.)(?:managebac\.com|managebac\.cn|amazonaws\.com)$/.test(url.hostname)))throw new Error('Unsupported school image host');
-    let response;const signal=AbortSignal.timeout(15000);
-    for(let redirects=0;redirects<=3;redirects++){if(!allowed(url))throw new Error('Unsupported school image host');response=await session.fromPartition(SITES.managebac.partition).fetch(url.href,{redirect:'manual',signal});if(![301,302,303,307,308].includes(response.status))break;await response.body?.cancel();url=new URL(response.headers.get('location'),url);}
-    if(!response||response.status>=300&&response.status<400)throw new Error('Too many image redirects');
-    const type=(response.headers.get('content-type')||'').split(';')[0];
-    if(!response.ok||!/^image\/(?:png|jpeg|gif|webp)$/.test(type)||Number(response.headers.get('content-length'))>8*1024*1024)throw new Error('Invalid school image');
-    const reader=response.body.getReader(),parts=[];let size=0;
-    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8*1024*1024)throw new Error('School image too large');parts.push(Buffer.from(value));}}finally{await reader.cancel();}
-    return `data:${type};base64,${Buffer.concat(parts).toString('base64')}`;
-  });
+  schoolHandle('resource', value => schoolClient.getTaskImage(value));
   schoolHandle('open-url', async (raw) => {
     const url = new URL(String(raw || ''));
     const siteId = url.origin === 'https://shph.managebac.cn' ? 'managebac' : url.origin === 'https://pingheschool.edupage.org' ? 'edupage' : '';

@@ -4,6 +4,33 @@ const { SchoolDataClient, parseManageBacTasks, parseTaskDetail } = require('../e
 const { status, active } = require('../src/school-tasks.js');
 const { evaluate, pendingAlerts } = require('../electron/task-reminders.cjs');
 const now = Date.parse('2026-11-03T02:00:00Z');
+
+test('private task images follow the ManageBac China storage redirect', async () => {
+  const original = 'https://shph.managebac.cn/privacy_attachments/example';
+  const storage = 'https://managebac-cn-prod.s3.cn-north-1.amazonaws.com.cn/example?signature=fixture';
+  const requests = [];
+  const client = new SchoolDataClient({ fetch: async (site, url, options) => {
+    requests.push([site, url, options.credentials, options.redirect]);
+    return url === original
+      ? new Response(null, { status: 302, headers: { location: storage } })
+      : new Response(Buffer.from([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } });
+  } });
+  assert.equal(await client.getTaskImage(original), 'data:image/png;base64,iVBORw==');
+  assert.deepEqual(requests, [
+    ['managebac', original, 'include', 'manual'],
+    ['managebac', storage, 'omit', 'manual'],
+  ]);
+});
+
+test('private task images reject redirects before requesting an untrusted host', async () => {
+  let requests = 0;
+  const client = new SchoolDataClient({ fetch: async () => {
+    requests++;
+    return new Response(null, { status: 302, headers: { location: 'https://untrusted.example/image.png' } });
+  } });
+  await assert.rejects(client.getTaskImage('https://shph.managebac.cn/privacy_attachments/example'), /Unsupported school image address/);
+  assert.equal(requests, 1);
+});
 const card = (id, category, required) => `<article data-task-type="${category}"${required === null ? '' : ` data-submission-required="${required}"`}><a href="/student/classes/21/core_tasks/${id}">Synthetic ${id}</a></article>`;
 const events = [
   { id: 'calendar-31', title: 'Exam copy', start: '2026-11-04T09:00:00+08:00', url: '/student/classes/21/core_tasks/31' },

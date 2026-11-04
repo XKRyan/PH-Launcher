@@ -1015,6 +1015,40 @@ class SchoolDataClient {
   async getCourseEvents(course) {
     return parseCourseEvents(await this.request('managebac', `/student/classes/${validatedId(course.id)}/events.json`, { timeoutMs: Math.min(this.timeoutMs, 15000) }), course);
   }
+
+  async getTaskImage(value) {
+    let url = URL.canParse(value) ? new URL(value) : null;
+    const signal = AbortSignal.timeout(15000);
+    const chinaStorage = 'managebac-cn-prod.s3.cn-north-1.amazonaws.com.cn';
+
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      const allowedHost = url && (url.hostname === chinaStorage ||
+        /(?:^|\.)(?:managebac\.com|managebac\.cn|amazonaws\.com)$/.test(url.hostname));
+      if (!allowedHost || url.protocol !== 'https:' || url.username || url.password || url.port) {
+        throw new Error('Unsupported school image address');
+      }
+      const response = await this.fetch('managebac', url.href, {
+        redirect: 'manual', signal,
+        credentials: url.origin === ORIGINS.managebac ? 'include' : 'omit',
+      });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        await response.body?.cancel();
+        url = location && URL.canParse(location, url) ? new URL(location, url) : null;
+        continue;
+      }
+      const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!response.ok || !/^image\/(?:png|jpeg|gif|webp)$/.test(type)) {
+        await response.body?.cancel();
+        throw new Error('Invalid school image');
+      }
+      // The shared school transport enforces the 8 MiB limit while receiving bytes.
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) throw new Error('Empty school image');
+      return `data:${type};base64,${bytes.toString('base64')}`;
+    }
+    throw new Error('Too many school image redirects');
+  }
   async getTaskDetail(courseId, taskId) {
     const cid = validatedId(courseId); const tid = validatedId(taskId);
     const path = `/student/classes/${cid}/core_tasks/${tid}`;
