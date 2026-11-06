@@ -157,6 +157,15 @@ app.whenReady().then(async () => {
   await run("document.querySelector('dialog').close();document.querySelector('[data-school-action=calendar-task]').click()");await wait();
   assert.ok(await run("document.querySelector('dialog img.school-task-image')?.naturalWidth===1 && document.querySelector('dialog').textContent.includes('Worksheet.pdf')"));
   await capture('event-task-en');
+  const numberedContent=require('../../electron/school-data.cjs').parseTaskDetail('<div class="core-task-show"><div class="description"><ol><li>Complete the class practice</li><li>Use a graphical and an algebraic method<img src="/attachments/99/formula.png" alt="Formula"></li><li>Solve for x:<ul><li>Check the domain</li><li>Verify solutions</li></ul></li></ol><ol start="5" reversed type="A"><li>First extension</li><li value="2">Second extension</li></ol></div></div>','21','31').content;
+  await run(`document.querySelector('dialog').close();window.fixtureSnapshot.managebac.tasks.find(t=>t.kind==='event').content=${JSON.stringify(numberedContent)};document.querySelector('[data-school-action=calendar-task]').click();void 0`);await wait();
+  const checkNumbered=async()=>{
+    const result=await run(`(() => {const root=document.querySelector('.school-rich-content'),list=root.querySelector('ol'),item=list.children[1],box=list.getBoundingClientRect(),dialog=document.querySelector('.school-dialog-content');return {items:list.children.length,marker:getComputedStyle(list).listStyleType,itemDisplay:getComputedStyle(item).display,imageInside:item.querySelector('img')?.naturalWidth===1,nested:list.children[2].querySelectorAll('ul>li').length,numbering:root.querySelectorAll('ol')[1].start===5&&root.querySelectorAll('ol')[1].reversed&&root.querySelectorAll('ol')[1].type==='A',horizontal:dialog.scrollWidth<=dialog.clientWidth+1,indent:box.left+parseFloat(getComputedStyle(list).paddingLeft)>box.left};})()`);
+    assert.deepEqual(result,{items:3,marker:'decimal',itemDisplay:'list-item',imageInside:true,nested:2,numbering:true,horizontal:true,indent:true});
+  };
+  await checkNumbered();await capture('numbered-task-en');
+  await run("window.i18n.apply('zh-CN')");win.setSize(780,650);await wait();await checkNumbered();await capture('numbered-task-compact-zh');
+  win.setSize(1280,900);await run("window.i18n.apply('en')");
   await run("document.querySelector('dialog').close();window.ph.school.course=async id=>({id,name:'English language and literature — course title with a long descriptive name',units:[{id:'1',title:'Exploring Truth and Lies',level:'SL',start:'Starts W1 Sep',duration:'3 Weeks',state:'current',tasks:0,lessons:0},{id:'2',title:'The study of narrative, perspective and literary devices in extended creative writing',level:'HL',start:'Starts W2 Nov',duration:'6 Weeks',state:'completed',tasks:2,lessons:5}],tasks:[],files:[],events:[]});window.schoolUI.open('courses');void 0");
   await run("document.querySelector('[data-course-tab=courses]').click();document.querySelector('[data-school-action=course]').click()");await wait();
   await run("document.querySelector('[data-tab=units]').click()");await wait();

@@ -1074,9 +1074,22 @@
   function originalButton(url) { return url ? btn('在原网页查看', 'original', `data-url="${esc(url)}"`) : ''; }
   function contentRows(data) {
     const blocks=Array.isArray(data.content)&&data.content.length?data.content:[{type:'text',text:data.description||''}];
-    return `<div class="school-rich-content" data-i18n-ignore>${blocks.map(block=>block.type==='image'
-      ? `<figure><button type="button" class="school-image-load" data-school-action="load-image" data-url="${esc(block.url)}" data-page-url="${esc(data.url||'')}">${esc(block.alt||'加载图片')}</button><figcaption>${esc(block.alt||'')}</figcaption></figure>`
-      : `<p class="school-prewrap">${esc(block.text)}</p>`).join('')}</div>`;
+    let remaining=180;
+    const integer=value=>Number.isInteger(value)&&Math.abs(value)<=999999;
+    function render(items,depth=0) {
+      if(!Array.isArray(items)||depth>8)return '';
+      return items.slice(0,60).map(block=>{
+        if(!block||remaining--<=0)return '';
+        if(block.type==='list'){
+          const tag=block.ordered?'ol':'ul';
+          const attrs=block.ordered?`${integer(block.start)?` start="${block.start}"`:''}${block.reversed?' reversed':''}${['1','a','A','i','I'].includes(block.marker)?` type="${block.marker}"`:''}`:'';
+          return `<${tag}${attrs}>${(Array.isArray(block.items)?block.items:[]).slice(0,60).map(item=>`<li${integer(item.value)?` value="${item.value}"`:''}>${render(item.content,depth+1)}</li>`).join('')}</${tag}>`;
+        }
+        if(block.type==='image')return `<figure><button type="button" class="school-image-load" data-school-action="load-image" data-url="${esc(block.url)}" data-page-url="${esc(data.url||'')}">${esc(block.alt||'加载图片')}</button><figcaption>${esc(block.alt||'')}</figcaption></figure>`;
+        return `<p class="school-prewrap">${esc(block.text)}</p>`;
+      }).join('');
+    }
+    return `<div class="school-rich-content" data-i18n-ignore>${render(blocks)}</div>`;
   }
   async function loadImage(button) {
     if(button.disabled)return;button.disabled=true;

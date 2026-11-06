@@ -97,6 +97,23 @@ test('event requirements retain line breaks and images as inert content',async()
  assert.ok(!JSON.stringify(event.content).includes('onerror'));assert.equal(event.attachments[0].name,'Worksheet.pdf');
 });
 
+test('task requirements preserve ordered lists, images within items and nested lists', () => {
+ const task=parseTaskDetail(`<div class="core-task-show"><div class="description"><ol><li><p>Read the class notes</p></li><li>Use both methods<img src="/attachments/99/formula.png" onerror="unsafe()"></li><li><p>Solve for x:</p><ul><li>Check the domain</li><li>Verify solutions</li></ul><img src="/attachments/100/formula.png"></li></ol></div></div>`,'21','31');
+ const list=task.content[0];assert.equal(list.type,'list');assert.equal(list.ordered,true);assert.equal(list.items.length,3);
+ assert.deepEqual(list.items[1].content.map(b=>b.type),['text','image']);
+ assert.deepEqual(list.items[2].content.map(b=>b.type),['text','list','image']);
+ assert.equal(list.items[2].content[1].ordered,false);
+ assert.equal(list.items[2].content[1].items[1].content[0].text,'Verify solutions');
+ assert.ok(!JSON.stringify(task.content).includes('onerror'));
+});
+
+test('calendar requirements keep custom numbering and reversed alphabetic lists', async () => {
+ const data=JSON.stringify([{id:'numbered',title:'Numbered event',start:'2026-11-06',description:'<ol start="5" reversed type="A"><li>First</li><li value="2">Second</li></ol><p>After list</p>'}]);
+ const result=await client(data).getCourseDetail('21');const content=result.tasks.find(t=>t.kind==='event').content;
+ assert.equal(content[0].start,5);assert.equal(content[0].reversed,true);assert.equal(content[0].marker,'A');assert.equal(content[0].items[1].value,2);
+ assert.equal(content[1].text,'After list');
+});
+
 test('ManageBac timetable uses each session response and supplies course ids and 24-hour slots',async()=>{
  const c=new SchoolDataClient({fetch:async(_site,url)=>{assert.match(url,/datepicker%5Bstart_date%5D=2026-11-02/);return new Response('<table class="f-timetable"><a class="f-timetable-item" data-bs-content-url="/student/timetables/popup?date=2026-11-03&amp;ib_class_id=21"><small>1:00 PM - 1:40 PM</small></a></table>');}});
  const result=await c.getTimetable('2026-11-02');assert.deepEqual(result.slots,[{courseId:'21',date:'2026-11-03',start:'13:00',end:'13:40'}]);
