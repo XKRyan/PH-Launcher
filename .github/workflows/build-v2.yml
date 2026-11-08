@@ -93,6 +93,19 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --registry=https://registry.npmjs.org
 
+      - name: Ensure Electron binary is available
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if node -e "const p=require('electron'); process.exit(typeof p==='string'&&require('node:fs').existsSync(p)?0:1)"; then
+              exit 0
+            fi
+            echo "Electron binary missing (attempt $attempt); retrying download..."
+            node node_modules/electron/install.js || true
+            sleep 15
+          done
+          node -e "require('electron')"
+
       - name: Prepare pinned offline dictionary
         run: npm run dictionary:prepare
 
