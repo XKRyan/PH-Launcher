@@ -1529,6 +1529,10 @@ function renderAiConfig(force = false) {
     panel.innerHTML = `<h3>本地 AI</h3><p>PH Launcher 会按每台电脑的内存、显卡与磁盘空间推荐模型；同学安装时会得到各自的结果。仅在选择本地 AI 时，启动器会随程序准备模型；选择 API AI 或暂不启用时不会启动本地模型。</p>
       ${hardwareMarkup()}
       ${localDeploymentMarkup(recommendation)}
+      <div class="setting-row ai-thinking-row" style="margin:16px 0 4px;padding:12px 0">
+        <div><strong>思考模式</strong><small>支持 thinking 的本地模型会先单独输出思考过程；更慢，也会占用输出预算。</small></div>
+        <label class="switch"><input id="localThinkingInput" type="checkbox" ${ai.thinking ? 'checked' : ''}/><span></span></label>
+      </div>
       <details class="manual-ai-settings">
         <summary>手动连接已有 Ollama（高级）</summary>
         <div class="config-fields">
@@ -1629,6 +1633,16 @@ function blankAiProvider() {
 async function handleAiConfigPanelClick(event) {
   if (event.target.closest('#saveAiOff')) configureAi('off');
   if (event.target.closest('#saveLocalAi')) configureAi('local');
+  if (event.target.closest('#localThinkingInput')) {
+    const thinking = $('#localThinkingInput')?.checked === true;
+    try {
+      const saved = await window.ph.ai.configure({ thinking });
+      state.data.settings.ai = saved;
+      toast(thinking ? '已开启思考模式' : '已关闭思考模式');
+    } catch (error) {
+      toast(`无法保存思考模式：${error.message}`, 'error');
+    }
+  }
   if (event.target.closest('#saveApiAi')) configureAi('api');
   if (event.target.closest('#addApiProvider')) {
     // 先把界面上已有的编辑读回来，再加一条空行 —— 否则"添加服务商"会把刚填的内容清掉。
@@ -1708,6 +1722,7 @@ async function configureAi(provider) {
         provider: 'local',
         localEndpoint: $('#localEndpointInput').value.trim(),
         localModel: $('#localModelInput').value.trim(),
+        thinking: $('#localThinkingInput')?.checked === true,
       };
       if (!config.localModel) throw new Error('请填写模型名称');
     } else {

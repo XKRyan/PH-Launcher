@@ -1073,7 +1073,8 @@
   }
   function originalButton(url) { return url ? btn('在原网页查看', 'original', `data-url="${esc(url)}"`) : ''; }
   function contentRows(data) {
-    const blocks=Array.isArray(data.content)&&data.content.length?data.content:[{type:'text',text:data.description||''}];
+    const blocks=Array.isArray(data.content)&&data.content.length?data.content:(String(data.description||'').trim()?[{type:'text',text:data.description}]:[]);
+    if(!blocks.length)return '<p class="school-footnote">未读取到任务要求，请在原网页核对。</p>';
     let remaining=180;
     const integer=value=>Number.isInteger(value)&&Math.abs(value)<=999999;
     function render(items,depth=0) {
@@ -1089,7 +1090,8 @@
         return `<p class="school-prewrap">${esc(block.text)}</p>`;
       }).join('');
     }
-    return `<div class="school-rich-content" data-i18n-ignore>${render(blocks)}</div>`;
+    const rendered=render(blocks);
+    return rendered?`<div class="school-rich-content" data-i18n-ignore>${rendered}</div>`:'<p class="school-footnote">未读取到任务要求，请在原网页核对。</p>';
   }
   async function loadImage(button) {
     if(button.disabled)return;button.disabled=true;
@@ -1119,7 +1121,7 @@
     const confirmation = pending ? `<section class="school-upload-confirm" tabindex="-1" aria-label="确认上传文件"><h4>确认上传文件</h4><dl><dt>课程</dt><dd>${esc(courseName)}</dd><dt>任务</dt><dd>${esc(data.title)}</dd><dt>文件</dt><dd>${esc(pending.filename)}</dd><dt>大小</dt><dd>${esc(Number(pending.size).toLocaleString())} bytes</dd></dl><p>确认后会将此文件发送到这项 ManageBac 任务。选择文件本身不会上传。</p><div class="school-actions">${btn('取消选择', 'cancel-task-upload')}${btn('确认并上传', 'confirm-task-upload', '', true)}</div></section>` : '';
     const picker = data.uploadAvailable === true && data.submissionRequired !== false && typeof api().prepareTaskUpload === 'function' && typeof api().submitTaskUpload === 'function'
       ? btn(context.picking ? '正在选择文件…' : '选择要上传的文件', 'prepare-task-upload', locked || pending ? 'disabled' : '', true) : '';
-    const body = `<h2>${esc(data.title)}</h2><div class="school-detail-meta"><span data-i18n-ignore>${esc(courseName)}</span><span>${esc(data.dueAt ? stamp(data.dueAt) : data.dueText || '截止时间未提供')}</span><span class="school-task-state is-${status}">${taskStateLabel(status)}</span>${data.status ? `<span data-i18n-ignore>${esc(data.status)}</span>` : ''}${data.score ? `<span data-i18n-ignore>${esc(data.score)}</span>` : ''}</div><p class="school-task-requirement">${data.submissionRequired === true ? '需要提交' : data.submissionRequired === false ? '无需提交' : '提交要求请查详情'}</p><h4>任务要求</h4>${contentRows(data)}<h4>任务附件</h4>${attachmentRows(data.attachments) || '<p>未读取到附件，请在原网页核对。</p>'}<div class="school-dialog-actions">${originalButton(data.url)}</div>${picker || pending || outcome ? '<h4>上传任务文件</h4>' : `<p>${data.submissionRequired === false ? '无需提交' : '未确认可在线提交，请在原网页核对任务要求。'}</p>`}${uploadNote}${confirmation}${context.error ? `<p class="school-error" role="alert">${esc(context.error)}</p>` : ''}${picker}${picker || pending || outcome ? '<p class="school-footnote">上传后仍需核对学校网站的接收结果；这里不会擅自标记为已提交。</p>' : ''}`;
+    const body = `<h2>${esc(data.title)}</h2><div class="school-detail-meta"><span data-i18n-ignore>${esc(courseName)}</span><span>${esc(data.dueAt ? stamp(data.dueAt) : data.dueText || '截止时间未提供')}</span><span class="school-task-state is-${status}">${taskStateLabel(status)}</span>${data.status ? `<span data-i18n-ignore>${esc(data.status)}</span>` : ''}${data.score ? `<span data-i18n-ignore>${esc(data.score)}</span>` : ''}</div><p class="school-task-requirement">${data.submissionRequired === true ? '需要提交' : data.submissionRequired === false ? '无需提交' : '提交要求请查详情'}</p><h4>任务要求</h4>${contentRows(data)}<h4>任务附件</h4>${attachmentRows(data.attachments) || '<p>未读取到附件，请在原网页核对。</p>'}<div class="school-dialog-actions">${originalButton(data.url)}</div>${picker || pending || outcome ? '<h4>上传任务文件</h4>' : `<p>${data.submissionRequired === false ? '无需提交' : '未确认可在线提交，请在原网页核对任务要求。'}</p>${data.submissionRequired === true && data.url ? `<div class="school-actions">${btn('去原网页提交', 'original', `data-url="${esc(data.url)}"`, true)}</div>` : ''}`}${uploadNote}${confirmation}${context.error ? `<p class="school-error" role="alert">${esc(context.error)}</p>` : ''}${picker}${picker || pending || outcome ? '<p class="school-footnote">上传后仍需核对学校网站的接收结果；这里不会擅自标记为已提交。</p>' : ''}`;
     showDialog('任务详情', body, `${btn('返回课程', 'course', `data-id="${esc(context.courseId)}"`)}${btn('刷新任务详情', 'refresh-task-detail', outcome?.state === 'uploading' || context.picking ? 'disabled' : '')}${btn('返回列表', 'close')}`, context);
     if (pending) modal.querySelector('.school-upload-confirm')?.focus();
   }

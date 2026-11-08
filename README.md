@@ -4,7 +4,7 @@ PH Launcher 是面向平和 IB 学生的开源桌面学习工作台。它把学�
 
 ## 1.0.10 协作版本
 
-PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher)：XKRyan 与 huaziqian40-bot 的学生工具项目协作整合。本版以 PH Launcher 为主体，保留双方署名，并将学校认证适配代码整合到本仓库。组合发行版采用 GPL-3.0-or-later；来源与原 PH Launcher 的 MIT 条款见 [许可证](#许可证)。
+PH Launcher × [Hello Pinghe! Launcher](https://github.com/huaziqian40-bot/Hello-Pinghe-Launcher)：[XKRyan](https://github.com/XKRyan)（ryanliu3014@outlook.com）与 huaziqian40-bot 的学生工具项目协作整合。本版以 PH Launcher 为主体，保留双方署名，并将学校认证适配代码整合到本仓库。组合发行版采用 GPL-3.0-or-later；来源与原 PH Launcher 的 MIT 条款见 [许可证](#许可证)。
 
 - 背单词：分组认识新词后再回忆、打乱新词顺序、跳过已会词、保存自己的表达，以及可选的本地 AI 表达纠错；保留阅读收词、FSRS 6 间隔复习与词本导入导出。
 - 从每天半页开始：粘贴自己的阅读材料，逐词查词、标记生词、确认阅读记录。统计是自己确认的阅读量，不是理解程度或词汇量测试。

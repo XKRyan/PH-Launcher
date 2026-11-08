@@ -107,6 +107,19 @@ test('task requirements preserve ordered lists, images within items and nested l
  assert.ok(!JSON.stringify(task.content).includes('onerror'));
 });
 
+test('task detail does not present page metadata as the requirement', () => {
+ const task=parseTaskDetail(`<div class="core-task-show"><div class="fusion-card-item"><h1 class="title">Silent Spring Non-lit reading practice</h1><span class="badge-label">Pending</span><span class="due-date">Sunday at 8:00 PM</span><div class="task-meta"><span>Nov</span><span>8</span><span class="badge">Summative</span><span class="badge">Coursework</span><span class="badge">Pending</span><span class="badge">Dropbox</span></div></div></div>`,'21','31');
+ assert.deepEqual(task.content,[]);
+ assert.equal(task.description,'');
+});
+
+test('task detail reads the description body and exposes a Dropbox submission', () => {
+ const task=parseTaskDetail(`<div class="core-task-show"><div class="fusion-card-item"><h1 class="title">Silent Spring Non-lit reading practice</h1><span class="badge-label">Not Submitted</span><span class="due-date">Sunday at 8:00 PM</span><div class="fr-view"><p>Read chapters 1–2.</p></div></div><a href="/student/classes/21/core_tasks/31/dropbox">Dropbox</a></div>`,'21','31');
+ assert.deepEqual(task.content,[{type:'text',text:'Read chapters 1–2.'}]);
+ assert.equal(task.submissionRequired,true);
+ assert.equal(task.uploadAvailable,true);
+});
+
 test('calendar requirements keep custom numbering and reversed alphabetic lists', async () => {
  const data=JSON.stringify([{id:'numbered',title:'Numbered event',start:'2026-11-06',description:'<ol start="5" reversed type="A"><li>First</li><li value="2">Second</li></ol><p>After list</p>'}]);
  const result=await client(data).getCourseDetail('21');const content=result.tasks.find(t=>t.kind==='event').content;

@@ -374,6 +374,9 @@ function createDefaultData() {
         updated_by: '',
         localEndpoint: 'http://127.0.0.1:11434',
         localModel: '',
+        // Ollama thinking models can stream a separate reasoning field. Off by
+        // default because small local models are slower and think in circles.
+        thinking: false,
         apiEndpoint: 'https://api.openai.com/v1',
         apiModel: '',
         apiProtocol: 'openai',
@@ -657,6 +660,7 @@ class SecureStore {
       'default_index',
       'localEndpoint',
       'localModel',
+      'thinking',
       'apiEndpoint',
       'apiModel',
       'apiProtocol',
@@ -3109,15 +3113,19 @@ async function requestAiTurn(config, messages, tools, { signal, onDelta, onReaso
     if (!endpoint || !isLoopbackHost(endpoint.hostname)) throw new Error('本地 AI 地址必须是本机地址');
     if (!String(config.localModel || '').trim()) throw new Error('请填写本地模型名称');
     const url = new URL('/api/chat', endpoint);
+    const thinking = config.thinking === true;
     const payload = {
       model: config.localModel,
       messages,
       stream: Boolean(onDelta),
       keep_alive: '10m',
-      think: false,
+      think: thinking,
       // A conversational request does not need the model's maximum context.
-      // Keeping this bounded reduces first-token latency and RAM pressure.
-      options: { num_ctx: tools.length ? 16384 : 4096, num_predict: tools.length ? 1536 : 768 },
+      // Thinking models spend output budget on reasoning, so give them more
+      // room; otherwise a small model can burn the whole answer on thinking.
+      options: thinking
+        ? { num_ctx: tools.length ? 16384 : 8192, num_predict: tools.length ? 4096 : 3072 }
+        : { num_ctx: tools.length ? 16384 : 4096, num_predict: tools.length ? 1536 : 768 },
     };
     if (tools.length) payload.tools = tools;
     if (payload.stream) {

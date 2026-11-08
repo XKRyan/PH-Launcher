@@ -501,6 +501,24 @@ function taskDescription(node) {
   for (const item of copy.querySelectorAll('p,div,li,h1,h2,h3,h4,h5,h6,tr,section')) { item.prepend('\n'); item.append('\n'); }
   return String(copy.textContent || '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, 8000);
 }
+function taskBody(root) {
+  // ManageBac renders the real description in a Froala body on most tasks. When
+  // that container is absent (for example a task that only has a Dropbox upload
+  // and an image), the page's badges, due date and labels used to fall through
+  // into "任务要求" as meaningless lines like "Nov / 8 / Summative / Dropbox".
+  // Prefer a real description container; otherwise strip the page chrome and
+  // return an empty body rather than pretending metadata is the requirement.
+  const preferred = root.querySelector('.fr-view, .task-description, .description, [data-task-description], .core-task-description, .task-requirements');
+  if (preferred) return preferred;
+  const copy = root.cloneNode(true);
+  for (const item of copy.querySelectorAll([
+    'nav', 'form', '.recent-discussions', '.title', '.badge', '.badge-label', '.due-date', '.assessment',
+    '.task-meta', '.task-info', '.core-task-meta', '.task-type', '.category-label', '.submission-status',
+    '.task-status', '.dropbox', '.attachments', '.files', '.actions', '.buttons', '.class-name',
+    '.course-name', 'time', '[data-ec3-info]', '[data-task-type]', '[data-submission-required]',
+  ].join(','))) item.remove();
+  return copy;
+}
 function parseTaskDetail(html, courseId, taskId) {
   const doc = htmlDocument(html);
   const root = doc.querySelector('.core-task-show');
@@ -511,12 +529,19 @@ function parseTaskDetail(html, courseId, taskId) {
   const dueText = text(head, '.due-date', 200);
   const dueAt = exactDueDate(head);
   const score = text(head, '.assessment', 120);
-  const uploadAvailable = Boolean(parseDropboxUploadForm(html, courseId, taskId)?.action || parseDropboxLinks(html, courseId, taskId).length);
   const metadata = taskMetadata(root);
   const headMetadata = taskMetadata(head);
   metadata.category ||= headMetadata.category;
   metadata.submissionRequired ??= headMetadata.submissionRequired;
-  return { title, status, dueText, dueAt, score, ...metadata, uploadAvailable, description: taskDescription(root), content: richContent(root.querySelector('.fr-view, .task-description, .description') || root), attachments: taskAttachments(root, courseId, taskId) };
+  const unsubmitted = /not\s*submitted|pending|未提交|待提交|待处理/i.test(`${status} ${score}`);
+  const dropboxMentioned = /dropbox/i.test(html) || Boolean(root.querySelector('a[href*="dropbox" i], form[action*="dropbox" i], [class*="dropbox" i]'));
+  if (metadata.submissionRequired === null && unsubmitted && dropboxMentioned) metadata.submissionRequired = true;
+  const hasUploadForm = Boolean(parseDropboxUploadForm(html, courseId, taskId)?.action || parseDropboxLinks(html, courseId, taskId).length);
+  // A Dropbox task that still says "Not Submitted" is submittable even when the
+  // form is loaded by a link or script; submitTaskFile re-reads both task paths.
+  const uploadAvailable = hasUploadForm || (unsubmitted && dropboxMentioned);
+  const body = taskBody(root);
+  return { title, status, dueText, dueAt, score, ...metadata, uploadAvailable, description: taskDescription(body), content: richContent(body), attachments: taskAttachments(root, courseId, taskId) };
 }
 function discussionAuthor(node) {
   if (!node) return { author: '', category: '' };
