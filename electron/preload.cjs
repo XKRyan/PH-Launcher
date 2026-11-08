@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld('ph', {
   },
   system: {
     openVlmReader: () => ipcRenderer.invoke('system:vlmreader-open'),
+    studyMateStatus: () => ipcRenderer.invoke('system:studymate-status'),
+    openStudyMate: () => ipcRenderer.invoke('system:studymate-open'),
     version: () => ipcRenderer.invoke('system:version'),
     hardware: () => ipcRenderer.invoke('system:hardware'),
     openUrl: (url) => ipcRenderer.invoke('system:open-url', url),

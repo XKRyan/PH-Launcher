@@ -230,6 +230,7 @@
 
         <section class="page" data-page="ai">
           <div class="page-intro"><div><span class="section-kicker">OPTIONAL AI</span><h2>AI 学习助手</h2><p>默认关闭。你也可以单独授权它读取和整理启动器内容。</p></div><div class="ai-page-actions"><span class="privacy-badge"><i></i>权限由你控制</span><button class="secondary-button hidden" id="aiEditConfig">连接设置</button></div></div>
+          <section class="study-tool-card" id="studyMateCard" aria-live="polite"></section>
           <div class="ai-setup" id="aiSetup">
             <section class="ai-choice-panel"><h3>选择使用方式</h3><p>跳过 AI 不会下载模型、启动服务或发出请求。</p><div class="ai-choice-list"><button class="active" data-ai-provider="off"><span class="choice-radio"></span><div><strong>暂不启用</strong><small>保留全部离线学习工具</small></div></button><button data-ai-provider="local"><span class="choice-radio"></span><div><strong>本地 AI</strong><small>通过 Ollama 在本机运行，内容不离开电脑</small></div></button><button data-ai-provider="api"><span class="choice-radio"></span><div><strong>API AI</strong><small>连接支持 OpenAI-compatible 的服务</small></div></button></div></section>
             <section class="ai-config-panel" id="aiConfigPanel"></section>
@@ -302,6 +303,7 @@
     <script src="./account-ui.js"></script>
     <script src="./account-bridge.js"></script>
     <script src="./vlmreader-ui.js"></script>
+    <script src="./studymate-ui.js"></script>
     <script src="./app.js"></script>
     <dialog class="modal onboarding-dialog" id="onboardingDialog"><form id="onboardingForm"><div class="modal-head"><div><span class="section-kicker">WELCOME</span><h3>欢迎使用 PH Launcher</h3></div><button type="button" id="onboardingClose" aria-label="关闭引导">×</button></div><div id="onboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="onboardingSkip">跳过引导</button><div><button class="secondary-button" type="button" id="onboardingBack">上一步</button><button class="primary-button" type="button" id="onboardingNext">下一步</button></div></div></form></dialog>
     <dialog class="modal onboarding-dialog" id="phixOnboardingDialog"><form id="phixOnboardingForm"><div class="modal-head"><div><span class="section-kicker">PHIX</span><h3>phix 云同步账号</h3></div><button type="button" id="phixOnboardingClose" aria-label="关闭">×</button></div><div id="phixOnboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="phixOnboardingSkip">跳过</button><div id="phixOnboardingActions"></div></div></form></dialog>
