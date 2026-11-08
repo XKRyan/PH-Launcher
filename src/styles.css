@@ -1002,15 +1002,14 @@ body.loaded .app-shell { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
-/* Study companions (VLMReader, StudyMate): one shared page-intro + card pattern. */
-.study-tool-card { display: flex; align-items: flex-start; gap: 18px; max-width: 760px; margin-bottom: 18px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--white); box-shadow: var(--shadow-sm); }
-.study-tool-body { flex: 1; min-width: 0; }
-.study-tool-body p { margin: 0 0 10px; line-height: 1.7; }
-.study-tool-body small { color: var(--ink-2); }
-.study-tool-note { color: var(--ink-2); font-size: .875rem; }
-.study-tool-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.study-tool-source { display: grid; gap: .5rem; max-width: 320px; margin: 18px 0 0; }
-.study-tool-source select { width: 100%; padding: .65rem; border: 1px solid var(--border); border-radius: 10px; color: inherit; background: transparent; }
+/* Companion reader entry: same page-intro + card pattern as the other pages. */
+.vlm-reader-card { display: flex; align-items: flex-start; gap: 18px; max-width: 760px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--white); box-shadow: var(--shadow-sm); }
+.vlm-reader-body { flex: 1; min-width: 0; }
+.vlm-reader-body p { margin: 0 0 10px; line-height: 1.7; }
+.vlm-reader-body small { color: var(--ink-2); }
+.vlm-reader-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.vlm-download-source { display: grid; gap: .5rem; max-width: 320px; margin: 18px 0 0; }
+.vlm-download-source select { width: 100%; padding: .65rem; border: 1px solid var(--border); border-radius: 10px; color: inherit; background: transparent; }
 
 /* Short windows (e.g. 1040×700): keep the sidebar timer to two rows so the
    navigation list keeps room instead of being pushed into a tiny scroll area.

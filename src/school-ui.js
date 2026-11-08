@@ -666,13 +666,11 @@
     return `<div class="school-unit-list">${units.slice(0,preview?3:200).map(unit=>`<article class="school-unit-card"><div><h3 data-i18n-ignore>${esc(unit.title)}</h3><div class="school-unit-meta">${unit.state?`<span class="school-unit-state">${unit.state==='current'?'当前单元':'已结束'}</span>`:''}${unit.level?`<span data-i18n-ignore>${esc(unit.level)}</span>`:''}${unit.start?`<span data-i18n-ignore>${esc(unit.start)}</span>`:''}${unit.duration?`<span data-i18n-ignore>${esc(unit.duration)}</span>`:''}${unit.lessons>0?`<span>${unit.lessons} 节课</span>`:''}${unit.tasks>0?`<span>${unit.tasks} 项任务</span>`:''}</div></div>${preview?'':originalButton(unit.url)}</article>`).join('')}</div>`;
   }
   function taskRows(items, compact = false) {
-    const total = items.length;
-    const rows = items.slice(0, 150).map((task) => {
+    return items.map((task) => {
       const hidden = (prefs().hiddenTasks || []).includes(task.id);
       const status = taskState(task);
       return `<article class="school-task-row ${hidden ? 'is-hidden-task' : ''}${compact ? ' is-compact' : ''}" data-task-status="${status}"><button type="button" class="school-task-main" data-school-action="${task.kind === 'event' ? 'calendar-task' : 'task'}" data-course="${esc(task.courseId)}" data-id="${esc(task.kind === 'event' ? task.id : String(task.id).split(':').at(-1))}"><span class="school-task-course">${esc(task.course || '课程任务')}</span><strong>${esc(task.title)}</strong><span class="school-task-kind" data-i18n-ignore>${esc(task.category || '')}</span><span class="school-task-requirement">${task.submissionRequired === true ? '需要提交' : task.submissionRequired === false ? '无需提交' : '提交要求请查详情'}</span>${task.stale ? '<span class="school-task-cache-label">上次读取 · 尚未更新</span>' : ''}<span class="school-task-due ${status === 'overdue' ? 'is-overdue' : ''}">${esc(task.dueAt ? stamp(task.dueAt) : task.dueText || '截止日期请查原网页')}${task.dueDateOnly ? (task.kind === 'event' ? ' · 全天' : ' · 当天结束（未提供具体时间）') : ''}${task.status ? ` · ${esc(task.status)}` : ''}</span>${soon(task) ? '<span class="school-task-urgency">24 小时内到期 / 开始</span>' : ''}<span class="school-task-state is-${status}">${taskStateLabel(status)}</span></button>${task.score ? `<span class="school-score">${esc(task.score)}</span>` : ''}${compact ? '' : `<button type="button" class="school-text-button" data-school-action="hide-task" data-id="${esc(task.id)}" title="仅更改本地列表，不修改 ManageBac">${hidden ? '恢复' : '隐藏'}</button>`}</article>`;
     }).join('');
-    return rows + (total > 150 ? `<div class="school-task-more">仅显示前 150 项，共 ${total} 项；请用搜索或筛选缩小范围。</div>` : '');
   }
   // Negation and requested actions must win over positive words in school status text.
   const submitted = window.schoolTasks?.submitted || ((task) => {
@@ -1385,48 +1383,6 @@
     if (root) return;
     root = document.getElementById('schoolPage'); if (!root) return;
     root.addEventListener('click', onClick);
-    // Task/course search used to rebuild the whole school page on every
-    // keystroke. With a real account that is hundreds of rows of HTML plus
-    // layout, so typing felt like wading through mud. Keep the state immediate,
-    // debounce the render, and flush on composition end so Chinese IME input
-    // still commits in one pass.
-    let inputRenderTimer = 0;
-    const defer = (fn, ms) => {
-      // linkedom-based UI tests do not expose timers; run synchronously there so
-      // filtering assertions stay deterministic. Real browsers hit setTimeout.
-      if (typeof setTimeout === 'function') return setTimeout(fn, ms);
-      fn(); return 0;
-    };
-    const cancelDefer = id => {
-      if (id && typeof clearTimeout === 'function') clearTimeout(id);
-    };
-    const applyQuery = (field, value) => {
-      if (field === 'class-query') { if (courseDetail) courseDetail.query = value; }
-      else if (field === 'course-query') state.courseQuery = value;
-      else state.query = value;
-    };
-    const focusQuery = (field, start, end) => {
-      const input = root.querySelector(`[data-school-field="${field}"]`);
-      if (!input) return;
-      input.focus();
-      if (typeof start === 'number') try { input.setSelectionRange(start, end); } catch {}
-    };
-    const scheduleQueryRender = (field, value, start, end) => {
-      applyQuery(field, value);
-      cancelDefer(inputRenderTimer);
-      inputRenderTimer = defer(() => {
-        inputRenderTimer = 0;
-        render();
-        focusQuery(field, start, end);
-      }, 140);
-    };
-    const flushQueryRender = (field, value, start, end) => {
-      applyQuery(field, value);
-      cancelDefer(inputRenderTimer);
-      inputRenderTimer = 0;
-      render();
-      focusQuery(field, start, end);
-    };
     root.addEventListener('change', (event) => {
       const field = event.target.dataset.schoolField;
       if (field === 'class-switch') { consent('managebac', () => openCourse(event.target.value)); return; }
@@ -1434,19 +1390,21 @@
       if (field === 'task-sort') state.taskSort = event.target.value;
       if (field === 'task-course') state.taskCourse = event.target.value;
       if (field === 'task-status') state.taskStatus = event.target.value;
-      if (field) { cancelDefer(inputRenderTimer); inputRenderTimer = 0; render(); }
+      if (field) render();
     });
     root.addEventListener('input', (event) => {
-      const field = event.target.dataset.schoolField;
-      if (event.isComposing) return;
-      if (field === 'class-query') { if (courseDetail) scheduleQueryRender(field, event.target.value, event.target.selectionStart, event.target.selectionEnd); return; }
-      if (field !== 'query' && field !== 'course-query') return;
-      scheduleQueryRender(field, event.target.value, event.target.selectionStart, event.target.selectionEnd);
+      if (event.target.dataset.schoolField === 'class-query') { if (!event.isComposing && courseDetail) { courseDetail.query = event.target.value; render(); } return; }
+      if (!['query', 'course-query'].includes(event.target.dataset.schoolField) || event.isComposing) return;
+      const courseSearch = event.target.dataset.schoolField === 'course-query';
+      if (courseSearch) { state.courseQuery = event.target.value; render(); const input = root.querySelector('[data-school-field="course-query"]'); input?.focus(); return; }
+      const start = event.target.selectionStart; const end = event.target.selectionEnd; state.query = event.target.value; render();
+      const input = root.querySelector('[data-school-field="query"]'); input?.focus(); if (input && typeof start === 'number') try { input.setSelectionRange(start, end); } catch {}
     });
     root.addEventListener('compositionend', (event) => {
-      const field = event.target.dataset.schoolField;
-      if (field === 'class-query' && courseDetail) { flushQueryRender(field, event.target.value, event.target.selectionStart, event.target.selectionEnd); return; }
-      if (field === 'query' || field === 'course-query') flushQueryRender(field, event.target.value, event.target.selectionStart, event.target.selectionEnd);
+      if (event.target.dataset.schoolField === 'class-query' && courseDetail) { courseDetail.query = event.target.value; render(); return; }
+      if (event.target.dataset.schoolField === 'course-query') { state.courseQuery = event.target.value; render(); root.querySelector('[data-school-field="course-query"]')?.focus(); return; }
+      if (event.target.dataset.schoolField !== 'query') return;
+      state.query = event.target.value; render();
     });
     bindCourseDrag();
     setInterval(updateTimeLine, 30000);

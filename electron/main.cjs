@@ -4624,23 +4624,6 @@ function registerIpc() {
     assertMainRenderer(event);
     return vlmReaderLauncher.open();
   });
-  const studyMateLauncher = require('./studymate-launcher.cjs').createStudyMateLauncher({
-    getConfiguredRoot: () => secureStore?.data?.settings?.studyMatePath || '',
-  });
-  ipcMain.handle('system:studymate-status', (event) => {
-    assertMainRenderer(event);
-    return studyMateLauncher.status();
-  });
-  ipcMain.handle('system:studymate-open', async (event) => {
-    assertMainRenderer(event);
-    const result = await studyMateLauncher.open();
-    // Starting the desktop build already creates its own window; only hand an
-    // already-running local service to the default browser.
-    if (result.opened && result.url && !result.spawned) {
-      try { await shell.openExternal(result.url); } catch { /* keep the opened flag */ }
-    }
-    return result;
-  });
   ipcMain.handle('system:open-url', (event, rawUrl) => {
     assertMainRenderer(event);
     const parsed = safeHttpUrl(rawUrl, true);
