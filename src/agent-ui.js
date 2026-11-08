@@ -2,6 +2,7 @@
   'use strict';
   const sessions = [];
   let current = null;
+  let showAllSessions = false;
   let connectionKey = '';
   let memories = [];
   let historyAvailable = false;
@@ -81,7 +82,7 @@
 
   function renderHistory() {
     const list = document.getElementById('agentSessions');
-    if (list) list.innerHTML = sessions.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}><span class="agent-session-title">${esc(titleFor(session))}</span>${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('');
+    if (list) { const visible = showAllSessions ? sessions : sessions.slice(0, 5); const more = sessions.length > 5 ? `<button type="button" class="agent-session-more" data-agent-all-sessions>${showAllSessions ? '收起会话' : `查看全部 ${sessions.length} 个会话`}</button>` : ''; list.innerHTML = visible.map((session) => `<div class="agent-session-row"><button type="button" data-agent-session="${esc(session.id)}" class="${session === current ? 'active' : ''}"${state.aiBusy ? ' disabled' : ''}${sessionCannotContinue(session) ? ' data-agent-foreign="true"' : ''}><span class="agent-session-title">${esc(titleFor(session))}</span>${session.shared ? `<span class="agent-session-badge">${esc(session.sharedApp || 'Lite')}</span>` : ''}</button><button type="button" class="agent-session-delete" data-agent-delete="${esc(session.id)}" aria-label="${esc(window.i18n?.t('删除会话') || '删除会话')}"${state.aiBusy ? ' disabled' : ''}>×</button></div>`).join('') + more; }
     const status = document.getElementById('agentHistoryStatus');
     if (status) {
       status.classList.toggle('error', Boolean(historyError));
@@ -264,7 +265,7 @@
   function mount() {
     window.addEventListener('ph:language-changed', render);
     document.getElementById('agentNewChat')?.addEventListener('click', () => { if (state.aiBusy) return; ensureCurrent(); if (current && !current.messages.some((message) => message.role === 'user')) return; flushSession(current); newSession(); window.renderAi(); render(); });
-    document.getElementById('agentSessions')?.addEventListener('click', (event) => { const remove = event.target.closest('[data-agent-delete]'); if (remove) { void removeSession(remove.dataset.agentDelete); return; } const id = event.target.closest('[data-agent-session]')?.dataset.agentSession; const item = sessions.find((session) => String(session.id) === String(id)); if (!item || state.aiBusy || item === current) return; flushSession(current); current = item; state.aiMessages = item.messages; window.renderAi(); render(); });
+    document.getElementById('agentSessions')?.addEventListener('click', (event) => { if (event.target.closest('[data-agent-all-sessions]')) { showAllSessions = !showAllSessions; renderHistory(); return; } const remove = event.target.closest('[data-agent-delete]'); if (remove) { void removeSession(remove.dataset.agentDelete); return; } const id = event.target.closest('[data-agent-session]')?.dataset.agentSession; const item = sessions.find((session) => String(session.id) === String(id)); if (!item || state.aiBusy || item === current) return; flushSession(current); current = item; state.aiMessages = item.messages; window.renderAi(); render(); });
     document.getElementById('agentHistoryStatus')?.addEventListener('click', (event) => { if (event.target.closest('[data-agent-history-retry]')) { historyError = ''; if (saveFailed) retryFailedSaves(); else void loadHistory(); } });
     document.getElementById('agentMemoryForm')?.addEventListener('submit', (event) => { event.preventDefault(); void saveMemory(); });
     document.getElementById('agentMemorySave')?.addEventListener('click', (event) => { event.preventDefault(); void saveMemory(); });

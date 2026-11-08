@@ -43,23 +43,37 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 #commandButton { min-width:240px; max-width:320px; white-space:nowrap; }
 #commandButton span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .primary-nav .nav-group-label { margin-top:12px; margin-bottom:6px; font-weight:600; font-size:.78rem; }
-.agent-workspace { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; align-items:start; }
-.agent-sidebar { padding:22px; border:1px solid var(--border); border-radius:18px; background:var(--white); }
-.agent-sidebar h3 { margin:0 0 12px; font-size:1rem; }
-.agent-sidebar .ai-control-strip { display:block; border:0; padding:0; background:none; }
-.agent-sidebar .ai-control-strip > div { display:block; }
-.agent-sidebar .ai-control-strip strong, .agent-sidebar .ai-control-strip > label { display:none; }
-.agent-sidebar .ai-control-strip small { display:block; font-size:.82rem; line-height:1.6; margin:12px 0 24px; }
-.agent-permissions { display:flex; flex-wrap:wrap; gap:8px; }
-.agent-permissions button { padding:10px; border-radius:12px; background:var(--ivory-100); color:var(--ink-2); font-size:.85rem; }
-.agent-permissions button.active { background:var(--green-800); color:white; }
-.agent-permission-note { margin:10px 0 18px; color:var(--ink-2); font-size:.82rem; line-height:1.55; }
-.agent-sidebar .primary-button, .agent-sidebar .secondary-button { width:100%; margin-bottom:12px; }
-.agent-session-list { display:grid; gap:6px; margin:0 0 24px; }
-.agent-session-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; align-items:center; }
-.agent-session-list button { display:flex; align-items:center; min-width:0; padding:10px; text-align:left; color:var(--ink-2); background:none; border-radius:8px; overflow:hidden; font-size:.85rem; }
+.agent-workspace { display:grid; grid-template-columns:280px minmax(0,1fr); gap:16px; align-items:start; }
+.agent-sidebar { position:sticky; top:12px; max-height:calc(100vh - 150px); overflow:auto; padding:18px; border:1px solid var(--border); border-radius:18px; background:var(--white); scrollbar-width:thin; }
+.agent-sidebar-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.agent-sidebar-head h3 { margin:2px 0 0; font-size:1.05rem; }
+.agent-new-chat { display:grid; place-items:center; width:34px; height:34px; padding:0; border:1px solid var(--border); border-radius:50%; background:var(--ivory-50); color:var(--green-800); font-size:1.15rem; line-height:1; }
+.agent-new-chat:hover { background:var(--green-800); color:#fff; }
+.agent-session-list { display:grid; gap:2px; margin:8px 0 0; }
+.agent-session-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px; align-items:center; }
+.agent-session-list button { display:flex; align-items:center; min-width:0; padding:8px 9px; text-align:left; color:var(--ink-2); background:none; border-radius:8px; overflow:hidden; font-size:.84rem; }
 .agent-session-list button.active { background:var(--green-50); color:var(--green-800); }
-/* 标题截断，Lite 徽标保持可见 */
+.agent-session-more { margin-top:2px; padding:7px 9px; color:var(--ink-3); font-size:.78rem; text-align:left; background:none; }
+.agent-sidebar-section { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+.agent-section-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; }
+.agent-section-head strong { font-size:.92rem; }
+.agent-permissions { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.agent-permissions button { padding:8px 6px; border-radius:9px; background:var(--ivory-100); color:var(--ink-2); font-size:.78rem; text-align:center; }
+.agent-permissions button.active { background:var(--green-800); color:white; }
+.agent-permission-note { margin:8px 0 0; color:var(--ink-3); font-size:.76rem; line-height:1.5; }
+.agent-sidebar .ai-control-strip { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; padding:14px 0 0; border:0; border-top:1px solid var(--border); background:none; }
+.agent-sidebar .ai-control-strip > div { display:block; }
+.agent-sidebar .ai-control-strip .section-kicker { display:block; margin-bottom:2px; }
+.agent-sidebar .ai-control-strip strong { display:block; font-size:.9rem; }
+.agent-sidebar .ai-control-strip small { display:block; margin-top:2px; color:var(--ink-3); font-size:.74rem; line-height:1.45; }
+.agent-more { margin-top:14px; padding-top:10px; border-top:1px solid var(--border); }
+.agent-more > summary { padding:4px 0; color:var(--ink-2); font-size:.85rem; font-weight:600; cursor:pointer; }
+.agent-more[open] > summary { margin-bottom:8px; }
+.agent-more .agent-memory-panel { margin:8px 0; padding:8px 0; border:0; }
+.agent-more .agent-sidebar-section { margin-top:10px; padding-top:10px; }
+.agent-more .agent-model { margin:0 0 8px; font-size:.8rem; }
+.agent-more .secondary-button { width:100%; }
+/* Session title truncates; the Lite badge stays visible. */
 .agent-session-title { display:block; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .agent-session-badge { flex:0 0 auto; margin-left:6px; padding:1px 6px; border-radius:999px; background:var(--ivory-100,#f2efe7); color:var(--ink-3); font-size:.6875rem; font-weight:600; }
 .agent-session-list .agent-session-delete { padding:7px 9px; text-align:center; color:var(--ink-3); }
@@ -80,7 +94,7 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .agent-memory-toggle input { accent-color:var(--green-700); }
 .agent-memory-toggle small { color:var(--wine-700); }
 .agent-model { color:var(--ink-2); font-size:.85rem; overflow-wrap:anywhere; margin:0 0 12px; }
-.agent-conversation { height:calc(100vh - 250px); min-height:420px; grid-template-rows:minmax(0,1fr) auto; }
+.agent-conversation { height:calc(100vh - 200px); min-height:420px; grid-template-rows:minmax(0,1fr) auto; }
 .agent-conversation .chat-messages { padding:24px; }
 .agent-conversation .chat-bubble { max-width:88%; font-size:1rem; }
 .agent-conversation .chat-composer textarea { font-size:1rem; line-height:1.5; min-width:0; min-height:44px; max-height:112px; }
@@ -112,7 +126,7 @@ button:focus-visible { outline:2px solid var(--gold-600); outline-offset:3px; }
 .agent-sidebar .agent-workspace-actions .secondary-button { width:100%; margin-bottom:0; }
 .agent-workspace-actions .ghost-button { margin-left:auto; }
 @media(max-width:1100px) { .agent-workspace { grid-template-columns:200px minmax(0,1fr); gap:12px; } .agent-sidebar { padding:16px; } }
-@media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .agent-sidebar h3,.agent-sidebar .ai-control-strip,.agent-sidebar .agent-permission-note,.agent-session-list { grid-column:1/-1; } }
+@media(max-width:860px) { .agent-workspace { grid-template-columns:1fr; } .agent-sidebar { position:static; max-height:none; display:block; } }
 /* 心履账号只在使用该模块时需要；登录信息不会进入通用数据快照。 */
 .xinlv-settings { border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: color-mix(in srgb, var(--paper) 86%, var(--accent) 14%); }
 .xinlv-settings .setting-intro { margin: 0 0 12px; }
