@@ -44,6 +44,8 @@ jobs:
     timeout-minutes: 60
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
       EXPECTED_SHA: ${{ inputs.source_sha }}
       EXPECTED_VERSION: ${{ inputs.version }}
       BUILD_PLATFORM: ${{ matrix.platform }}
