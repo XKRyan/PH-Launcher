@@ -37,7 +37,7 @@ verify_universal_app() {
   [[ "$bundle_id" == "cn.phlauncher.desktop" ]] || { echo "$label bundle ID mismatch: $bundle_id" >&2; return 1; }
   executable="$app_path/Contents/MacOS/PH Launcher"
   [[ -x "$executable" ]] || { echo "$label executable is missing" >&2; return 1; }
-  [[ -f "$app_path/Contents/Resources/dictionary/ecdict.db" ]] || { echo "$label offline dictionary is missing" >&2; return 1; }
+  [[ ! -e "$app_path/Contents/Resources/dictionary/ecdict.db" ]] || { echo "$label unexpectedly contains the removed offline dictionary" >&2; return 1; }
   [[ -f "$app_path/Contents/Resources/icon.icns" ]] || { echo "$label macOS icon is missing" >&2; return 1; }
 
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_path"
@@ -90,4 +90,4 @@ mkdir -m 700 "$temporary_directory/zip"
 /usr/bin/ditto -x -k "$zip_archive" "$temporary_directory/zip"
 verify_universal_app "$temporary_directory/zip/PH Launcher.app" "ZIP app"
 
-echo "Mac preview contains an ad-hoc signed Universal app, branded DMG layout, first-open help and offline dictionary."
+echo "Mac preview contains an ad-hoc signed Universal app, branded DMG layout and first-open help, without the removed offline dictionary."
