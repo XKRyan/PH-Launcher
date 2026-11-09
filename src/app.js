@@ -246,51 +246,119 @@ function relativeTime(value) {
 }
 
 /* ---------------- 发现新版本：卡片（取消 / 跳过本版本 / 更新） ----------------
- * 主进程只负责**检查与通知**；下不下载、装不装，永远由用户在这张卡片上决定。
+ * 检查与下载都在后台静默进行；卡片只在「启动时发现更新」或「手动检查更新」时出现。
+ * 没下完时卡片上显示下载进度条；下载完成才让用户点「重启并安装」。
  * 「跳过本版本」记住的是版本号本身：之后更高的版本还会再提示。
  */
 //: 用户已经在卡片上做过选择（含按 Esc 关掉）——避免重复把选择回传主进程
 let updateChoiceSent = false;
+//: 当前卡片显示的版本 / 用户主动关掉的版本（关掉后进度事件不能把卡片重新弹出来）
+let updateShowingVersion = '';
+let updateDismissedVersion = '';
 
-function showUpdateCard(info) {
+function updatePercentValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
+}
+
+/** 按主进程的更新状态画卡片内容（不负责打开/关闭）。 */
+function paintUpdateCard(info) {
   const dialog = $('#updateDialog');
-  if (!dialog) return;
-  const latest = String(info?.version || '');
-  const current = String(info?.current || '');
+  if (!dialog || !info?.version) return;
+  const latest = String(info.version);
+  const current = String(info.current || '');
+  updateShowingVersion = latest;
   $('#updateVersion').textContent = current
     ? `新版本 v${latest}（当前 v${current}）`
     : `新版本 v${latest}`;
-  const notes = String(info?.notes || '').trim();
+  const notes = String(info.notes || '').trim();
   $('#updateNotes').textContent = notes || '本次更新以稳定性与体验改进为主。';
-  $('#updateHint').textContent = '点「更新」之后才会开始下载并安装；不点就继续用现在这版，数据不会丢。';
-  $('#updateNow').disabled = false;
-  $('#updateSkip').disabled = false;
+  const row = $('#updateProgressRow');
+  const fill = $('#updateProgressFill');
+  const label = $('#updateProgressLabel');
+  const hint = $('#updateHint');
+  const now = $('#updateNow');
+  const skip = $('#updateSkip');
+  if (!row || !fill || !label || !hint || !now || !skip) return;
+  const phase = String(info.phase || '');
+  const downloaded = info.downloaded === true || phase === 'downloaded';
+  const percent = updatePercentValue(info.percent);
+
+  if (phase === 'installing') {
+    row.hidden = false;
+    fill.style.width = '100%';
+    label.textContent = '正在安装并重启…';
+    hint.textContent = '正在退出并安装新版本，稍后会自动重新打开。';
+    now.textContent = '正在安装…';
+    now.disabled = true;
+    skip.disabled = true;
+    return;
+  }
+  if (downloaded) {
+    row.hidden = false;
+    fill.style.width = '100%';
+    label.textContent = '新版本已下载完成';
+    hint.textContent = '更新已在后台下载完成；点「重启并安装」退出并完成更新，个人数据不会丢。';
+    now.textContent = '重启并安装';
+    now.disabled = false;
+    skip.disabled = false;
+    return;
+  }
+  if (phase === 'downloading') {
+    row.hidden = false;
+    fill.style.width = `${percent}%`;
+    label.textContent = `正在后台下载新版本… ${percent}%`;
+    hint.textContent = '下载在后台进行，你可以继续使用软件；下载完成后再点「重启并安装」。';
+    now.textContent = '下载中…';
+    now.disabled = true;
+    skip.disabled = false;
+    return;
+  }
+  if (phase === 'error') {
+    row.hidden = false;
+    fill.style.width = `${percent}%`;
+    label.textContent = '下载失败';
+    hint.textContent = `更新下载失败：${String(info.error || '请稍后重试').slice(0, 120)}。可以点「重试下载」。`;
+    now.textContent = '重试下载';
+    now.disabled = false;
+    skip.disabled = false;
+    return;
+  }
+  // available：刚发现更新，下载即将开始
+  row.hidden = false;
+  fill.style.width = '0%';
+  label.textContent = '正在准备下载…';
+  hint.textContent = '新版本会在后台静默下载，你可以继续使用软件。';
+  now.textContent = '下载中…';
+  now.disabled = true;
+  skip.disabled = false;
+}
+
+/** 手动打开卡片（手动检查更新 / 启动时补拉），会清除"用户已关掉"的标记。 */
+function showUpdateCard(info) {
+  const dialog = $('#updateDialog');
+  if (!dialog || !info?.version) return;
+  updateDismissedVersion = '';
   updateChoiceSent = false;
+  paintUpdateCard(info);
   if (!dialog.open) dialog.showModal();
 }
 
-function handleUpdateProgress(progress) {
+/**
+ * 主进程推来的状态变化。只在卡片已打开时刷新内容；否则仅在"启动发现更新"
+ * （用户没主动关过这个版本）时弹一次卡片。下载进度绝不会把用户关掉的卡片重新弹出来。
+ */
+function handleUpdateState(info) {
+  if (!info?.version) return;
+  const phase = String(info.phase || '');
+  if (!['available', 'downloading', 'downloaded', 'error', 'installing'].includes(phase)) return;
   const dialog = $('#updateDialog');
-  const hint = $('#updateHint');
-  if (!hint) return;
-  const stage = String(progress?.stage || '');
-  if (stage === 'downloading') {
-    const pct = Number(progress?.percent);
-    hint.textContent = Number.isFinite(pct) && pct > 0
-      ? `正在下载新版本… ${Math.round(pct)}%`
-      : '正在下载新版本…';
-    $('#updateNow').disabled = true;
-    $('#updateSkip').disabled = true;
-  } else if (stage === 'applying') {
-    hint.textContent = progress?.message || '正在准备更新，应用即将重启…';
-  } else if (stage === 'error') {
-    hint.textContent = `更新失败：${progress?.message || '未知原因'}。可以稍后再试。`;
-    $('#updateNow').disabled = false;
-    $('#updateSkip').disabled = false;
-  } else if (stage === 'done') {
-    hint.textContent = progress?.message || '更新已就绪。';
+  if (dialog?.open) {
+    paintUpdateCard(info);
+    return;
   }
-  if (dialog && !dialog.open && stage !== 'done') dialog.showModal();
+  if (String(info.version) === updateDismissedVersion) return;
+  showUpdateCard(info);
 }
 
 /**
@@ -324,8 +392,10 @@ async function manualUpdateCheck() {
     }
     if (result.status === 'new' && result.version) {
       resultEl.classList.remove('is-checking', 'is-error');
-      resultEl.textContent = `发现新版本 v${result.version}，请在弹出的卡片中选择`;
-      showUpdateCard({ version: result.version, current: result.current || '', notes: result.notes || '' });
+      resultEl.textContent = result.downloaded
+        ? `发现新版本 v${result.version}，更新已下载，可在卡片中选择重启安装`
+        : `发现新版本 v${result.version}，正在后台下载…（进度见卡片）`;
+      showUpdateCard(result);
       return;
     }
     resultEl.classList.remove('is-checking', 'is-error');
@@ -3546,16 +3616,19 @@ function bindEvents() {
   // 更新卡片的三个按钮：取消（这次先不选）/ 跳过本版本 / 更新
   // 按 Esc 关掉卡片也算「取消」—— 也要上报一次，但别和按钮重复上报。
   $('#updateDialog')?.addEventListener('close', () => {
+    updateDismissedVersion = updateShowingVersion;
     if (updateChoiceSent) return;
     updateChoiceSent = true;
     window.ph.updateChoice?.('cancel');
   });
   $('#updateCancel')?.addEventListener('click', async () => {
+    updateDismissedVersion = updateShowingVersion;
     updateChoiceSent = true;
     $('#updateDialog')?.close();
     await window.ph.updateChoice?.('cancel');
   });
   $('#updateSkip')?.addEventListener('click', async () => {
+    updateDismissedVersion = updateShowingVersion;
     updateChoiceSent = true;
     $('#updateDialog')?.close();
     await window.ph.updateChoice?.('skip');
@@ -3564,7 +3637,6 @@ function bindEvents() {
   $('#updateNow')?.addEventListener('click', async () => {
     updateChoiceSent = true;
     $('#updateNow').disabled = true;
-    $('#updateSkip').disabled = true;
     await window.ph.updateChoice?.('update');
   });
 
@@ -3777,11 +3849,10 @@ async function init() {
     });
     // 设置页里的账号卡片（同一个界面模块，PHL Lite 那边也是它画的）
     void window.AccountUI?.card(document.getElementById('accountCard'));
-    // 发现新版本：弹卡片让用户决定（取消 / 跳过本版本 / 更新）—— 绝不自动更新。
-    window.ph.onUpdateAvailable?.((info) => showUpdateCard(info));
-    window.ph.onUpdateProgress?.((progress) => handleUpdateProgress(progress));
-    // 检查是并发的，可能在上面的监听注册之前就发现新版本了（那条 IPC 没人接就没了）。
-    // 启动时主动拉一次待办，补弹卡片。
+    // 更新：后台静默检查并下载；卡片只在启动发现更新或手动检查时弹出。
+    window.ph.onUpdateState?.((info) => handleUpdateState(info));
+    // 检查/下载是并发的，可能在上面的监听注册之前就发现新版本了（那条 IPC 没人接就没了）。
+    // 启动时主动拉一次当前状态，补弹卡片（含未下完的进度）。
     void window.ph.updatePending?.()
       .then((pending) => { if (pending && pending.version) showUpdateCard(pending); })
       .catch(() => { /* 拿不到就算了：下次启动还会提示 */ });

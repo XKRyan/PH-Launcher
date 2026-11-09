@@ -1,4 +1,4 @@
-// Install before Electron or any application module can log to a detached pipe.
+﻿// Install before Electron or any application module can log to a detached pipe.
 require('./stdio-guard.cjs').guardStdio();
 
 const {
@@ -4764,7 +4764,7 @@ function registerIpc() {
     return autoUpdater.handleUserChoice(String(choice || ''));
   });
   // 渲染层启动时主动来拉一次：更新检查是并发的，可能比监听注册更早，
-  // 那条 app:update-available 就丢了（IPC 没有接收者）。这里把待办取回去补弹。
+  // 那条 app:update-state / app:update-available 就可能丢了（IPC 没有接收者）。这里把当前状态取回去补弹。
   ipcMain.handle('app:update-pending', (event) => {
     assertMainRenderer(event);
     return autoUpdater.getPendingUpdate();

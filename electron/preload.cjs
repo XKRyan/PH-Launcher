@@ -248,15 +248,16 @@ contextBridge.exposeInMainWorld('ph', {
   //: 命令行 `--ph-force-onboarding`：让首启引导再出现一次（只影响这一次运行）。
   onForceOnboarding: (callback) => on('app:force-onboarding', callback),
   onTrayNavigate: (callback) => on('tray:navigate', callback),
-  //: 发现新版本：主进程只**通知**，由界面弹卡片让用户选（绝不自动更新）。
-  onUpdateAvailable: (callback) => on('app:update-available', callback),
-  //: 用户在卡片上选完：'cancel'（这次先不选）/ 'skip'（跳过本版本）/ 'update'（开始更新）。
+  //: 更新状态变化：阶段（检查/待下载/下载中/已下载/失败）+ 百分比 + 版本说明。
+  //: 启动发现更新、后台下载进度、手动检查结果都走这一条；界面只在卡片打开时画进度，
+  //: 下载本身是静默的，不会弹通知。
+  onUpdateState: (callback) => on('app:update-state', callback),
+  //: 用户在卡片上选完：'cancel'（关掉卡片，后台继续下载）/ 'skip'（跳过本版本）/
+  //: 'update'（已下载→重启安装；下载失败→重试）。
   updateChoice: (choice) => ipcRenderer.invoke('app:update-choice', choice),
-  //: 启动时拉一次"还没处理的更新" —— 检查比监听注册更早时靠它补弹卡片。
+  //: 启动时拉一次当前更新状态 —— 检查/下载比监听注册更早时靠它补弹卡片。
   updatePending: () => ipcRenderer.invoke('app:update-pending'),
   //: 设置 →「关于」→「检查更新」按钮：手动检查一次，**必定回一个结果**
   //: （已是最新 / 发现新版本 / 检查失败），由界面据此显示。
   updateCheck: () => ipcRenderer.invoke('app:update-check'),
-  //: 更新进度（下载中/替换中/失败原因），供卡片显示状态。
-  onUpdateProgress: (callback) => on('app:update-progress', callback),
 });
