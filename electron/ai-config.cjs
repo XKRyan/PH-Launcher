@@ -225,15 +225,24 @@ function mergeAiProviders(current, canonical, { writer = '' } = {}) {
   return projectRuntimeFields(next, providers, next.default_index);
 }
 
-/** 规范化结果 → **上云用的规范形态**。 */
+/** 规范化结果 → **上云用的规范形态**。
+ *
+ * 注意：**空配置不能盖"现在"的时间戳**。以前不管有没有服务商都用 `nowIso()` 兜底，
+ * 于是每一轮 `collect('settings.ai')` 都得到一个全新的 `updated_at`，同步引擎认为
+ * "本地又改了"，每轮空推一次、云端 revision 一路涨（2026-11-09 实测 6 秒内 95→98）。
+ * 没有服务商时两个元信息都留空，载荷逐轮稳定；有服务商时才盖时间/署名。
+ */
 function serializeAiConfig(canonical, writer = 'phl') {
   const cfg = isObject(canonical) ? canonical : {};
   const providers = (Array.isArray(cfg.providers) ? cfg.providers : []).filter(isObject).map(normalizeProvider);
+  const hasProviders = providers.length > 0;
   return {
     providers,
     default_index: indexOf(cfg.default_index, providers.length),
-    updated_at: text(cfg.updated_at) || nowIso(),
-    updated_by: WRITERS.includes(text(cfg.updated_by)) ? text(cfg.updated_by) : (WRITERS.includes(writer) ? writer : 'phl'),
+    updated_at: hasProviders ? (text(cfg.updated_at) || nowIso()) : '',
+    updated_by: hasProviders
+      ? (WRITERS.includes(text(cfg.updated_by)) ? text(cfg.updated_by) : (WRITERS.includes(writer) ? writer : 'phl'))
+      : '',
   };
 }
 

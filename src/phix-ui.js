@@ -28,7 +28,7 @@
     profile: '个人资料（头像 / 显示名）',
     mood: '心情记录',
   };
-  const DEFAULT_OBJECTS = ['settings.accounts', 'settings.lessons', 'settings.ui', 'schedule', 'timetable', 'school', 'profile'];
+  const DEFAULT_OBJECTS = ['settings.accounts', 'settings.lessons', 'settings.ui', 'settings.ai', 'schedule', 'timetable', 'school', 'profile'];
 
   const state = { root: null, mounted: false, status: null, busy: false, error: '', message: '', showAdvanced: false, recoveryHidden: false, devicesHtml: '', sessions: null, devices: null, needPassphrase: false };
 
@@ -453,6 +453,10 @@
         const details = event.target.closest('#phixMore');
         if (details) state.showAdvanced = details.open;
       }, true);
+      // 主进程在任何入口（账号向导、设置里登录、后台自动同步）改了登录态/同步状态，
+      // 这块面板都要重新读一次，不能只在挂载时读（2026-11-09 用户报"面板说未登录"）。
+      window.addEventListener('phix:changed', () => { void refresh(); });
+      window.addEventListener('phix:synced', () => { void refresh(); });
     }
     render();
     void refresh();

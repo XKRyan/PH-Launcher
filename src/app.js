@@ -2414,6 +2414,13 @@ function renderCustomWebsiteSettings() {
 function selectSettingsSection(section) {
   $$('.settings-sections-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsSection === section));
   $$('.settings-section').forEach((panel) => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
+  // 云同步页每次打开都重新读一遍状态并重画账号卡片 —— 这块最容易被"上次打开
+  // 设置时的旧状态"卡住（用户 2026-11-09：设置里一直显示账号未登录）。
+  if (section === 'cloud') {
+    void window.phixUI?.refresh?.();
+    const cardHost = document.getElementById('accountCard');
+    if (cardHost && window.AccountUI) { try { void window.AccountUI.card(cardHost); } catch { /* ignore */ } }
+  }
 }
 
 async function openCustomSiteDialog(site = null) {
@@ -2956,10 +2963,24 @@ function proceedToOriginalOnboarding() {
   setTimeout(() => openOnboarding(), 200);
 }
 
+/** 解 phix IPC 的 `{ ok, data }` 包装：成功返回 data，失败抛错。
+ *
+ * 2026-11-09 审计：`phix:*` 全部走 main.cjs 的 phixCall 包装，但渲染进程里还有几处
+ * （启动恢复、头像读取/保存）把它当裸对象用 —— 表现就是"有登录令牌却仍弹登录页"、
+ * "Profile 里明明有头像却永远不显示"、以及把 `{ok,data}` 结构写进 Profile 对象。
+ */
+function unwrapPhixResult(result) {
+  if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'ok')) {
+    if (!result.ok) throw new Error(String(result.error || '操作未完成'));
+    return result.data;
+  }
+  return result;
+}
+
 /** 尝试 restore phix 会话（盘上有令牌就恢复，跳过整个 phix 引导）。 */
 async function tryPhixRestore() {
   try {
-    const result = await window.ph.phix.restore();
+    const result = unwrapPhixResult(await window.ph.phix.restore());
     if (result && result.logged_in) {
       state.phixStatus = result;
       // restore 成功，拉一次头像
@@ -2978,6 +2999,36 @@ async function refreshPhixAvatar() {
     // 从同步状态读 profile 数据 —— 如果已同步过，本地 data/Profile 就有
     // （这里不直接读文件，而是依赖 phixStatus 里后续可扩展的字段）
   } catch { /* 读不到就算了 */ }
+}
+
+/**
+ * 登录态 / 同步状态变化后的**统一刷新**。
+ *
+ * 用户 2026-11-09 的反馈：A 页面显示未登录、B 页面显示已登录；设置里说没有同步
+ * 信息、首页却有同步下来的课表；AI Key 从云端同步了但 AI 页还是空。根因是各处
+ * 只在自己挂载时读一次状态。凡是会改这些数据的入口（账号向导结束、设置里登录/同步、
+ * 后台自动同步、退出登录）最后都走这里，所有页面从同一份最新状态重画。
+ */
+async function refreshAfterPhixChange(reason = '') {
+  try {
+    const data = await window.ph.data.get();
+    if (data) {
+      state.data = data;
+      refreshSiteMeta();
+      renderAll();
+    }
+  } catch { /* 读不到就保持旧界面 */ }
+  try { if (window.credentialsUI?.refresh) await window.credentialsUI.refresh(); } catch { /* ignore */ }
+  try { await loadAndShowAvatar(); } catch { /* ignore */ }
+  try { await window.phixUI?.refresh?.(); } catch { /* 面板没挂载就跳过 */ }
+  // 设置页的账号卡片是 AccountUI 画的，必须显式重画，否则会停在打开设置那一刻的状态。
+  const cardHost = document.getElementById('accountCard');
+  if (cardHost && window.AccountUI) { try { void window.AccountUI.card(cardHost); } catch { /* ignore */ } }
+  try { void window.schoolUI?.refresh?.(); } catch { /* ignore */ }
+  try { void window.dashboardData?.refresh?.(); } catch { /* ignore */ }
+  if (state.route === 'ai') { try { renderAi(); } catch { /* ignore */ } }
+  else if (state.route === 'settings') { try { renderCredentialSettings(); } catch { /* ignore */ } }
+  return reason;
 }
 
 function handlePhixOnboardingClick(event) {
@@ -3107,19 +3158,24 @@ async function doPhixObRegister() {
 // ---------------------------------------------------------------- 头像
 /** 从 phix profile 同步对象拉头像并显示在顶栏。 */
 async function loadAndShowAvatar() {
+  let loggedIn = false;
   try {
     const status = await window.ph.phix.status();
-    if (status?.ok && status.data?.logged_in) {
+    if (status?.ok && status.data) {
       state.phixStatus = status.data;
+      loggedIn = status.data.logged_in === true;
     }
   } catch { /* 未登录或读不到 */ }
-  // 读本地 Profile 文件获取头像
-  try {
-    const profile = await window.ph.phix.profile();
-    if (profile && profile.avatar) {
-      state.phixAvatarDataUrl = profile.avatar;
-    }
-  } catch { /* 读不到 */ }
+  // Profile 是数据根里的共用文件，退出登录后它还在。只有登录着才把头像显示出来，
+  // 否则会出现"已经退出登录，顶栏还挂着上一个账号头像"的不一致。
+  if (loggedIn) {
+    try {
+      const profile = unwrapPhixResult(await window.ph.phix.profile());
+      if (profile && profile.avatar) state.phixAvatarDataUrl = profile.avatar;
+    } catch { /* 读不到就保持默认 */ }
+  } else {
+    state.phixAvatarDataUrl = '';
+  }
   renderAvatar();
 }
 
@@ -3177,12 +3233,18 @@ async function uploadAvatar() {
       const dataUrl = await compressAvatar(file);
       state.phixAvatarDataUrl = dataUrl;
       renderAvatar();
-      // 写入 profile 对象并推同步
+      // 写入 profile 对象并推同步（phix:profile / saveProfile / sync 都带包装）
       const existing = await window.ph.phix.profile().catch(() => null);
-      const profile = { ...(existing || {}), avatar: dataUrl, updated_at: new Date().toISOString() };
-      await window.ph.phix.saveProfile(profile);
+      const existingDoc = existing ? unwrapPhixResult(existing) : {};
+      const profile = { ...(existingDoc || {}), avatar: dataUrl, updated_at: new Date().toISOString() };
+      unwrapPhixResult(await window.ph.phix.saveProfile(profile));
       toast('头像已保存，正在同步…');
-      try { await window.ph.phix.sync({}); } catch { /* 同步失败不阻塞 */ }
+      const sync = await window.ph.phix.sync({}).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+      // 不能同步失败还报"已同步"：用户会以为云端已经有头像了（2026-11-09 审计）。
+      if (sync && sync.ok === false) {
+        toast(`头像已保存到本机，但云端同步失败：${String(sync.error || '请稍后重试').slice(0, 80)}`, 'error');
+        return;
+      }
       toast('头像已同步');
     } catch (error) {
       toast(`头像处理失败：${error.message}`, 'error');
@@ -3709,7 +3771,7 @@ async function init() {
         // 没登录：走与 PHL Lite 共用的那一套账号界面（登录 / 注册 / 暂时跳过）
         else setTimeout(() => window.AccountUI?.login({
           firstRun: true,
-          onFinish: () => void refreshPhixAvatar(),
+          onFinish: () => { void refreshAfterPhixChange('force-onboarding'); },
         }), 300);
       });
     });
@@ -3727,11 +3789,16 @@ async function init() {
       // 首次打开：走与微软开机流程一致的那一套
       // （登录 → 注册 → 选"本地覆盖云端 / 云端覆盖本地" → 正在为你准备你的软件 → 原有引导）
       const restored = await tryPhixRestore();
+      // 账号流程结束（登录完成 / 跳过 / 准备完成）后先刷新全局状态，再进原有引导；
+      // 否则设置页账号卡片、云同步面板、首页都会停在流程开始前的旧状态。
+      const finishAccountFlow = () => {
+        void refreshAfterPhixChange('account-flow').finally(() => openOnboarding());
+      };
       setTimeout(() => {
         if (restored) {
-          void window.AccountUI?.firstRun({ onFinish: () => openOnboarding() });
+          void window.AccountUI?.firstRun({ onFinish: finishAccountFlow });
         } else {
-          void window.AccountUI?.login({ firstRun: true, onFinish: () => openOnboarding() });
+          void window.AccountUI?.login({ firstRun: true, onFinish: finishAccountFlow });
         }
       }, 350);
     }
@@ -3765,6 +3832,9 @@ async function init() {
     state.xinlvStatus = { ...state.xinlvStatus, ...(status || {}) };
     if (state.route === 'settings') renderXinlvSettings();
   });
+  // 旧版主进程只发 xinlv:changed（后台拉到新记录）；这里补一条回读，保证
+  // "登录/退出/同步"之后应用外壳里的心履状态和其它页面一致。
+  window.ph.xinlv?.onChanged?.(() => { void refreshXinlvStatus(); });
   window.ph.mail?.onCleared?.(() => window.mailUI?.clear());
   // Tray quick entries focus the existing window and ask it to jump to a page.
   window.ph.onTrayNavigate?.((route) => {
@@ -3836,7 +3906,16 @@ async function init() {
     refreshSiteMeta();
     if (state.activeSite && !SITE_META[state.activeSite]) navigate('today');
     else renderAll();
+    // 同步/后台合并也会改 AI 配置（settings.ai）：正停在 AI 页时立刻重画，
+    // 不然要切走再回来才看得到云端来的 Key。
+    if (state.route === 'ai') { try { renderAi(); } catch { /* 页面还没建好 */ } }
+    else if (state.route === 'settings') { try { renderCredentialSettings(); } catch { /* ignore */ } }
     if ($('#onboardingDialog')?.open) renderOnboarding();
+  });
+  // phix 登录态/同步状态变化（主进程账号向导、设置登录、后台自动同步、退出都会发）。
+  window.ph.phix?.onChanged?.((status) => {
+    if (status && typeof status === 'object') state.phixStatus = status;
+    void refreshAfterPhixChange('phix-changed');
   });
   window.ph.vocabulary?.onChanged?.((payload) => updateVocabularyBadge(payload));
   // 主进程检测到账号会自动登录同步，完成后刷新学校页面数据。

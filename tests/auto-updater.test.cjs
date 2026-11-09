@@ -211,3 +211,28 @@ test('「关于」里的当前版本来自单一事实源（app.getVersion），
   // 手动检查默认不动重启检查；两套检查共用同一套“跳过本版本”判定（不重置跳过记录）
   assert.match(source, /manualCheckWindows\([\s\S]{0,900}?hooks\.getSkippedVersion/);
 });
+
+test('回包缺版本号 = 检查失败，不能报「已是最新版本」', () => {
+  // 两类畸形回包:Windows 的 updateInfo 存在但没有 version;macOS 的 200 有 ok
+  // 但没有 latest_version。旧实现把它们和"真的没有新版本"合并成 up-to-date,
+  // 等于把"没检查成"谎报成"已是最新"——这条测试守住两条分支必须是 failed。
+  const winIdx = source.indexOf('async function manualCheckWindows');
+  const win = source.slice(winIdx, source.indexOf('async function manualCheckMac'));
+  const winMissing = win.indexOf('if (!info.version)');
+  assert.ok(winMissing > 0, 'Windows 要单独处理"有 info 但没有 version"');
+  assert.match(win.slice(winMissing, winMissing + 400), /status: 'failed'/,
+    '缺 version 的分支必须返回 failed');
+  assert.doesNotMatch(win.slice(winMissing, winMissing + 120), /status: 'up-to-date'/,
+    '缺 version 不能混进 up-to-date');
+  // electron-updater 返回 null（没有可用更新）仍然是真的"已是最新"。
+  assert.match(win.slice(win.indexOf('if (!info)'), win.indexOf('if (!info)') + 300),
+    /status: 'up-to-date'/);
+
+  const mac = source.slice(source.indexOf('async function manualCheckMac'));
+  const macMissing = mac.indexOf('if (!latest)');
+  assert.ok(macMissing > 0, 'macOS 要单独处理"缺 latest_version"');
+  assert.match(mac.slice(macMissing, macMissing + 400), /status: 'failed'/,
+    '缺 latest_version 的分支必须返回 failed');
+  assert.doesNotMatch(mac.slice(macMissing, macMissing + 120), /status: 'up-to-date'/,
+    '缺 latest_version 不能混进 up-to-date');
+});

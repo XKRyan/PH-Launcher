@@ -509,15 +509,22 @@
     readingWordDialog(selected.phrase, segments.indexOf(selected.context), { autoSave: true, context: selected.context });
   }
 
+  /** 查离线词典；bridge 不存在或词典数据缺失时返回 null，不把"功能没装"当异常抛给用户。 */
+  async function lookupOfflineWord(word) {
+    const bridge = window.ph?.dictionary?.lookup;
+    if (typeof bridge !== 'function') return null;
+    try { return await bridge(word); } catch { return null; }
+  }
+
   async function readingWordDialog(word, sentenceIndex, { autoSave = false, context: selectedContext = '' } = {}) {
     const reading = readingEntry(); if (!reading) return;
     const context = (selectedContext || readingSegments(reading.text)[sentenceIndex] || '').trim();
     state.readingWord = { word, context, subject: '阅读生词', source: reading.title };
     openDialog(word, '<p class="vocab-hint">正在查询本机词典…</p>', 'reading-word');
     try {
-      const lookup = await window.ph.dictionary.lookup(word);
+      const lookup = await lookupOfflineWord(word);
       if (state.dialogKind !== 'reading-word' || state.readingWord?.word !== word || state.readingId !== reading.id) return;
-      const entry = lookup.exact;
+      const entry = lookup?.exact;
       const meaning = entry?.translation || entry?.definition || '';
       state.readingWord = { ...state.readingWord, ...(entry ? { word: entry.word, meaning, phonetic: entry.phonetic, definition: entry.definition } : {}), markedWord: normal(word) };
       if (autoSave && entry?.word && meaning && typeof api()?.add === 'function') {
@@ -531,7 +538,10 @@
         openDialog(entry.word, `<p class="vocab-phonetic">${esc(entry.phonetic)}</p><div class="vocab-meaning">${esc(meaning)}</div><p class="vocab-hint">${saved}</p><blockquote class="vocab-reader-quote" lang="en">${esc(context)}</blockquote><div class="vocab-dialog-actions"><button class="primary-button" data-vocab-action="close">继续阅读</button></div>`, 'reading-word');
         return;
       }
-      openDialog(word, `${entry ? `<p class="vocab-phonetic">${esc(entry.phonetic)}</p><div class="vocab-meaning">${esc(meaning)}</div>` : '<p class="vocab-hint">离线词典没有匹配的完整词条。可以标记，或手动填写它的意思。</p>'}<blockquote class="vocab-reader-quote" lang="en">${esc(context)}</blockquote><div class="vocab-dialog-actions"><button class="secondary-button" data-vocab-action="mark-reading-word">${state.readingUnknown.has(normal(word)) ? '取消不熟悉标记' : '标为不熟悉'}</button><button class="primary-button" data-vocab-action="add-reading-word">保留原句并加入词本</button></div>`, 'reading-word');
+      const noEntryHint = lookup?.available === false
+        ? '本机没有可用的离线词典；可以标记，或手动填写它的意思。'
+        : '离线词典没有匹配的完整词条。可以标记，或手动填写它的意思。';
+      openDialog(word, `${entry ? `<p class="vocab-phonetic">${esc(entry.phonetic)}</p><div class="vocab-meaning">${esc(meaning)}</div>` : `<p class="vocab-hint">${noEntryHint}</p>`}<blockquote class="vocab-reader-quote" lang="en">${esc(context)}</blockquote><div class="vocab-dialog-actions"><button class="secondary-button" data-vocab-action="mark-reading-word">${state.readingUnknown.has(normal(word)) ? '取消不熟悉标记' : '标为不熟悉'}</button><button class="primary-button" data-vocab-action="add-reading-word">保留原句并加入词本</button></div>`, 'reading-word');
     } catch (error) { if (state.dialogKind === 'reading-word') q('#vocabDialog').querySelector('.vocab-hint').textContent = `暂时无法查词：${error.message}`; }
   }
 
@@ -900,9 +910,14 @@
       if (!word) { form.elements.word.focus(); return; }
       button.disabled = true;
       try {
-        const result = await window.ph.dictionary.lookup(word);
+        const result = await lookupOfflineWord(word);
         if (q('#vocabAddForm') !== form || normal(form.elements.word.value) !== normal(word)) return;
-        if (!result.exact) { q('#vocabLookupStatus').textContent = '没有查到完整词条，你仍可以手动填写释义。'; return; }
+        if (!result?.exact) {
+          q('#vocabLookupStatus').textContent = result?.available === false
+            ? '本机没有可用的离线词典；请手动填写释义。'
+            : '没有查到完整词条，你仍可以手动填写释义。';
+          return;
+        }
         const entry = result.exact;
         form.elements.word.value = entry.word;
         form.elements.meaning.value = entry.translation || entry.definition || '';

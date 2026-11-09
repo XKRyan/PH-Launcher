@@ -183,7 +183,14 @@ test('renderer keeps over-limit drafts intact and reports the failed save withou
   const ui = harness({ snapshot: { available: true, connectionKey: 'local-key', sessions, memories: [] } });
   ui.window.agentUI.mount(); await ui.window.agentUI.loadHistory();
   ui.click('#agentNewChat');
-  assert.equal(ui.window.document.querySelectorAll('[data-agent-session]').length, 31, 'the oldest local session must not be silently discarded');
+  // 侧栏为了不挤占聊天区，默认只显示前 5 个会话，其余通过「查看全部」展开。
+  const rows = () => ui.window.document.querySelectorAll('[data-agent-session]').length;
+  assert.equal(rows(), 5, 'compact sidebar shows five sessions by default');
+  const more = ui.window.document.querySelector('[data-agent-all-sessions]');
+  assert.ok(more, 'a "show all" control must be available');
+  assert.match(more.textContent, /查看全部 31 个会话/);
+  more.click(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(rows(), 31, 'expanding must show every local session (nothing silently discarded)');
   ui.state.aiMessages.push(...Array.from({ length: 121 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `draft ${index}` })));
   assert.equal(await ui.window.agentUI.saveNow(), false);
   assert.equal(ui.state.aiMessages.length, 121);

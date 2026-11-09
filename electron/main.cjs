@@ -2663,6 +2663,28 @@ function asAiSection(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+/**
+ * 登录/恢复会话后把**本机已有的** AI 配置写进共用 settings.yaml。
+ *
+ * 背景：`settings.ai` 以前不在默认同步对象里，所以老用户的 Key 只躺在 secureStore
+ * （`phl/launcher.json`）里，从没进过 settings.yaml → 即使现在开了同步也没有内容可推。
+ * 登录成功后补这一下：本机有、共享文件里没有 → 写进去（下一轮同步自然推上云）；
+ * 共享文件里已经有一份（网页端/PLL 配的）→ 不抢，交给同步的三方合并。
+ */
+function migrateLocalAiToSharedSettings() {
+  try {
+    const ai = secureStore.data.settings.ai || {};
+    if (!aiConfig.providersOf(ai).length) return false;
+    const current = asAiSection(syncCloudsync.readSettingsSection(aiSettingsFilePath(), 'ai'));
+    if (aiConfig.providersOf(current).length) return false;
+    writeAiProvidersToSharedSettings();
+    return true;
+  } catch (error) {
+    console.warn(`本机 AI 配置迁移到共用 settings.yaml 失败：${String(error?.message || error).slice(0, 200)}`);
+    return false;
+  }
+}
+
 /** 拉：把共享 settings.yaml 里的服务商并回内存，并返回是否真的有变化。 */
 function adoptAiProvidersFromSharedSettings() {
   let incoming = [];
@@ -2686,10 +2708,49 @@ function adoptAiProvidersFromSharedSettings() {
     providers: merged,
     default_index: cloudDefaultIndex === null ? (current.default_index || 0) : cloudDefaultIndex,
   }, { silent: true });
+  // 云端明明有可用的 AI 配置，本机却还是"AI 保持关闭"时，把默认服务商投影成
+  // 正在使用的连接（apiEndpoint/apiModel/apiKey 已在 mergeAiProviders 里投影）。
+  // 这样新设备登录后 AI 页直接是"已配置"，不用再手动选一遍（用户 2026-11-09 反馈）。
+  try {
+    const latest = secureStore.data.settings.ai || {};
+    if (!latest.enabled || latest.provider === 'off') {
+      secureStore.updateAi({ enabled: true, provider: 'api' }, { silent: true });
+    }
+  } catch { /* 激活失败不影响已经把配置收下来 */ }
   // 收下来之后把本机看到的这份（含新 Key）**写回共享文件**：silent 分支故意跳过了
   // 写入路径里的那次写，见 updateAi 里的注释。`author: null` = 不抢署名、不盖新时间戳。
   writeAiProvidersToSharedSettings({ author: null });
   return true;
+}
+
+/**
+ * 一轮同步结束后的**统一收尾**（所有同步入口都走这里）。
+ *
+ * 用户 2026-11-09 报的一串"页面之间对不上"（设置页账号卡片显示未登录、云同步面板
+ * 却显示已同步、AI 配置不出现、首页没有同步数据）根因不是各自独立的小 bug，而是
+ * **同步改完了磁盘，但没有一个地方把"变了"告诉渲染进程**：
+ *   · 账号段写回 settings.yaml 后，设置页的账号卡片还是启动时那份内存；
+ *   · `settings.ai` 同步下来的 Key 只躺在 settings.yaml 里，从没并回运行时的
+ *     secureStore（adoptAiProvidersFromSharedSettings 之前**没有任何调用点**）；
+ *   · 渲染进程的 `state.data` 也没有重新读。
+ *
+ * 所以这里一次做完四件事：AI 回灌、账号广播、数据广播、学校账号到达后的自动登录。
+ * 失败只记日志，不能让"已经同步成功"被收尾动作搞成失败。
+ */
+function afterPhixSync(report) {
+  try { adoptAiProvidersFromSharedSettings(); } catch (error) {
+    console.warn('同步后 AI 配置回灌失败:', error?.message || error);
+  }
+  try { publishCredentialChange(); } catch { /* 账号表读不到也不能影响同步结果 */ }
+  try { syncSchoolAfterAccountsArrived(); } catch { /* 同上 */ }
+  try { sendToRenderer('data:changed', secureStore.forRenderer()); } catch { /* 窗口可能还没建好 */ }
+  broadcastPhixChanged();
+  return report;
+}
+
+/** 把"phix 登录态/同步状态变了"广播给渲染进程，让设置卡片与各页面统一刷新。 */
+function broadcastPhixChanged() {
+  try { sendToRenderer('phix:changed', phixSession.status()); } catch { /* 窗口可能还没建好 */ }
 }
 
 function aiConnectionKey() {
@@ -3778,6 +3839,11 @@ function createPhixSession() {
       // 账号可能是**登录之后**才从云端下来的：这时启动那一轮学校同步早就跑过了，
       // 页面会一直停在"登录并同步"（用户 2026-09-18 实测）。这里补一次。
       syncSchoolAfterAccountsArrived();
+      // 后台自动同步同样会改盘（账号 / AI Key / 日程 / 课表），渲染进程必须收到
+      // "变了"的通知，否则会出现"这个页面已同步、那个页面还是旧状态"（2026-11-09）。
+      try { publishCredentialChange(); } catch { /* 账号表读不到不影响同步 */ }
+      try { sendToRenderer('data:changed', secureStore.forRenderer()); } catch { /* 窗口未建好 */ }
+      broadcastPhixChanged();
     },
   });
 }
@@ -3854,6 +3920,8 @@ async function restorePhixAtStartup() {
     if (status.unlocked) {
       phixSession.startAutoSync();
       publishCredentialChange();
+      // 本机已有的 AI 配置（老版本只存在 secureStore 里）补迁到共享 settings.yaml。
+      migrateLocalAiToSharedSettings();
     }
     adoptXinlvAccount(saved.username, saved.password);
   } catch (error) {
@@ -3893,7 +3961,25 @@ async function resolvePhixServer(explicit = '') {
  * detail 是显示在右侧的小字（"已登录 2 个"、"2026-09-22 · 6 节"），
  * 只是给用户一个"确实在动"的反馈，不参与任何判断。
  */
+//: 准备流程里"这次同步用哪个方向"（来自账号界面的选择）。
+//: 界面不再在登录页直接跑整轮同步 —— 那样既看不到进度、失败也没地方显示；
+//: 现在只把方向记下来，真正的同步是准备清单的第一项。
+let prepareDirection = '';
+
 const PREPARE_STEPS = [
+  {
+    id: 'sync',
+    label: '同步你的数据',
+    run: async () => {
+      const prefer = (prepareDirection === 'remote' || prepareDirection === 'local') ? prepareDirection : undefined;
+      prepareDirection = '';
+      const report = await phixSession.sync({ force: true, prefer });
+      afterPhixSync(report);
+      const errors = Array.isArray(report?.errors) ? report.errors : [];
+      const detail = phixSessionModule.summarize(report) || '已同步';
+      return { ok: errors.length === 0, detail };
+    },
+  },
   {
     id: 'accounts',
     label: '账号与密码',
@@ -3957,11 +4043,32 @@ function registerPhixIpc() {
   });
 
   handle('status', () => phixSession.status());
+  // 账号界面选了"云端覆盖本地 / 本地覆盖云端"之后先把方向记下来，
+  // 真正的同步在准备清单第一项里跑（进度条要能看到它，失败也要有地方显示）。
+  handle('prepare-direction', (input) => {
+    const direction = String(input?.direction || '');
+    prepareDirection = (direction === 'remote' || direction === 'local') ? direction : '';
+    return { ok: true };
+  });
   // 渲染进程不硬编码内网地址，向主进程要候选列表（部署者配置只存在本机）。
   handle('server-candidates', () => phixServerCandidates());
   handle('restore', async () => {
     const result = await phixSession.restore();
-    return result || { logged_in: false };
+    if (!result || !result.logged_in) return result || { logged_in: false };
+    // 只恢复令牌时 DEK 还是锁着的（重启后 DEK 不落盘）。以前渲染进程拿到的
+    // logged_in=true 就进"准备软件"，第一步同步必然因未解锁失败——用户会看到
+    // 一个红色步骤，或者以为数据丢了。这里沿用启动兜底：密码模式且有记住的密码，
+    // 就顺手解锁；解不开才把锁着的状态如实返回。
+    if (!result.unlocked && result.key_mode !== 'syncphrase') {
+      const saved = secureStore.phixLoginCredentials();
+      if (saved.username && saved.password) {
+        try {
+          await phixSession.unlock(saved.password);
+          return phixSession.status();
+        } catch { /* 解锁失败就返回锁着状态，界面会要求重新登录 */ }
+      }
+    }
+    return result;
   });
   handle('profile', () => readPhixProfile());
   handle('save-profile', (input) => {
@@ -4000,8 +4107,12 @@ function registerPhixIpc() {
       String(input?.sync_passphrase || '').trim(), input?.device || '');
     // 同步落盘后账号会被写进共用 settings.yaml，界面上的账号状态要跟着刷新。
     publishCredentialChange();
+    broadcastPhixChanged();
     // 记住账号密码：重启后自动接上（解锁云端数据），心履也据此自动登录。
     secureStore.rememberPhixLogin(input?.username, input?.password);
+    // 老用户本机配置的 AI Key 以前从没进过 settings.yaml（settings.ai 之前不同步），
+    // 登录成功后补一次迁移，下一轮同步就会把它推到云端。
+    migrateLocalAiToSharedSettings();
     // 心履账号就是 phix 账号（用户 2026-09-19）：登录成功后顺手把心履也登上，
     // 用户不需要在心履页面再输一遍账号密码。
     adoptXinlvAccount(input?.username, input?.password);
@@ -4013,21 +4124,31 @@ function registerPhixIpc() {
   handle('unlock', async (passphrase) => {
     const status = await phixSession.unlock(String(passphrase || ''));
     publishCredentialChange();
+    broadcastPhixChanged();
+    migrateLocalAiToSharedSettings();
     syncSchoolAfterAccountsArrived();
     return status;
   });
-  handle('logout', () => { secureStore.forgetPhixLogin(); return phixSession.logout(true); });
-  handle('sync', (input) => phixSession.sync({
-    force: Boolean(input?.force),
-    dryRun: Boolean(input?.dry_run),
-    // 'local' = 本地覆盖云端，'remote' = 云端覆盖本地（见 cloudsync 的 applyPreference）
-    prefer: input?.prefer === 'local' || input?.prefer === 'remote' ? input.prefer : undefined,
-    objects: Array.isArray(input?.objects) && input.objects.length ? input.objects.map(String) : undefined,
-  }).then((report) => ({
-    report,
-    summary: phixSessionModule.brief(report),
-    status: phixSession.status(),
-  })));
+  handle('logout', async () => {
+    secureStore.forgetPhixLogin();
+    const status = await phixSession.logout(true);
+    publishCredentialChange();
+    broadcastPhixChanged();
+    return status;
+  });
+  handle('sync', async (input) => {
+    const dryRun = Boolean(input?.dry_run);
+    const report = await phixSession.sync({
+      force: Boolean(input?.force),
+      dryRun,
+      // 'local' = 本地覆盖云端，'remote' = 云端覆盖本地（见 cloudsync 的 applyPreference）
+      prefer: input?.prefer === 'local' || input?.prefer === 'remote' ? input.prefer : undefined,
+      objects: Array.isArray(input?.objects) && input.objects.length ? input.objects.map(String) : undefined,
+    });
+    // 真正写盘的那一轮才做收尾（预览不能改任何东西，也不能广播"变了"）。
+    if (!dryRun) afterPhixSync(report);
+    return { report, summary: phixSessionModule.brief(report), status: phixSession.status() };
+  });
   // 预览：只算不写，让用户先看清这轮会拉什么、推什么（force 跳过并发护栏）。
   handle('sync-preview', () => phixSession.sync({ force: true, dryRun: true })
     .then((report) => ({ report, summary: phixSessionModule.brief(report) })));
@@ -4163,10 +4284,18 @@ function registerIpc() {
     });
   }
   // Xinlv (心履) is a native API integration, not an embedded webpage.
+  // 会改变登录态/同步状态的方法：执行后广播一份最新 status，界面（侧栏、设置、心履页）
+  // 才能保持同一个状态；以前只发 xinlv:changed（拉取事件），登录/退出后别处还是旧的。
+  const XINLV_STATUS_CHANGING = new Set(['login', 'register', 'logout', 'sync', 'add', 'edit', 'remove', 'clear-chat']);
+  const publishXinlvStatus = () => {
+    try { if (xinlvService) sendToRenderer('xinlv:status', xinlvService.status()); } catch { /* 窗口未就绪 */ }
+  };
   const xinlvHandle = (name, handler) => ipcMain.handle(`xinlv:${name}`, async (event, ...args) => {
     assertMainRenderer(event);
     if (!xinlvService) throw new Error('心履服务尚未就绪');
-    return handler(...args);
+    const result = await handler(...args);
+    if (XINLV_STATUS_CHANGING.has(name)) publishXinlvStatus();
+    return result;
   });
   xinlvHandle('status', () => xinlvService.status());
   xinlvHandle('ping', () => xinlvService.ping());
@@ -4193,6 +4322,35 @@ function registerIpc() {
   xinlvHandle('history', () => xinlvService.chatHistory());
   xinlvHandle('proactive', (since) => xinlvService.proactive(since));
   xinlvHandle('clear-chat', () => xinlvService.clearChat());
+  // 心履设置（云同步开关 / 是否把启动器内容分享给心履 AI）。以前 preload 没暴露
+  // 这个方法，界面上的开关点了等于没点（审计 2026-11-09）。设置存 SecureStore，
+  // 保存后广播 data:changed，其他页面读到的就是同一份。
+  xinlvHandle('set-settings', (patch) => {
+    const input = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const previous = secureStore.data.settings.xinlv && typeof secureStore.data.settings.xinlv === 'object'
+      ? secureStore.data.settings.xinlv : { cloudSyncEnabled: false, shareLauncherContext: false, revision: 0 };
+    const next = { ...previous };
+    if (typeof input.cloudSyncEnabled === 'boolean') next.cloudSyncEnabled = input.cloudSyncEnabled;
+    if (typeof input.shareLauncherContext === 'boolean') next.shareLauncherContext = input.shareLauncherContext;
+    next.revision = (Number(previous.revision) || 0) + 1;
+    secureStore.data.settings.xinlv = next;
+    try { secureStore.save(); } catch (error) {
+      secureStore.data.settings.xinlv = previous;
+      throw new Error(`心履设置保存失败：${String(error?.message || error)}`);
+    }
+    return { settings: next, data: publishDataChange() };
+  });
+  // 离线词典是只读查询；词典数据缺失时返回 available:false 而不是抛错，
+  // 让词汇页可以走"手动填写释义"的路径（以前整个 bridge 都不存在，查询必炸）。
+  ipcMain.handle('dictionary:lookup', (event, rawWord) => {
+    assertMainRenderer(event);
+    const query = String(rawWord || '').trim().slice(0, 80);
+    try {
+      return { available: true, ...offlineDictionary.lookup(query) };
+    } catch (error) {
+      return { available: false, query, exact: null, suggestions: [], error: String(error?.message || error) };
+    }
+  });
   registerPhixIpc();
   schoolHandle('preferences', (input) => updateSchoolPreferences(input || {}));
   schoolHandle('import-plan', importSchoolPlan);

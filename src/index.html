@@ -21,7 +21,7 @@
     <link rel="stylesheet" href="./dialogs.css" />
   </head>
   <body class="is-splash">
-    <script>window.__phSplashStartedAt = Date.now();</script>
+    <script src="./splash-start.js"></script>
     <div id="splashScreen" class="splash-screen">
       <!-- 2026-09-20 用户要求：三端统一成一个"开机画面"——墨绿底、中间 logo、
            下面一根细进度条，**一个字都没有**（像 Mac 开机）。进度仍由
@@ -325,6 +325,8 @@
          account-bridge.js 才是本程序自己的适配层。 -->
     <script src="./account-ui.js"></script>
     <script src="./account-bridge.js"></script>
+    <!-- PHL 侧的账号界面外观/动效/跳过入口增强（不改共享的 account-ui.js） -->
+    <script src="./account-theme.js"></script>
     <script src="./vlmreader-ui.js"></script>
     <script src="./app.js"></script>
     <dialog class="modal onboarding-dialog" id="onboardingDialog"><form id="onboardingForm"><div class="modal-head"><div><span class="section-kicker">WELCOME</span><h3>欢迎使用 PH Launcher</h3></div><button type="button" id="onboardingClose" aria-label="关闭引导">×</button></div><div id="onboardingContent"></div><div class="modal-actions"><button class="ghost-button" type="button" id="onboardingSkip">跳过引导</button><div><button class="secondary-button" type="button" id="onboardingBack">上一步</button><button class="primary-button" type="button" id="onboardingNext">下一步</button></div></div></form></dialog>

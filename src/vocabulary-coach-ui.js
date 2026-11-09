@@ -113,7 +113,12 @@
     options.openDialog(word, `<p data-selection-result translate="no">${t('正在查询离线词典…', 'Looking up the offline dictionary…')}</p>`, 'example-word');
     const panel = host.querySelector('[data-selection-result]');
     try {
-      const found = (await window.ph.dictionary.lookup(word))?.exact;
+      const dictionaryBridge = window.ph?.dictionary?.lookup;
+      // 词典 bridge 可能不存在（功能/数据被移除）：按"没有词条"处理，不要抛错。
+      const lookup = typeof dictionaryBridge === 'function'
+        ? await dictionaryBridge(word).catch(() => null)
+        : null;
+      const found = lookup?.exact;
       if (request !== selectionVersion || !panel?.isConnected) return;
       const meaning = found?.translation || found?.definition;
       const data = { word: found?.word || word, meaning: meaning || '', context: entry.context, subject: '例句生词', source: '背单词例句' };
@@ -123,7 +128,10 @@
         if (!panel.isConnected) return;
         panel.innerHTML = `<span data-i18n-ignore>${esc(meaning)}</span><br>${t('已收入生词本，并保留原句。', 'Saved to your word book with the original sentence.')}`;
       } else {
-        panel.innerHTML = `${t('离线词典没有完整匹配，可手动添加释义。', 'No exact offline entry. You can add the meaning yourself.')} <button class="secondary-button" type="button">${t('手动添加', 'Add manually')}</button>`;
+        const missing = lookup?.available === false
+          ? t('本机没有可用的离线词典，可手动添加释义。', 'The offline dictionary is unavailable. You can add the meaning yourself.')
+          : t('离线词典没有完整匹配，可手动添加释义。', 'No exact offline entry. You can add the meaning yourself.');
+        panel.innerHTML = `${missing} <button class="secondary-button" type="button">${t('手动添加', 'Add manually')}</button>`;
         panel.querySelector('button').onclick = () => options.addDialog(data);
       }
     } catch { if (panel?.isConnected) panel.textContent = t('暂时无法查词，请稍后重试。', 'Lookup failed. Please try again.'); }

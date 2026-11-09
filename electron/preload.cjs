@@ -54,8 +54,16 @@ contextBridge.exposeInMainWorld('ph', {
     history: () => ipcRenderer.invoke('xinlv:history'),
     proactive: (since) => ipcRenderer.invoke('xinlv:proactive', since),
     clearChat: () => ipcRenderer.invoke('xinlv:clear-chat'),
+    setSettings: (patch) => ipcRenderer.invoke('xinlv:set-settings', patch),
     // 后台同步拉到新记录（别的设备/网页端改的）：界面据此静默刷新。
     onChanged: (callback) => on('xinlv:changed', callback),
+    // 登录态/同步状态变化（登录、退出、后台同步、增删记录都发）：侧栏与设置统一刷新。
+    onStatus: (callback) => on('xinlv:status', callback),
+  },
+  // 本机离线词典（ECDICT）的只读查询。数据缺失时主进程回 available:false，
+  // 词汇页据此提示"手动填写释义"而不是抛错。
+  dictionary: {
+    lookup: (word) => ipcRenderer.invoke('dictionary:lookup', word),
   },
   // phix 统一账号 · 云同步：与 Pinghe Launcher Lite 共用同一账号与同一份数据文件。
   // 每个方法都回 { ok, data } 或 { ok:false, error, code }，界面直接判 ok。
@@ -76,6 +84,10 @@ contextBridge.exposeInMainWorld('ph', {
     //: 「我们正在为你准备你的软件」的步骤清单与逐项执行（界面见 src/account-ui.js）
     preparePlan: () => ipcRenderer.invoke('phix:prepare-plan'),
     prepareStep: (id) => ipcRenderer.invoke('phix:prepare-step', id),
+    //: 账号向导里"云端覆盖本地 / 本地覆盖云端"的选择先记下来，同步在准备清单第一项跑
+    prepareDirection: (input) => ipcRenderer.invoke('phix:prepare-direction', input),
+    //: 登录态/同步状态变化（主进程任意入口，包括后台自动同步）
+    onChanged: (callback) => on('phix:changed', callback),
     trustKey: () => ipcRenderer.invoke('phix:trust-key'),
     devices: () => ipcRenderer.invoke('phix:devices'),
     // P3：会话列表（一次登录 = 一台设备）与注销某台 / 注销除本机外全部

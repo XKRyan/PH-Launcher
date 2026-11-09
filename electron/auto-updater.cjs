@@ -250,7 +250,18 @@ async function manualCheckWindows() {
     phase = 'idle';
     return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
   }
-  if (!info?.version || info.version === app.getVersion()) {
+  if (!info) {
+    // electron-updater 的契约：没有可用更新时 checkForUpdates() 返回 null —— 这是
+    // 真正的"已是最新"，和"请求失败"不是一回事。
+    phase = 'idle';
+    return { ok: true, status: 'up-to-date', current: app.getVersion() };
+  }
+  if (!info.version) {
+    // 有回包却没有版本号 = 没拿到版本信息，属于检查失败，不能报"已是最新"。
+    phase = 'idle';
+    return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
+  }
+  if (info.version === app.getVersion()) {
     phase = 'idle';
     return { ok: true, status: 'up-to-date', current: app.getVersion() };
   }
@@ -277,7 +288,13 @@ async function manualCheckMac() {
     return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
   }
   const latest = String(data.latest_version || '');
-  if (!latest || latest === app.getVersion()) {
+  // 服务器回了包却没有版本号 = 没拿到版本信息，属于**检查失败**，不能报"已是最新"
+  // （协议 §4.9 的正常回包总会带 latest_version；这里防的是服务端异常/配置错误）。
+  if (!latest) {
+    phase = 'idle';
+    return { ok: false, status: 'failed', error: '检查失败，请稍后再试' };
+  }
+  if (latest === app.getVersion()) {
     phase = 'idle';
     return { ok: true, status: 'up-to-date', current: app.getVersion() };
   }

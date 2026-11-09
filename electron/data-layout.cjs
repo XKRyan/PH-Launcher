@@ -11,7 +11,6 @@ const path = require('node:path');
 
 const LAYOUT_VERSION = 1;
 const POINTER_FILE = 'data-root.txt';
-const PORTABLE_FLAG = 'portable.flag';
 
 function isDirectory(target) {
   try { return fs.statSync(target).isDirectory(); } catch { return false; }
@@ -26,8 +25,9 @@ function isFile(target) {
  *
  * 1. `PHL_DATA_DIR` (tests, portable launchers, power users)
  * 2. the folder recorded by `data-root.txt` in the app profile
- * 3. portable layout: `portable.flag` next to the executable → `<execDir>/data`
- * 4. this app's own `<userData>/data`
+ * 3. `<execDir>/data` — there is only one layout: two exes and one `data/` in
+ *    whatever folder the program was installed to. Lite's `portable.flag` is
+ *    deliberately not read here; the data folder always sits next to the exe.
  *
  * A Lite folder found at `~/.hellopinghe` is never adopted automatically: the
  * user shares it through the recorded choice (see `detectLiteRoot`), so this app
@@ -168,7 +168,6 @@ module.exports = {
   LAYOUT_VERSION,
   OWN_FILES,
   POINTER_FILE,
-  PORTABLE_FLAG,
   detectLiteRoot,
   ensureLayout,
   isDirectory,

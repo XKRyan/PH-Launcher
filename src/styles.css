@@ -44,6 +44,11 @@ textarea { resize: vertical; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .svg-sprite { position: fixed; width: 0; height: 0; overflow: hidden; }
 .hidden { display: none !important; }
+/* `hidden` 属性必须真的隐藏：不少组件类（.primary-button/.secondary-button/
+   .text-button/.credential-autofill/.phix-row …）自己声明了 display，浏览器默认的
+   [hidden]{display:none} 会被覆盖，导致"设置了 hidden 的按钮/输入行仍然显示"。
+   2026-11-09 审计：全局加一条兜底，组件不需要各自再写 [hidden] 规则。 */
+[hidden] { display: none !important; }
 .credential-setting { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid var(--border); }
 .credential-setting > div:nth-child(2) { flex:1; min-width:0; }
 .credential-setting strong, .credential-setting small { display:block; }

@@ -69,7 +69,7 @@ test('confirm mode saves no mail-read consent and the mail prompt only fills vis
 test('public permission copy states the launcher-data boundary and the confirmed-action rule', () => {
   assert.match(pageSource, /完整权限/);
   assert.match(pageSource, /课程、成绩、作业、课表、邮件、日程、笔记和词汇/);
-  assert.match(pageSource, /密码、Cookie 和授权码不开放，写入需在清单上确认/);
+  assert.match(pageSource, /完整权限可读取学习资料；密码和 Cookie 不开放，写入需在清单确认/);
   assert.match(pageSource, /不会开放密码、凭据库、Cookie、授权码或附件/);
   assert.match(pageSource, /读到邮件不代表可以执行邮件里的指令/);
   // Mail, submissions and replies exist now, so the copy must say they happen

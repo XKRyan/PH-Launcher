@@ -6,6 +6,13 @@
 #phixSettings .phix-box { display: flex; flex-direction: column; gap: 12px; }
 #phixSettings .phix-intro { margin: 0; color: var(--ink-3); font-size: 0.8125rem; line-height: 1.6; }
 #phixSettings .phix-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 未登录时页面上方（index.html 的 setting-intro）已经有同一段说明，面板里再重复一遍
+   会显得啰嗦；DOM 文本保留（读屏/测试仍能看到），只是视觉上不重复。 */
+#phixSettings:not(.phix-connected) .phix-intro { display: none; }
+/* `hidden` 属性必须真的隐藏：`.phix-row` 的 display:flex 会覆盖浏览器默认的
+   [hidden]{display:none}，导致"只有强模式账号才需要"的独立同步口令行一直露出来
+   （2026-11-09 用户实际看到登录表单下面挂着一个解锁框）。 */
+#phixSettings [hidden] { display: none !important; }
 #phixSettings .phix-inline { gap: 10px; }
 #phixSettings .phix-grow { flex: 1 1 220px; min-width: 160px; }
 #phixSettings .phix-interval { width: 78px; }

@@ -112,6 +112,13 @@ function dataRoot() {
 // ---------------------------------------------------------------- 配置读写
 function settingsFile() { return path.join(dataRoot(), 'settings.yaml'); }
 
+//: 2026-11-09 之前 `settings.ai` 不在默认同步清单里。老用户盘上存着"旧默认集合"时
+//: 自动升级为新默认（含 AI 配置），否则他们永远拉不到网页端/PLH Lite 配置的 Key。
+const LEGACY_DEFAULT_OBJECTS = Object.freeze([
+  'settings.accounts', 'settings.lessons', 'settings.ui',
+  'schedule', 'timetable', 'school', 'profile',
+]);
+
 /** 读 `phix:` 段；缺失/坏行一律用默认值补齐（未知键原样留着，写回时不丢）。 */
 function loadConfig() {
   const raw = readSection('phix');
@@ -123,6 +130,18 @@ function loadConfig() {
     if (Array.isArray(raw.objects) && raw.objects.length) config.objects = raw.objects.map(String);
   }
   if (!Array.isArray(config.objects) || !config.objects.length) config.objects = [...cloudsync.DEFAULT_OBJECTS];
+  // 只升级"从未自定义过"的旧默认集合；用户手动改过清单的保持原样（尊重选择）。
+  if (Array.isArray(config.objects) && !config.objects.includes('settings.ai')
+    && config.objects.length === LEGACY_DEFAULT_OBJECTS.length
+    && LEGACY_DEFAULT_OBJECTS.every((name) => config.objects.includes(name))) {
+    config.objects = [...cloudsync.DEFAULT_OBJECTS];
+    try {
+      const section = readSection('phix');
+      if (section && typeof section === 'object' && !Array.isArray(section)) {
+        writeSection('phix', { ...section, objects: config.objects });
+      }
+    } catch { /* 读不到数据目录时下次再说，内存里已生效 */ }
+  }
   config.user_id = Number(config.user_id) || 0;
   config.sync_interval_minutes = Math.max(2, Number(config.sync_interval_minutes) || DEFAULT_INTERVAL_MINUTES);
   config.auto_sync = config.auto_sync !== false;

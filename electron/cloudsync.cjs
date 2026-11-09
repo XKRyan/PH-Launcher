@@ -74,9 +74,15 @@ const NEVER_SYNC = Object.freeze([
   '.phl-running', '.pll-running', SYNC_DIR, '.gh_token',
 ]);
 
-/** 默认同步哪些对象。profile 默认勾选，mood 不勾。 */
+/**
+ * 默认同步哪些对象。profile 默认勾选，mood 不勾。
+ *
+ * `settings.ai` 从 2026-11-09 起默认同步：用户明确要求"在任意一端填的服务商与
+ * Key，三端都能用"，而它在界面上本来就是可勾选项；不默认勾会表现为"网页端配了
+ * AI，客户端登录后 AI 页仍是空的"。载荷仍由端到端加密保护，服务器看不到明文。
+ */
 const DEFAULT_OBJECTS = Object.freeze([
-  'settings.accounts', 'settings.lessons', 'settings.ui',
+  'settings.accounts', 'settings.lessons', 'settings.ui', 'settings.ai',
   'schedule', 'timetable', 'school', 'profile',
 ]);
 
