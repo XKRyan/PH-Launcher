@@ -19,7 +19,7 @@ function cleanup(root) {
 test('安装登记路径固定且支持测试覆盖（不碰真实文件）', () => {
   const override = path.join(os.tmpdir(), 'custom-installations.ini');
   assert.equal(registry.registryPath({ env: { PHL_INSTALL_REGISTRY: override }, platform: 'win32', homeDir: 'C:\\Users\\x' }), path.resolve(override));
-  assert.equal(registry.registryPath({ env: { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' }, platform: 'win32', homeDir: 'C:\\Users\\me' }), path.join('C:\\Users\\me\\AppData\\Local', 'PingheSeries', 'installations.ini'));
+  assert.equal(registry.registryPath({ env: { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' }, platform: 'win32', homeDir: 'C:\\Users\\me' }), path.win32.join('C:\\Users\\me\\AppData\\Local', 'PingheSeries', 'installations.ini'));
   assert.equal(registry.registryPath({ env: {}, platform: 'darwin', homeDir: '/Users/me' }), '/Users/me/Library/Application Support/PingheSeries/installations.ini');
 });
 
@@ -111,7 +111,7 @@ test('remove 路径不匹配绝不删；匹配时只删自己的节并保留 phl
 
 test('从可执行文件推导安装目录：Windows 取 exe 所在目录，macOS 向上找到 .app', () => {
   assert.equal(registry.installPathFromExecutable('C:\\Users\\me\\Programs\\PH Launcher\\PH Launcher.exe', { platform: 'win32' }),
-    path.dirname('C:\\Users\\me\\Programs\\PH Launcher\\PH Launcher.exe'));
+    path.win32.dirname('C:\\Users\\me\\Programs\\PH Launcher\\PH Launcher.exe'));
   const macExe = '/Applications/PH Launcher.app/Contents/MacOS/PH Launcher';
   assert.equal(registry.installPathFromExecutable(macExe, { platform: 'darwin' }),
     '/Applications/PH Launcher.app');
