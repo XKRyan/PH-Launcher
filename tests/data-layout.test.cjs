@@ -57,7 +57,7 @@ test('单一架构：数据永远在 exe 同级的 data/，没有就自动创建
   assert.equal(fs.statSync(layout.own).isDirectory(), true);
 });
 
-test('测试与预览仍可用 PHL_DATA_DIR 或记录的目录改向', () => {
+test('测试与预览仍可用 PHL_DATA_DIR 或记录的目录改向，写指针后重新解析立即生效', () => {
   const dir = freshProfile('override-profile');
   const chosen = path.join(temp, 'chosen-again');
   fs.mkdirSync(chosen, { recursive: true });
@@ -66,6 +66,26 @@ test('测试与预览仍可用 PHL_DATA_DIR 或记录的目录改向', () => {
   writeRootPointer(dir, chosen);
   assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: path.join(temp, 'x'), env: {} }),
     { root: path.resolve(chosen), source: 'pointer' });
+  assert.equal(fs.readdirSync(dir).some((name) => name.endsWith('.tmp')), false, '原子写不留下临时文件');
+});
+
+test('安装器写入的 UTF-16LE+BOM 指针可读，中文数据根不会乱码', () => {
+  const dir = freshProfile('utf16-pointer-profile');
+  const chosen = path.join(temp, '中文 数据');
+  const payload = Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from(`${chosen}\r\n`, 'utf16le')]);
+  fs.writeFileSync(path.join(dir, 'data-root.txt'), payload);
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: path.join(temp, 'utf16-app'), env: {} }),
+    { root: path.normalize(chosen), source: 'pointer' });
+});
+
+test('损坏的相对指针被忽略，writeRootPointer 也拒绝写入相对路径', () => {
+  const dir = freshProfile('bad-pointer-profile');
+  const exeDir = path.join(temp, 'bad-pointer-app');
+  fs.mkdirSync(exeDir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'data-root.txt'), 'relative/data\n', 'utf8');
+  assert.deepEqual(resolveDataRoot({ userDataDir: dir, execDir: exeDir, env: {} }),
+    { root: path.join(exeDir, 'data'), source: 'app' });
+  assert.throws(() => writeRootPointer(dir, 'relative/data'), /绝对路径/);
 });
 
 test('Lite 目录只用于提示，不参与数据根解析', () => {

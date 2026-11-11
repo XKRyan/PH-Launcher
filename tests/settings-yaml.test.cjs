@@ -73,7 +73,7 @@ test('a workspace list is read from both inline and block style', () => {
   assert.deepEqual(readStringList(FIXTURE, 'missing', 'x'), []);
 });
 
-test('replacing the accounts block changes nothing outside it', () => {
+test('replacing the accounts block preserves unknown platforms and changes nothing outside it', () => {
   const next = { edupage: { username: 'other@example.com', subdomain: 'pingheschool', password: 'new:pass' }, mail: { email: 'other@example.com', authcode: 'zzz' } };
   const updated = replaceBlock(FIXTURE, 'accounts', serializeNestedMap('accounts', next));
   const before = FIXTURE.split('\n').slice(0, FIXTURE.split('\n').indexOf('accounts:'));
@@ -83,7 +83,7 @@ test('replacing the accounts block changes nothing outside it', () => {
   assert.match(updated, /future_section:\n {2}nested:\n {4}key: keep-me/);
   assert.match(updated, /^# Pinghe Launcher Lite 配置$/m);
   assert.deepEqual(readNestedMap(updated, 'accounts').edupage, { username: 'other@example.com', subdomain: 'pingheschool', password: 'new:pass' });
-  assert.deepEqual(readNestedMap(updated, 'accounts').xinlv, undefined, 'a platform we no longer list is dropped from the block we own');
+  assert.deepEqual(readNestedMap(updated, 'accounts').xinlv, { username: 'someone', token: 'token-value' }, 'Lite/未来平台属于未知字段，PHL 写回不能删除');
   assert.equal(readScalarMap(updated, 'agent').mode, 'confirm', 'other blocks keep working');
 });
 
@@ -108,8 +108,8 @@ test('replacing indentless lists consumes every old item and preserves neighbori
     const old = ['lessons:', '- subject: Physics', '  group: A', '# old list comment', '- subject: Chemistry', '  group: B', ''].join(newline);
     const body = 'lessons:\n- subject: Mathematics\n  group: C\n';
     const updated = replaceBlock(head + old + tail, 'lessons', body);
-    assert.equal(updated, head + body + tail);
-    assert.equal(replaceBlock(updated, 'lessons', 'lessons: []\n'), head + 'lessons: []\n' + tail);
+    assert.equal(updated, head + body + '# old list comment' + newline + tail);
+    assert.equal(replaceBlock(updated, 'lessons', 'lessons: []\n'), head + 'lessons: []\n# old list comment' + newline + tail);
   }
 });
 

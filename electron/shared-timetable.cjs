@@ -9,7 +9,7 @@
 // 读取容错：文件缺失/损坏 → 没有课表，绝不抛错；写入原子替换。
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 
 const KIND = 'pinghe-timetable';
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -158,13 +158,58 @@ function lessonGroup(lesson) {
   return list.join(' / ');
 }
 
-/** 原子写入共享课表（UTF-8 无 BOM, \n, 同目录临时文件 + rename）。 */
+/**
+ * 用共享字段识别同一张课卡。写回时只覆盖双方约定的字段，Lite 将来新增在课卡里的
+ * 字段继续留在原条目上；不能靠整份 JSON 重建，否则升级一边就会静默抹掉另一边数据。
+ */
+function lessonIdentity(day, lesson) {
+  return [day, clean(lesson?.start, 5), clean(lesson?.subject), clean(lesson?.group, 80)].join('|');
+}
+
+function readRawDoc(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size > MAX_BYTES) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.kind === KIND ? parsed : null;
+  } catch { return null; }
+}
+
+function mergeDays(existingDays, incomingDays) {
+  const oldByIdentity = new Map();
+  for (const [day, lessons] of Object.entries(existingDays && typeof existingDays === 'object' ? existingDays : {})) {
+    for (const lesson of Array.isArray(lessons) ? lessons : []) {
+      if (lesson && typeof lesson === 'object' && !Array.isArray(lesson)) oldByIdentity.set(lessonIdentity(day, lesson), lesson);
+    }
+  }
+  const merged = {};
+  for (const [day, lessons] of Object.entries(incomingDays && typeof incomingDays === 'object' ? incomingDays : {})) {
+    if (!Array.isArray(lessons)) continue;
+    merged[day] = lessons.map((lesson) => {
+      const previous = lesson && typeof lesson === 'object' ? oldByIdentity.get(lessonIdentity(day, lesson)) : null;
+      return previous ? { ...previous, ...lesson } : lesson;
+    });
+  }
+  return merged;
+}
+
+/** 原子读-改-写共享课表（UTF-8 无 BOM, \n, 同目录临时文件 + rename）。 */
 function writeDoc(filePath, doc, { now = () => new Date() } = {}) {
-  const payload = { ...doc, updated_at: localIso(now()) };
+  const previous = readRawDoc(filePath) || {};
+  const payload = {
+    ...previous,
+    ...doc,
+    days: mergeDays(previous.days, doc?.days),
+    updated_at: localIso(now()),
+  };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const temporary = `${filePath}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  fs.renameSync(temporary, filePath);
+  const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporary, filePath);
+  } finally {
+    try { fs.rmSync(temporary, { force: true }); } catch { /* 已原子改名，临时文件不存在 */ }
+  }
   return payload;
 }
 

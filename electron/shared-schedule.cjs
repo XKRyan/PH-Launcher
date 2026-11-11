@@ -138,10 +138,14 @@ function readSchedule(filePath, { now = new Date(), app = DEFAULT_APP } = {}) {
 }
 
 /** 下一个可用 id: 事件内最大 id 与高水位 lastId 取大者再 +1, 保证删除后不复用。 */
-function nextEventId(doc) {
+function scheduleHighWater(doc) {
   const highestInEvents = doc.events.reduce((max, event) => Math.max(max, event.id), 0);
   const marked = Number(doc.lastId);
-  return Math.max(highestInEvents, Number.isFinite(marked) ? marked : 0) + 1;
+  return Math.max(highestInEvents, Number.isSafeInteger(marked) && marked >= 0 ? marked : 0);
+}
+
+function nextEventId(doc) {
+  return scheduleHighWater(doc) + 1;
 }
 
 function toEventId(value) {
@@ -257,8 +261,7 @@ function upsertEvents(filePath, entries, { now = new Date(), app = DEFAULT_APP }
     current.kind = SCHEDULE_KIND;
     current.app = writer;
     current.updated_at = stamp;
-    const highest = current.events.reduce((max, event) => Math.max(max, event.id), 0);
-    if (!(Number(current.lastId) >= highest)) current.lastId = highest;
+    current.lastId = Math.max(scheduleHighWater(current), pendingId - 1);
     return current;
   }, { now, app });
   const result = { doc, added: tally.added, updated: tally.updated, unchanged: tally.unchanged };
@@ -274,6 +277,8 @@ function removeEvents(filePath, ids, { now = new Date(), app = DEFAULT_APP } = {
   const writer = sharedText(app) || DEFAULT_APP;
   const { doc, contended } = commitSchedule(filePath, (current) => {
     taken.length = 0;
+    // 先记录删除前的最高 id；旧文件可能还没有 lastId，若先删再算就会复用刚删的 id。
+    const highWaterBeforeRemoval = scheduleHighWater(current);
     const kept = [];
     for (const event of current.events) {
       if (wanted.has(event.id)) taken.push(event.id);
@@ -286,6 +291,7 @@ function removeEvents(filePath, ids, { now = new Date(), app = DEFAULT_APP } = {
     current.kind = SCHEDULE_KIND;
     current.app = writer;
     current.updated_at = stamp;
+    current.lastId = highWaterBeforeRemoval;
     return current;
   }, { now, app });
   const result = { doc, removed: [...taken] };

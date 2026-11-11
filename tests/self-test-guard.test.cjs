@@ -6,6 +6,18 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
 
+function fakeApp(calls) {
+  let userData = '/tmp/default-profile';
+  return {
+    getPath: () => userData,
+    setName: (name) => calls.push(['name', name]),
+    setPath: (key, value) => {
+      calls.push(['path', key, value]);
+      if (key === 'userData') userData = value;
+    },
+  };
+}
+
 test('macOS diagnostic runs isolate real Keychain identity without changing ordinary launches', () => {
   const block = source.slice(source.indexOf("let headlessUserData = ''"), source.indexOf('// School portals'));
   for (const platform of ['darwin', 'win32']) {
@@ -22,7 +34,7 @@ test('macOS diagnostic runs isolate real Keychain identity without changing ordi
         fs: { mkdtempSync: () => '/tmp/ph-launcher-headless-fixture' },
         os: { tmpdir: () => '/tmp' },
         path: path.posix,
-        app: { setName: (name) => calls.push(['name', name]), setPath: (...args) => calls.push(['path', ...args]) },
+        app: fakeApp(calls),
       });
       assert.deepEqual(calls.filter(([key]) => key === 'name'), headless && platform === 'darwin'
         ? [['name', 'PH Launcher Test ph-launcher-headless-fixture']] : []);
@@ -45,7 +57,7 @@ test('only an explicit preview run may keep a real profile', () => {
     fs: { mkdtempSync: () => '/tmp/ph-launcher-headless-fixture' },
     os: { tmpdir: () => '/tmp' },
     path: path.posix,
-    app: { setName: (name) => calls.push(['name', name]), setPath: (...args) => calls.push(['path', ...args]) },
+    app: fakeApp(calls),
   });
   assert.equal(calls.length, 0, 'a preview with --user-data-dir keeps the requested profile');
   assert.match(source, /const CAPTURE_KEEPS_PROFILE = \(IS_CAPTURE \|\| Boolean\(CAPTURE_SITE\)\) && process\.argv\.some\(\(arg\) => arg\.startsWith\('--user-data-dir='\)\)/,
@@ -67,7 +79,7 @@ test('干净测试环境（fresh.flag）不迁移旧数据，也不会退回本�
     fs: { mkdtempSync: () => '/tmp/ph-launcher-fresh-fixture' },
     os: { tmpdir: () => '/tmp' },
     path: path.posix,
-    app: { setName: (name) => calls.push(['name', name]), setPath: (...args) => calls.push(['path', ...args]) },
+    app: fakeApp(calls),
   });
   assert.deepEqual(calls, [['path', 'userData', '/tmp/ph-launcher-fresh-fixture']],
     '干净环境拿不到数据根时用临时 profile，而不是本机默认 profile');

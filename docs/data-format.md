@@ -5,10 +5,10 @@
 > `DATA-FORMAT.md` **v1** 对齐:两个程序安装在同一台机器上时可以不互相破坏,
 > 并且共用账号、日程与 AI 会话记录。
 >
-> 规范版本:`1`(2026-09-10)。**本文最后核对:2026-11-02(PHL 2.0.0)。**
-> **共享文件格式仍是 v1、没有变化** —— 这次按代码校正的是 PHL 侧的实现说明:
-> 私有数据改为明文容器(第 6 节)、账号只读写共用 `settings.yaml`(第 3.2 节)、
-> Chromium profile 放在 `phl/profile/`(第 2 节)、旧账号库只做迁移留档(第 7 节)。
+> 规范版本:`1`(2026-09-10)。**本文最后核对:2026-11-11(PHL 2.0.13 开发线)。**
+> **共享文件格式仍是 v1、没有变化** —— PHL 侧已补齐 Lite 1.2.9 的安装登记、
+> 安装目录/数据根联动，以及 Timetable/School/agent 未知字段保留；私有数据仍是明文容器，
+> 账号仍只读写共用 `settings.yaml`，Chromium profile 仍放在 `phl/profile/`。
 > **共享文件**(第 3–5 节)的任何破坏性字段变更仍必须先改 PLL 侧文档并升版本号,再改本仓库。
 
 ---
@@ -21,11 +21,9 @@
 2. **共享的是这五样**:`settings.yaml`(账号与配置+选课)、`Schedule`(按天日程)、
    `Timetable`(按天课表)、`School`(抓到的学校信息:课表/课程作业/邮箱摘要)、
    `agent/`(AI 会话)。其余一律不共用。
-3. **只写自己拥有的字段。** `settings.yaml` / `Schedule` / `School` 一律"读 → 改 → 写",
-   并且只替换自己负责的区块;别人的段落、注释、未知字段与文件其余字节必须原样保留
-   (第 3、4 节)。例外:`Timetable` 由 `shared-timetable.cjs` **整文件重建**
-   (只写自己认识的字段),`agent/` 的单会话文件也**整文件重建**——PLL 写进这两个
-   文件的未知字段不会被 PHL 保留(见第 5 节与 §11)。
+3. **只写自己拥有的字段。** `settings.yaml` / `Schedule` / `Timetable` / `School` /
+   `agent/` 一律"读 → 改 → 写"；顶层未知键、对应条目内未知键与 YAML 注释必须保留。
+   JSON 用浅合并，`settings.yaml` 用文本块/条目级合并，不能从 PHL 内存模型整文件重建。
 4. **写入一律原子替换**(同目录临时文件 + `rename`),崩溃/断电不会留下半个文件。
 5. **读取必须容错**:文件缺失、损坏、超限或字段不认识时按"空/默认"处理,
    **绝不因为读不懂而删除或覆盖用户文件**。
@@ -49,21 +47,19 @@
 | 顺序 | `source` | 条件 | 结果 |
 |---|---|---|---|
 | 1 | `env` | 环境变量 `PHL_DATA_DIR` 有值 | 用它(自动化测试、预览、高级用户改向) |
-| 2 | `pointer` | Electron 默认 profile(`%APPDATA%\ph-launcher`)下的 `data-root.txt` 记着一行路径 | 用它(用户在设置里选择过的目录) |
+| 2 | `pointer` | Electron 改向前的固定 profile（Windows `%APPDATA%\PH Launcher`）下 `data-root.txt` 记着一行绝对路径 | 用它（用户/安装器选择过的数据根） |
 | 3 | `app` | 以上都没有 | `<exe 所在目录>/data`,不存在就自动创建 |
 
 要点:
 
 - **不需要任何标记文件**:装到哪个文件夹,`data/` 就长在那个文件夹里。
   用户看到的软件文件夹只有两个 exe 和一个 `data/`。
-- **不会**因为"检测到 `~/.hellopinghe`"就自动把数据写进 PLL 的目录,
-  也不会自动接管别人的数据目录;共用要么是同文件夹(第 3 条),
-  要么由用户在设置页明确改向(写 `data-root.txt`;**v2.0 有已知缺陷,重启不生效**,
-  见本节末尾)。
-- 第 2 条是用户显式改向的记录;正常安装的机器上不存在这个文件。
-- 想换目录:设置 → 数据与隐私里的"改用 Lite 的数据目录 / 恢复本应用目录"
-  (IPC `system:data-share-lite` / `system:data-use-own`),或直接写 `data-root.txt`;
-  重启生效。**注意 v2.0 这两个按钮有已知缺陷**,见本节末尾。
+- **不会**因为"检测到 `~/.hellopinghe`"就自动把数据写进 PLL 的目录，也不会在应用
+  启动时用 installations.ini 偷偷改向。共用要么是同文件夹(第 3 条)，要么由安装器在
+  **新装且尚无指针**时采用对方登记的 data_root 并写 `data-root.txt`，要么由用户在设置页明确改向。
+- 第 2 条是安装/用户显式选择的记录；升级安装发现已有指针时原样保留，绝不覆盖用户选择。
+- 想换目录：设置 → 数据与隐私里的"改用 Lite 的数据目录 / 恢复本应用目录"
+  (IPC `system:data-share-lite` / `system:data-use-own`)，或直接写 `data-root.txt`；重启生效。
 - `<exe 目录>/data` 建不出来(例如装在需要管理员权限的目录)时,
   程序会明确提示"没有写入权限,请移动程序或按用户安装",不会静默换目录——
   静默换目录会让两个程序各写各的,数据就分家了。
@@ -79,15 +75,19 @@
 - **PHL 自己的 Chromium profile 也在数据目录里**:`data/phl/profile/` 放缓存、
   学校网站 Cookie 与 localStorage。它是私有数据(第 6 节),不能当缓存删掉——
   删了要重新登录学校网站;它也不进备份、不上云。
-- **已知问题(v2.0 起)**:`data-root.txt` 的写入路径与读取路径不一致(写
-  `<当前数据根>/phl/profile/`、启动时读 `%APPDATA%\ph-launcher`),所以界面上
-  "改用 Lite 的数据目录 / 恢复本应用目录"重启后不生效;细节与临时办法见
-  `共享数据与进程互斥.md` §1 / §4。
+- `data-root.txt` 的读取、界面写入与旧 Profile 迁移都固定使用 **profile 改向前**捕获的
+  同一个目录；不会再写进 `<数据根>/phl/profile/`。PHL 写 UTF-8 无 BOM，Unicode NSIS
+  为保证中文路径无损可写 UTF-16LE+BOM，解析器兼容两者。
 - 解析结果在进程内缓存一次(`dataRoot()`),避免同一进程里读到两个不同的根。
-- PLL 侧的解析顺序与这里对称(`hellopinghe/paths.py`):`PHLL_DATA_DIR` →
-  程序目录下的 `portable.flag` → `~/.hellopinghe`。它的 Windows 安装包(MSI)
-  会写入 `portable.flag`,所以**装到哪个文件夹,数据就在那个文件夹里**——
-  两个程序装进同一个文件夹时,两边的 `data/` 就是同一个目录。
+- Lite 1.2.9 的解析顺序为 `PHLL_DATA_DIR` → 自己 `[phl-lite]` 登记的 `data_root` →
+  `portable.flag` 对应的安装目录 `data/` → `~/.hellopinghe`；安装完成与应用启动都会
+  更新 `%LOCALAPPDATA%\PingheSeries\installations.ini`。PHL 不把登记当运行时配置源，
+  只把实际解析结果写回 `[phl]` 供下一次安装联动。
+- **安装登记**：Windows `%LOCALAPPDATA%\PingheSeries\installations.ini`，macOS
+  `~/Library/Application Support/PingheSeries/installations.ini`。PHL 启动用
+  `electron/pinghe-series-registry.cjs` 原子更新 `[phl]` 的安装路径、实际 data_root、
+  `package.json`/`app.getVersion()` 版本和时间；损坏/相对路径按未登记处理。卸载器只有在
+  登记 path 与自身 `$INSTDIR` 相等时删除 `[phl]`，始终保留 `[phl-lite]` 与全部数据。
 - 两端一起跑的自检脚本(用副本目录,别拿真实数据当靶子):
 
   ```
@@ -342,8 +342,8 @@ PHL 的落地方式(`electron/shared-sessions.cjs` + `electron/ai-history.cjs`):
 - **主副本是私有文件** `phl/ai-history.json`(会话 + 长期记忆,明文容器 `PHAIH1:`,
   见第 6 节)。每次保存会话时,再把这个会话镜像到 `data/agent/<id>.json`
   (额外写入 `version` / `kind` / `app` / `updated_at` 字段,PLL 忽略它们即可)。
-  会话文件是**整文件重建**:只写 PHL 认识的字段,PLL 在同一文件里写的额外字段
-  不会被保留(见 §11;与 `Schedule` 的"保留未知字段"不同)。
+  写回前会读取同一会话的最新文件，并按消息下标合并：PHL 拥有的已知字段更新，
+  顶层与对应消息里的未知字段原样保留；最后用同目录唯一临时文件原子替换。
 - **镜像失败不影响保存**:共享目录不可写时,私有主副本照常成功。注意
   `saveSession()` 目前无论镜像成功与否都返回 `shared: true`(见 §11),不要只凭
   这个返回值判断"已写进 agent/"。
@@ -423,7 +423,7 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 | 原子写 | 同目录临时文件写入 → `rename` 覆盖;AI 历史主副本在 rename 前额外 `fsync`(`SecureStore`/`SchoolStore` 没有 fsync);失败清理临时文件 |
 | 文件权限 | 私有数据文件尽量以 `0600` 创建(Windows 上由 ACL 决定);共享文件沿用原文件权限 |
 | 进程内并发 | 每个文件一把"读-改-写"路径;共享文件在写前重新读取一次 |
-| 跨进程并发 | `Schedule` 由两个程序同时写时:读最新 → 合并 → 写回;写前比对 `mtimeMs` 与长度,变化则重算一次,仍变化则后者胜(`contended`)。`agent/`/`Timetable` 没有合并,是整文件覆盖(见 §0.3) |
+| 跨进程并发 | `Schedule` 写前比对 `mtimeMs` 与长度，变化则重算一次，仍变化则后者胜(`contended`)；`Timetable`/`School`/`agent/` 每次写前读取最新文档，已知字段后者胜、未知字段保留。正常运行另由系列进程互斥避免同时写。 |
 | 损坏容错 | 解析失败 = 当空文件处理,**不自动删除**用户文件 |
 | 大小限制 | 单会话文件 >512 KB、单条消息文本 >16000 字符一律截断/跳过,避免被超大文件拖垮 UI |
 
@@ -441,9 +441,9 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 | 私有数据文件读取失败、连留档都失败 | 本次运行**禁止保存**(`SecureStore.saveBlocked`),下次启动重新读原文件——宁可本次改不了,也不覆盖用户唯一的数据 |
 | 同一组学校账号密码自动登录失败 | 只自动提交一次(避免 ManageBac 锁号);改账号/密码、手动登录或重启后才再试 |
 | 对方把 linked 日程改成别的样子 | **更新会被 PHL 覆盖(LWW)**;删除有所有权保护(第 4 节) |
-| 对方把其它共享条目改成别的样子 | `settings.yaml`/`School` 读改写、不覆盖未知段;`Schedule` 同 id 条目会按 PHL 本地值更新(LWW,删除有保护);`Timetable`/`agent/` 整文件重建会丢对方未知字段 |
-| 同一台机器两个程序同时开 | 各自原子写;`Schedule` 用"读最新再改"避免丢改动 |
-| 用户把数据根从 A 改到 B | 只写指针文件,下次启动生效——**v2.0 有已知缺陷,当前不生效**(§1、§11) |
+| 对方把其它共享条目改成别的样子 | 五类共享文件都读改写；同一条已知字段按 PHL 本地值更新（LWW），顶层/条目未知字段与 YAML 注释保留 |
+| 同一台机器两个程序同时开 | 系列互斥应阻止；文件层仍用原子写，`Schedule` 额外用"读最新再改"避免丢改动 |
+| 用户把数据根从 A 改到 B | 只在固定 profile 原子写指针文件，下次启动按同一位置读取并生效；不复制、不删除 A/B 中的数据 |
 
 ---
 
@@ -452,6 +452,7 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 | 规则 | 文件 |
 |---|---|
 | 数据根解析、目录布局、迁移 | `electron/data-layout.cjs` |
+| 系列安装登记 / Windows 安装联动 | `electron/pinghe-series-registry.cjs`、`build/installer.nsh` |
 | `settings.yaml` 块级读写 | `electron/settings-yaml.cjs` |
 | 账号(唯一存储 = 共用 `settings.yaml`) | `electron/shared-account-store.cjs` |
 | 账号字段映射/旧格式迁移 | `electron/shared-accounts.cjs`、`electron/credential-vault.cjs`(仅旧文件) |
@@ -469,6 +470,8 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 `tests/shared-account-store-refresh.test.cjs`、`tests/shared-accounts.test.cjs`、
 `tests/shared-schedule.test.cjs`、`tests/shared-calendar-bridge.test.cjs`、
 `tests/shared-sessions.test.cjs`、`tests/shared-timetable.test.cjs`、
+`tests/shared-data-compat.test.cjs`、`tests/pinghe-series-registry.test.cjs`、
+`tests/installer-registry.test.cjs`、`tests/main-install-registry.test.cjs`、
 `tests/ai-history.test.cjs`、`tests/school-store.test.cjs`。
 
 ---
@@ -491,21 +494,20 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 - 备份:PHL 目前没有实现 `_backups/` 自动打包(该目录由 PLL 维护);
   PHL 的"导出备份"仍走自己的 JSON 导出。
 
-**已知的代码缺陷/不一致(2026-11-02 核对,均未修)**:
+**仍存在的代码缺陷/不一致（2026-11-11 核对）**：
 
-1. **数据目录指针不生效**:写入路径与读取路径不一致(§1)。
-2. **旧 profile 迁移源路径错**:`migrateProfile` 拿到的是改向后的 profile(§7),
-   直接跳过 1.0.7 及更早版本的旧数据迁移。
-3. **选课零匹配会清空用户选择**:`selectionKeys` 返回 `[]` 被当成"取消全部"(§3.1)。
-4. **删除最后一个平台账号不落盘**:`SharedAccountStore._write` 在 `accounts` 变空时
-   直接 return,旧条目会留在 `settings.yaml`(§3.2)。
-5. **`Timetable` / `agent/` 整文件重建**,PLL 的未知字段会丢(§0.3、§5)。
-6. **linked 日程更新是 LWW**,对方刚改的会被 PHL 覆盖;只有删除有所有权保护(§4)。
-7. **共享目录只读没有界面提示**;AI 会话镜像失败时 `saveSession()` 仍返回
+1. **选课零匹配会清空用户选择**：`selectionKeys` 返回 `[]` 被当成"取消全部"(§3.1)。
+2. **删除最后一个平台账号不落盘**：`SharedAccountStore._write` 在 `accounts` 变空时
+   直接 return，旧条目会留在 `settings.yaml`(§3.2)。
+3. **linked 日程更新是 LWW**：对方刚改的已知字段会被 PHL 覆盖；只有删除有所有权保护(§4)。
+4. **共享目录只读没有界面提示**；AI 会话镜像失败时 `saveSession()` 仍返回
    `shared: true`(§5、§9)。
-8. **设置页"共用数据"说明只列了 3 样**(settings.yaml/Schedule/agent),
-   而且英文界面里这段运行时文案仍是中文;实际共享还有 Timetable/School。
-9. **`phl_auto_login` 开关不参与自动登录判定**(§3.2)。
+5. **设置页"共用数据"说明只列了 3 样**(settings.yaml/Schedule/agent)，
+   而且英文界面里这段运行时文案仍是中文；实际共享还有 Timetable/School。
+6. **`phl_auto_login` 开关不参与自动登录判定**(§3.2)。
+
+已在本开发线修复、不再列为已知缺陷：指针读写位置不一致、旧 Profile 迁移源错误、
+`Timetable`/`School`/`agent/` 写回丢未知字段，以及 Schedule 删除最大 id 后高水位回退。
 
 ---
 
@@ -515,3 +517,4 @@ v2 的 launcher/AI 历史是 `PLAIN1:`/`PHAIH1:` 明文容器,旧版大概率读
 |---|---|---|
 | 1 | 2026-09-10 | 首次确定 PHL 侧布局:数据根解析、`phl/` 私有目录、`settings.yaml` 块级共用、`Schedule` 与 `agent/` 共用规则、只复制迁移 |
 | 1(核对) | 2026-11-02 | 共享格式未变;按 PHL 2.0.0 代码校正实现说明:私有数据为明文容器、账号只读写共用 `settings.yaml`、旧 `credentials.json` 仅迁移、`phl/profile/`、运行标记与 `.sync/` |
+| 1(兼容修订) | 2026-11-11 | 对齐 Lite 1.2.9：固定 installations.ini、安装目录/数据根联动、指针/旧 Profile 修复、五类共享文件未知字段保留；共享格式版本不变 |

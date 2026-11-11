@@ -8,6 +8,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const LAYOUT_VERSION = 1;
 const POINTER_FILE = 'data-root.txt';
@@ -43,8 +44,15 @@ function resolveDataRoot({ userDataDir, execDir, env = process.env, homeDir = os
   if (userDataDir) {
     const pointer = path.join(userDataDir, POINTER_FILE);
     try {
-      const recorded = String(fs.readFileSync(pointer, 'utf8')).split(/\r?\n/)[0].trim();
-      if (recorded) candidates.push({ root: path.resolve(recorded), source: 'pointer' });
+      const bytes = fs.readFileSync(pointer);
+      // PHL 自己写 UTF-8；Unicode NSIS 安装器为保证中文路径无损写 UTF-16LE+BOM。
+      // 两种编码都接受，下一次应用内改向会自然归一成 UTF-8。
+      const text = bytes[0] === 0xFF && bytes[1] === 0xFE
+        ? bytes.subarray(2).toString('utf16le')
+        : bytes.subarray(bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF ? 3 : 0).toString('utf8');
+      const recorded = text.split(/\r?\n/)[0].trim();
+      // 损坏/手工改成相对路径的指针不能把数据带到当前工作目录；只认绝对路径。
+      if (recorded && path.isAbsolute(recorded)) candidates.push({ root: path.normalize(recorded), source: 'pointer' });
     } catch { /* 没有记录 */ }
   }
   if (execDir) candidates.push({ root: path.join(execDir, 'data'), source: 'app' });
@@ -99,11 +107,18 @@ function ensureLayout(layout) {
 
 function writeRootPointer(userDataDir, root) {
   if (!userDataDir) return false;
+  const chosen = String(root || '').trim();
+  if (!chosen || !path.isAbsolute(chosen)) throw new Error('数据根必须是绝对路径');
   fs.mkdirSync(userDataDir, { recursive: true });
   const target = path.join(userDataDir, POINTER_FILE);
-  const temp = `${target}.tmp`;
-  fs.writeFileSync(temp, `${path.resolve(root)}\n`, 'utf8');
-  fs.renameSync(temp, target);
+  // 唯一临时名避免同系列进程/测试同时写时互相覆盖临时文件；rename 保证读者只看到完整值。
+  const temp = `${target}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(temp, `${path.normalize(chosen)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(temp, target);
+  } finally {
+    try { fs.rmSync(temp, { force: true }); } catch { /* no-op */ }
+  }
   return true;
 }
 
