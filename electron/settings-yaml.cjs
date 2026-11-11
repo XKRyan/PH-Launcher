@@ -32,7 +32,12 @@ function blockRange(text, blockName) {
     // YAML permits a block sequence at column 0 (lessons:\n- subject: ...).
     // Those items still belong to this block; leaving them behind resurrects
     // deselected courses the next time the shared configuration is read.
-    if (!/^\s/.test(line) && !/^-(?:\s|$)/.test(line)) { end = index; break; }
+    if (!/^\s/.test(line) && !/^-(?:\s|$)/.test(line)) {
+      // 紧挨下一个顶层键之前的空行/注释通常是在说明下一个段，不能算进待替换段里。
+      end = index;
+      while (end > start + 1 && (lines[end - 1].trim() === '' || /^\s*#/.test(lines[end - 1]))) end -= 1;
+      break;
+    }
   }
   return { start, end, lines };
 }
@@ -183,7 +188,126 @@ function serializeScalarMap(blockName, map) {
   return `${lines.join('\n')}\n`;
 }
 
-/** Replaces one whole block; the rest of the file keeps its exact bytes. */
+function commentLines(lines) {
+  return lines.filter((line) => /^\s*#/.test(line));
+}
+
+function appendMissingComments(lines, oldLines) {
+  const next = [...lines];
+  const seen = new Set(next.filter((line) => /^\s*#/.test(line)));
+  for (const line of commentLines(oldLines)) {
+    if (!seen.has(line)) { next.push(line); seen.add(line); }
+  }
+  return next;
+}
+
+function directMapChunks(lines, parentIndent) {
+  const starts = [];
+  const pattern = /^([A-Za-z_][A-Za-z0-9_.-]*)\s*:/;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (indentOf(line) !== parentIndent + 2) continue;
+    const match = line.trim().match(pattern);
+    if (match) starts.push({ index, key: match[1] });
+  }
+  return starts.map((entry, position) => ({
+    key: entry.key,
+    lines: lines.slice(entry.index, position + 1 < starts.length ? starts[position + 1].index : lines.length),
+  }));
+}
+
+function containerHeader(line) {
+  return /^[A-Za-z_][A-Za-z0-9_.-]*\s*:\s*(?:#.*)?$/.test(String(line || '').trim());
+}
+
+function ownedKeyMayDisappear(blockName, pathParts, key) {
+  // PHL 明确拥有这三个账号，用户删除账号时必须真的删除；Lite 的 xinlv/未来平台则保留。
+  return blockName === 'accounts' && pathParts.length === 0 && ['edupage', 'managebac', 'mail'].includes(key);
+}
+
+function mergeMapLines(oldLines, newLines, parentIndent, blockName, pathParts = []) {
+  const oldChunks = directMapChunks(oldLines, parentIndent);
+  const newChunks = directMapChunks(newLines, parentIndent);
+  if (!newChunks.length) return appendMissingComments(newLines, oldLines);
+  const oldByKey = new Map(oldChunks.map((chunk) => [chunk.key, chunk]));
+  const newKeys = new Set(newChunks.map((chunk) => chunk.key));
+  const merged = [];
+  for (const chunk of newChunks) {
+    const previous = oldByKey.get(chunk.key);
+    if (previous && containerHeader(previous.lines[0]) && containerHeader(chunk.lines[0])) {
+      merged.push(chunk.lines[0], ...mergeMapLines(previous.lines.slice(1), chunk.lines.slice(1), parentIndent + 2, blockName, [...pathParts, chunk.key]));
+    } else {
+      merged.push(...appendMissingComments(chunk.lines, previous?.lines || []));
+    }
+  }
+  for (const chunk of oldChunks) {
+    if (!newKeys.has(chunk.key) && !ownedKeyMayDisappear(blockName, pathParts, chunk.key)) merged.push(...chunk.lines);
+  }
+  return appendMissingComments(merged, oldLines);
+}
+
+function listChunks(lines, itemIndent) {
+  const starts = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (indentOf(lines[index]) === itemIndent && /^-\s+/.test(lines[index].trim())) starts.push(index);
+  }
+  return starts.map((start, position) => lines.slice(start, position + 1 < starts.length ? starts[position + 1] : lines.length));
+}
+
+function listIdentity(lines, fallback) {
+  const fields = {};
+  for (const line of lines) {
+    const match = line.trim().replace(/^-\s+/, '').match(/^([A-Za-z_][A-Za-z0-9_.-]*)\s*:\s*(.*)$/);
+    if (match) fields[match[1]] = parseYamlScalar(match[2]);
+  }
+  if (fields.id !== undefined && fields.id !== '') return `id:${String(fields.id)}`;
+  if (fields.subject !== undefined) return `lesson:${String(fields.subject)}|${String(fields.start || '')}|${String(fields.group || '')}`;
+  if (fields.name !== undefined) return `name:${String(fields.name)}`;
+  return `index:${fallback}`;
+}
+
+function mergeListItem(oldLines, newLines, itemIndent, blockName) {
+  const virtual = (lines) => lines.map((line, index) => index === 0
+    ? `${' '.repeat(itemIndent + 2)}${line.trim().replace(/^-\s+/, '')}` : line);
+  const merged = mergeMapLines(virtual(oldLines), virtual(newLines), itemIndent, blockName);
+  const first = merged.findIndex((line) => line.trim() && !/^\s*#/.test(line));
+  if (first >= 0) merged[first] = `${' '.repeat(itemIndent)}- ${merged[first].trim()}`;
+  return merged;
+}
+
+function mergeListLines(oldLines, newLines, itemIndent, blockName) {
+  const oldItems = listChunks(oldLines, itemIndent);
+  const oldById = new Map(oldItems.map((item, index) => [listIdentity(item, index), item]));
+  const newItems = listChunks(newLines, itemIndent);
+  const merged = newItems.flatMap((item, index) => {
+    const previous = oldById.get(listIdentity(item, index));
+    return previous ? mergeListItem(previous, item, itemIndent, blockName) : item;
+  });
+  return appendMissingComments(merged, oldLines);
+}
+
+function mergeBlockText(oldLines, replacement, blockName) {
+  const fresh = replacement.replace(/\n$/, '').split('\n');
+  if (oldLines.length < 1 || fresh.length < 1) return replacement;
+  const oldContent = oldLines.slice(1);
+  const newContent = fresh.slice(1);
+  const newFirst = newContent.find((line) => line.trim() && !/^\s*#/.test(line));
+  let mergedContent;
+  if (newFirst && /^-\s+/.test(newFirst.trim())) {
+    const itemIndent = indentOf(newFirst);
+    mergedContent = mergeListLines(oldContent, newContent, itemIndent, blockName);
+  } else if (newContent.length) {
+    mergedContent = mergeMapLines(oldContent, newContent, 0, blockName);
+  } else {
+    mergedContent = appendMissingComments([], oldContent);
+  }
+  return `${[fresh[0], ...mergedContent].join('\n')}\n`;
+}
+
+/**
+ * 替换一个顶层块，但先把旧块中本版本不认识的键、条目字段和注释合并进新块。
+ * 这是共享 settings.yaml 的读-改-写边界：只序列化 PHL 已知模型会抹掉 Lite 字段。
+ */
 function replaceBlock(text, blockName, body) {
   const source = stripBom(String(text ?? ''));
   if (typeof body !== 'string' || !body.endsWith('\n')) throw new Error('配置段内容必须以换行结束');
@@ -195,7 +319,8 @@ function replaceBlock(text, blockName, body) {
   const before = range.lines.slice(0, range.start).join('\n');
   const after = range.lines.slice(range.end).join('\n');
   const head = range.start === 0 ? '' : `${before}\n`;
-  return `${head}${body}${after}`;
+  const mergedBody = mergeBlockText(range.lines.slice(range.start, range.end), body, blockName);
+  return `${head}${mergedBody}${after}`;
 }
 
 /** UTF-8, no BOM, LF only, atomic replace in the same directory. */

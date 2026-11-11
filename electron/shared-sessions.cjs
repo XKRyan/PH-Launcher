@@ -51,17 +51,23 @@ function sameContent(a, b) {
   return cleanTitle(a?.title) === cleanTitle(b?.title) && JSON.stringify(history(a)) === JSON.stringify(history(b));
 }
 
-function readSharedSession(filePath) {
+function readSharedDocument(filePath) {
   try {
     const stat = fs.statSync(filePath);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const id = validId(parsed.id) || validId(path.basename(filePath, '.json'));
-    const history = sharedHistory(parsed.history);
-    if (!id || !history.length) return null;
-    return { id, title: cleanTitle(parsed.title), history, app: typeof parsed.app === 'string' ? parsed.app.slice(0, 60) : '', updatedAt: new Date(stat.mtimeMs).toISOString() };
+    const doc = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return doc && typeof doc === 'object' && !Array.isArray(doc) ? { doc, stat } : null;
   } catch { return null; }
+}
+
+function readSharedSession(filePath) {
+  const raw = readSharedDocument(filePath);
+  if (!raw) return null;
+  const parsed = raw.doc;
+  const id = validId(parsed.id) || validId(path.basename(filePath, '.json'));
+  const history = sharedHistory(parsed.history);
+  if (!id || !history.length) return null;
+  return { id, title: cleanTitle(parsed.title), history, app: typeof parsed.app === 'string' ? parsed.app.slice(0, 60) : '', updatedAt: new Date(raw.stat.mtimeMs).toISOString() };
 }
 
 /** Every readable transcript in the shared folder, newest first. */
@@ -86,8 +92,16 @@ function writeSharedSession(directory, session, { now = () => new Date() } = {})
   const history = sharedHistory(session.messages ?? session.history);
   if (!history.length) throw new Error('会话没有可共用的消息');
   const target = sessionPath(directory, id);
+  const rawPrevious = readSharedDocument(target);
   const previous = readSharedSession(target);
+  // 只覆盖协议里的已知字段；顶层和每条消息上的未来字段都从原文件继承。
+  // 共享文件不能由 PHL 的内存模型整份重建，否则 Lite 的扩展元数据会被静默删除。
+  const previousRows = Array.isArray(rawPrevious?.doc?.history)
+    ? rawPrevious.doc.history.filter((message) => message && typeof message === 'object'
+      && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string' && message.content.trim())
+    : [];
   const payload = {
+    ...(rawPrevious?.doc || {}),
     version: 1,
     kind: SHARED_KIND,
     id,
@@ -95,7 +109,7 @@ function writeSharedSession(directory, session, { now = () => new Date() } = {})
     app: APP_NAME,
     // Same timestamp convention as the shared Schedule: local offset, never Z.
     updated_at: require('./shared-schedule.cjs').localIso(now()),
-    history,
+    history: history.map((message, index) => ({ ...(previousRows[index] || {}), ...message })),
   };
   // Never overwrite a transcript the other application rewrote with more context.
   if (previous && previous.app && previous.app !== APP_NAME && previous.history.length > history.length) {
@@ -103,8 +117,12 @@ function writeSharedSession(directory, session, { now = () => new Date() } = {})
   }
   fs.mkdirSync(directory, { recursive: true });
   const temporaryPath = path.join(directory, `.${id}.${randomUUID()}.tmp`);
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  fs.renameSync(temporaryPath, target);
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporaryPath, target);
+  } finally {
+    try { fs.rmSync(temporaryPath, { force: true }); } catch { /* 已改名或仅清理本次临时文件 */ }
+  }
   return { ok: true, path: target, session: payload };
 }
 

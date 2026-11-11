@@ -17,7 +17,7 @@
 // 只更新自己负责的段（别人的段原样保留）、时间戳带本地时区偏移。
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 
 const KIND = 'pinghe-school';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -64,7 +64,10 @@ function readSchool(filePath) {
   return result;
 }
 
-/** 按 id 取并集：已有的条目保留，同 id 用新抓到的覆盖。 */
+/**
+ * 按 id 取并集：已有的条目保留，同 id 用新抓到的已知字段覆盖。
+ * 这里必须展开旧条目再覆盖，不能直接 Map.set 新对象；否则 Lite 写入的未来字段会丢失。
+ */
 function mergeRows(existing, incoming, keyOf, limit) {
   const merged = new Map();
   for (const row of Array.isArray(existing) ? existing : []) {
@@ -73,9 +76,31 @@ function mergeRows(existing, incoming, keyOf, limit) {
   }
   for (const row of Array.isArray(incoming) ? incoming : []) {
     const key = keyOf(row);
-    if (key) merged.set(key, row);
+    if (!key) continue;
+    const previous = merged.get(key);
+    merged.set(key, previous && typeof previous === 'object' && row && typeof row === 'object'
+      ? { ...previous, ...row } : row);
   }
   return [...merged.values()].slice(0, limit);
+}
+
+/** 替换列表内容，但同 id 条目的未知字段仍从旧条目继承（邮箱摘要等快照列表使用）。 */
+function replaceRowsPreservingUnknown(existing, incoming, keyOf, limit) {
+  const old = new Map();
+  for (const row of Array.isArray(existing) ? existing : []) {
+    const key = keyOf(row);
+    if (key) old.set(key, row);
+  }
+  const result = [];
+  for (const row of Array.isArray(incoming) ? incoming : []) {
+    const key = keyOf(row);
+    if (!key) continue;
+    const previous = old.get(key);
+    result.push(previous && typeof previous === 'object' && row && typeof row === 'object'
+      ? { ...previous, ...row } : row);
+    if (result.length >= limit) break;
+  }
+  return result;
 }
 
 /**
@@ -91,6 +116,8 @@ function mergeManagebac(existing, incoming) {
   // 不归一化的话同一条作业会被当成两条留在文件里。
   const keyOf = (row) => sharedTaskId(row?.id || row?.phl_id);
   return {
+    ...existing,
+    ...incoming,
     fetched_at: clean(incoming.fetched_at, 40) || clean(existing.fetched_at, 40),
     courses: mergeRows(existing.courses, incoming.courses, (row) => clean(row?.id, 32), 60),
     tasks: mergeRows(existing.tasks, incoming.tasks, keyOf, 600),
@@ -121,10 +148,18 @@ function mergeEdupaged(existing, incoming) {
   // 一旦命中"换周替换"就会把这边写好的整周课表清掉。
   const incomingLessons = Array.isArray(incoming.lessons) ? incoming.lessons.filter((row) => row && typeof row === 'object') : [];
   const existingLessons = Array.isArray(existing.lessons) ? existing.lessons.filter((row) => row && typeof row === 'object') : [];
-  if (!incomingLessons.length) return existingLessons.length ? existing : incoming;
-  if (weekStartOf(existing.week_start) !== weekStartOf(incoming.week_start)) return incoming;
+  if (!incomingLessons.length) return existingLessons.length ? existing : { ...existing, ...incoming };
   const keyOf = (row) => [clean(row?.date, 20), clean(row?.start, 5), clean(row?.subject), clean(row?.group, 80)].join('|');
+  if (weekStartOf(existing.week_start) !== weekStartOf(incoming.week_start)) {
+    // 换周时课程本身应替换，但段级未来字段仍属于同一共享格式，不能随整段重建被抹掉。
+    return {
+      ...existing,
+      ...incoming,
+      lessons: replaceRowsPreservingUnknown(existing.lessons, incoming.lessons, keyOf, 2000),
+    };
+  }
   return {
+    ...existing,
     ...incoming,
     week_start: validDate(existing.week_start) ? existing.week_start : incoming.week_start,
     lessons: mergeRows(existing.lessons, incoming.lessons, keyOf, 2000),
@@ -132,20 +167,39 @@ function mergeEdupaged(existing, incoming) {
   };
 }
 
+function mergeMail(existing, incoming) {
+  if (!existing || typeof existing !== 'object') return incoming || null;
+  if (!incoming || typeof incoming !== 'object') return existing;
+  const next = { ...existing, ...incoming };
+  if (Object.hasOwn(incoming, 'recent')) {
+    next.recent = replaceRowsPreservingUnknown(existing.recent, incoming.recent, (row) => clean(row?.uid, 40), 30);
+  }
+  return next;
+}
+
 /** 读改写合并（只替换传入的段，其余原样保留），原子落盘。 */
 function updateSchool(filePath, patch, { app = 'PH Launcher', now = () => new Date() } = {}) {
   const current = readSchool(filePath);
   const doc = current.doc && typeof current.doc === 'object' ? current.doc : emptyDoc(now);
   const next = { ...doc, version: 1, kind: KIND, app, updated_at: localIso(now()) };
-  for (const section of ['edupage', 'managebac', 'mail']) {
-    if (patch && Object.hasOwn(patch, section) && patch[section] !== undefined) next[section] = patch[section];
+  // School 顶层会随 Lite 扩展；收到明确 patch 的新段才更新，未提及的段逐字义保留。
+  for (const [section, value] of Object.entries(patch && typeof patch === 'object' ? patch : {})) {
+    if (value === undefined || ['version', 'kind', 'app', 'updated_at'].includes(section)) continue;
+    if (section === 'managebac') next.managebac = mergeManagebac(doc.managebac, value);
+    else if (section === 'edupage') next.edupage = mergeEdupaged(doc.edupage, value);
+    else if (section === 'mail') next.mail = mergeMail(doc.mail, value);
+    else if (doc[section] && typeof doc[section] === 'object' && !Array.isArray(doc[section])
+      && value && typeof value === 'object' && !Array.isArray(value)) next[section] = { ...doc[section], ...value };
+    else next[section] = value;
   }
-  if (patch?.managebac !== undefined) next.managebac = mergeManagebac(doc.managebac, patch.managebac);
-  if (patch?.edupage !== undefined) next.edupage = mergeEdupaged(doc.edupage, patch.edupage);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const temporary = `${filePath}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-  fs.renameSync(temporary, filePath);
+  const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporary, filePath);
+  } finally {
+    try { fs.rmSync(temporary, { force: true }); } catch { /* 已原子改名 */ }
+  }
   return next;
 }
 

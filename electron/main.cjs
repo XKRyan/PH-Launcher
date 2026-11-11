@@ -1,4 +1,4 @@
-﻿// Install before Electron or any application module can log to a detached pipe.
+// Install before Electron or any application module can log to a detached pipe.
 require('./stdio-guard.cjs').guardStdio();
 
 const {
@@ -73,6 +73,13 @@ const {
   resolveDataRoot,
   writeRootPointer,
 } = require('./data-layout.cjs');
+const installRegistry = require('./pinghe-series-registry.cjs');
+
+// PHL 会在解析数据根后把 Electron profile 改到 data/phl/profile；data-root.txt 必须始终
+// 读写改向前的同一个 profile，否则“读旧位置、写新位置”会让用户选择下次启动不生效。
+// 无头测试设置隔离 profile 后再给它赋值，既不碰真实用户文件，也复用同一条生产路径。
+let dataPointerProfileDir = '';
+function pointerProfileDir() { return dataPointerProfileDir || app.getPath('userData'); }
 
 // The shared data root is resolved once, on first use, so a `--user-data-dir`
 // override is already in effect. Both launchers must agree on this folder: every
@@ -87,7 +94,7 @@ function dataRoot() {
       ? { ...process.env, PHL_DATA_DIR: path.join(headlessUserData, 'data') }
       : process.env;
     const choice = resolveDataRoot({
-      userDataDir: app.getPath('userData'),
+      userDataDir: pointerProfileDir(),
       execDir: process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')),
       env,
     });
@@ -106,8 +113,22 @@ function sharedDataChoice() {
     liteRoot: lite.available ? lite.root : '',
     liteAvailable: lite.available,
     shared: ['settings.yaml', 'Schedule', 'agent'],
-    pointerFile: path.join(app.getPath('userData'), 'data-root.txt'),
+    pointerFile: path.join(pointerProfileDir(), 'data-root.txt'),
   };
+}
+
+function recordSelfInstallation() {
+  // 源码开发默认不碰用户真实登记；打包应用每次启动自愈。自动化可用隔离登记路径
+  // 或显式开关验证同一条逻辑，不需要写真实 %LOCALAPPDATA%。
+  if (!app.isPackaged && process.env.PHL_RECORD_INSTALL !== '1' && !process.env.PHL_INSTALL_REGISTRY) return false;
+  const installPath = installRegistry.installPathFromExecutable(app.getPath('exe'));
+  if (!installPath) throw new Error('无法从可执行文件路径确定安装目录');
+  installRegistry.record('phl', {
+    path: installPath,
+    dataRoot: dataRoot().root,
+    version: app.getVersion(),
+  });
+  return true;
 }
 const { createAiMailReader } = require('./ai-mail.cjs');
 const appMutex = require('./app-mutex.cjs');
@@ -244,6 +265,9 @@ if (IS_HEADLESS && !CAPTURE_KEEPS_PROFILE) {
   if (process.platform === 'darwin') app.setName(`PH Launcher Test ${path.basename(headlessUserData)}`);
   app.setPath('userData', headlessUserData);
 }
+// 从这里起即使 app.setPath 把 Chromium profile 改到共享数据根，指针与旧 Profile 迁移
+// 仍固定使用这个改向前目录；读取、写入和迁移源必须是同一个事实来源。
+dataPointerProfileDir = app.getPath('userData');
 
 // 便携/共用数据根下，Electron 自己的 profile（缓存、学校网站登录态、localStorage）
 // 也放进 data/phl/profile：程序文件夹里只应该有两个 exe 和一个 data/，
@@ -4796,13 +4820,15 @@ function registerIpc() {
     assertMainRenderer(event);
     const lite = detectLiteRoot({});
     if (!lite.available) throw new Error('没有找到 Pinghe Launcher Lite 的数据目录');
-    writeRootPointer(app.getPath('userData'), lite.root);
+    writeRootPointer(pointerProfileDir(), lite.root);
     return { ok: true, restartRequired: true, root: lite.root };
   });
   ipcMain.handle('system:data-use-own', (event) => {
     assertMainRenderer(event);
-    const own = path.join(app.getPath('userData'), 'data');
-    writeRootPointer(app.getPath('userData'), own);
+    // “自己的数据目录”遵守解析器的第三优先级：exe 同级 data；不能再用已被改向到
+    // data/phl/profile 的 app.getPath('userData')，否则会生成递归的 profile/data。
+    const own = path.join(process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')), 'data');
+    writeRootPointer(pointerProfileDir(), own);
     return { ok: true, restartRequired: true, root: own };
   });
   ipcMain.handle('system:notify', (event, payload) => {
@@ -5811,6 +5837,12 @@ app.whenReady().then(() => {
     app.exit(0);
     return;
   }
+  // 启动登记只记录已经解析出的实际路径；登记失败只是互相发现能力退化，绝不能挡启动。
+  try {
+    if (recordSelfInstallation()) startupMark('install-registry-recorded');
+  } catch (error) {
+    console.warn('Install registry update skipped:', error.message);
+  }
   // 同系列互斥：PHL 与 PHL Lite 共享同一批文件，不能同时运行。
   const runLock = appMutex.acquire({ dataDir: dataRoot().root, kind: 'phl' });
   if (!runLock.ok) {
@@ -5842,7 +5874,9 @@ app.whenReady().then(() => {
     startupMark('fresh-env-skip-migration');
   } else {
     try {
-      const migrated = migrateProfile({ layout: dataRoot(), userDataDir: app.getPath('userData') });
+      // 迁移源必须是改向前的旧 Profile；当前 app.getPath('userData') 已经是
+      // data/phl/profile，把它当源会永远找不到历史 ph-launcher.* 文件。
+      const migrated = migrateProfile({ layout: dataRoot(), userDataDir: pointerProfileDir() });
       if (migrated.length) startupMark(`profile-migrated-${migrated.length}`);
     } catch (error) {
       console.error('Profile migration skipped:', error.message);
